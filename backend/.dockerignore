@@ -1,0 +1,10 @@
+.venv
+.venv312
+.venv_external
+__pycache__
+*.py[cod]
+.pytest_cache
+.git
+*.md
+.env
+.env.*

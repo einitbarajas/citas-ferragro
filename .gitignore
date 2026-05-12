@@ -1,0 +1,19 @@
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+.venv/
+venv/
+backend/.venv/
+backend/.venv312/
+backend/.venv-wsl/
+backend/.venv_external
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Node modules and build artifacts
+frontend/node_modules/
+frontend/dist/

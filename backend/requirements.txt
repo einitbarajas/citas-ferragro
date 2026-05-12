@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+pydantic-settings
+python-jose[cryptography]
+bcrypt
+python-multipart
+email-validator
+pytest>=8.0
+cloudinary
+slowapi>=0.1.9
+openpyxl

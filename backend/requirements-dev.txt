@@ -1,0 +1,3 @@
+# Desarrollo y pruebas de carga (no producción).
+-r requirements.txt
+locust>=2.32.0
