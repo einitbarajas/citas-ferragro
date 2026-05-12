@@ -38,12 +38,6 @@ Resumen de **dónde** quedó implementada cada línea principal del plan (códig
 | Orquestación | `db/run-database-all.ps1` |
 | RPO/RTO, backups, roles | `documentacion/operacion_continuidad.md` |
 
-## Contenedores
-
-| Tema | Ubicación |
-|------|-----------|
-| Imágenes y compose | `backend/Dockerfile`, `frontend/Dockerfile`, `frontend/nginx.conf`, `docker-compose.yml` |
-
 ## Notas / límites conscientes
 
 - **Duplicar cita** como acción dedicada en UI no está cableada (se puede volver a crear manualmente copiando datos).

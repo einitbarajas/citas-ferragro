@@ -309,18 +309,7 @@ $env:UVICORN_RELOAD = "1"
 
 4. Cierra y vuelve a abrir PowerShell y ejecuta `.\run-backend.ps1`.
 
-###### B) Backend con Docker (evita por completo las DLL de Python en Windows)
-
-Instala [Docker Desktop](https://www.docker.com/products/docker-desktop/). En la **raíz del repo**:
-
-```powershell
-cd "C:\dev\trabajo ferragro"
-docker compose up db backend --build
-```
-
-El API queda en **`http://localhost:8000`** (misma URL que el frontend en modo dev). El contenedor usa Linux; ahí `pydantic_core` no pasa por el bloqueo del host.
-
-###### C) No puedes tocar Defender (sin permisos de administrador / política corporativa)
+###### B) No puedes tocar Defender (sin permisos de administrador / política corporativa)
 
 La opción A no está disponible si el botón de exclusiones no aparece o está deshabilitado. En ese caso el antivirus lo controla **tu empresa** o una política global. Puedes:
 
@@ -350,8 +339,6 @@ La opción A no está disponible si el botón de exclusiones no aparece o está 
    ```
 
    Comprueba con `python3 --version` que sea **3.11 o superior** (idealmente 3.12). El navegador en Windows suele poder usar **`http://localhost:8000`** contra ese servidor en WSL. El frontend en Windows (`npm run dev`) puede seguir con `VITE_API_URL=http://localhost:8000`.
-
-3. **Docker** (apartado B): a veces la instalación de Docker Desktop la hace TI; si ya lo tienes, es la vía más simple.
 
 ### Paso 3: Configurar `.env` del frontend
 
@@ -397,20 +384,6 @@ Para validar cambios con ZAP o herramientas similares:
 
 1. Reinicia backend y frontend después de editar configuración de seguridad.
 2. Limpia historial/caché del escáner antes de volver a ejecutar.
-3. En modo desarrollo (`npm run dev`) pueden aparecer alertas informativas por tooling de frontend; para validar un escenario más cercano a producción usa build/preview o Docker (`docker compose up --build`).
-
-### Docker (opcional)
-
-En la raíz del repositorio hay un `docker-compose.yml` de referencia (PostgreSQL + backend + frontend con nginx que reenvía `/api` al backend). Antes de levantarlo:
-
-1. Aplica el esquema de base de datos (por ejemplo `db\run-database-all.ps1` contra la instancia PostgreSQL que uses).
-2. Define `SECRET_KEY` y `DATABASE_URL` coherentes (el compose incluye valores de ejemplo).
-
-```bash
-docker compose up --build
-```
-
-- API: `http://localhost:8000` (también `/api/v1/...`).
-- Frontend estático: `http://localhost:2711` (las peticiones a `/api` van al backend vía nginx).
+3. En modo desarrollo (`npm run dev`) pueden aparecer alertas informativas por tooling de frontend; para validar un escenario más cercano a producción usa `npm run build` y `npm run preview` (o el servidor estático que despliegues).
 
 Documentación operativa (RPO/RTO, backups, roles DB): `documentacion/operacion_continuidad.md`.
