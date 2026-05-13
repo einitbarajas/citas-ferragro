@@ -68,8 +68,7 @@ api.interceptors.response.use(
       !isLoginRequest &&
       !isLogoutRequest &&
       UNAUTHORIZED_STATUSES.has(status) &&
-      !originalRequest._retry &&
-      getAccessToken()
+      !originalRequest._retry
     ) {
       originalRequest._retry = true;
       if (!refreshPromise) {

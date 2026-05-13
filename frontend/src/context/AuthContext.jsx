@@ -7,17 +7,23 @@ const LAST_ACTIVITY_KEY = "last_activity_at";
 const REDIRECT_TO_LOGIN_KEY = "redirect_to_login";
 const AUTH_SESSION_CHANGED_EVENT = "auth:session-changed";
 
-/** Solo bloquea el primer paint si hace falta `POST /auth/refresh` (actividad reciente). */
-function needsRefreshBootstrap() {
+function hasRecentActivity() {
   if (typeof window === "undefined") return false;
   const lastActivityAt = Number(sessionStorage.getItem(LAST_ACTIVITY_KEY) || 0);
   if (!lastActivityAt) return false;
   return Date.now() - lastActivityAt <= INACTIVITY_TIMEOUT_MS;
 }
 
+/** Bloquea el panel hasta validar la cookie de refresh cuando hay pistas locales de sesión. */
+function needsAuthBootstrap() {
+  if (typeof window === "undefined") return false;
+  if (sessionStorage.getItem("role")) return true;
+  return hasRecentActivity();
+}
+
 export function AuthProvider({ children }) {
   const inactivityTimerRef = useRef(null);
-  const [isBootstrapping, setIsBootstrapping] = useState(needsRefreshBootstrap);
+  const [isBootstrapping, setIsBootstrapping] = useState(needsAuthBootstrap);
 
   const clearStoredSession = useCallback(() => {
     clearAccessToken();
@@ -27,6 +33,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const [session, setSession] = useState(() => {
+    if (needsAuthBootstrap()) return null;
     const role = sessionStorage.getItem("role");
     const email = sessionStorage.getItem("user_email");
     return role ? { role, email: email || null } : null;
@@ -34,9 +41,15 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const bootstrap = async () => {
-      const now = Date.now();
-      const lastActivityAt = Number(sessionStorage.getItem(LAST_ACTIVITY_KEY) || 0);
-      if (!lastActivityAt || now - lastActivityAt > INACTIVITY_TIMEOUT_MS) {
+      const storedRole = sessionStorage.getItem("role");
+      const activityRecent = hasRecentActivity();
+      if (!storedRole && !activityRecent) {
+        clearStoredSession();
+        setSession(null);
+        setIsBootstrapping(false);
+        return;
+      }
+      if (!activityRecent) {
         clearStoredSession();
         setSession(null);
         setIsBootstrapping(false);
