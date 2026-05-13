@@ -13,7 +13,7 @@ def enforce_minimum_notice(start_time: datetime, minimum_hours: int = 24):
     if start_time < minimum:
         raise HTTPException(
             status_code=400,
-            detail=f"La cita debe agendarse con mínimo {minimum_hours} horas de anticipación",
+            detail=f"La cita debe solicitarse con al menos {minimum_hours} horas de anticipación",
         )
 
 

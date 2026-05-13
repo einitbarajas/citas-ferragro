@@ -107,13 +107,13 @@ export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
                 </p>
                 <div className="mt-3 flex flex-col gap-1 text-sm">
                   <a
-                    className="font-medium text-[#1f5a26] underline-offset-2 hover:text-[#16401a] hover:underline dark:text-emerald-300 dark:hover:text-emerald-200"
+                    className="font-medium text-[#1f5a26] underline-offset-2 transition-colors hover:text-[#16401a] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/50 focus-visible:ring-offset-2 dark:text-emerald-400 dark:ring-offset-slate-900 dark:hover:text-emerald-200 dark:hover:underline"
                     href="https://wa.me/573142254819"
                   >
                     WhatsApp: +57 3142254819
                   </a>
                   <a
-                    className="font-medium text-[#1f5a26] underline-offset-2 hover:text-[#16401a] hover:underline dark:text-emerald-300 dark:hover:text-emerald-200"
+                    className="font-medium text-[#1f5a26] underline-offset-2 transition-colors hover:text-[#16401a] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/50 focus-visible:ring-offset-2 dark:text-emerald-400 dark:ring-offset-slate-900 dark:hover:text-emerald-200 dark:hover:underline"
                     href="mailto:ecommerce@ferragro.com"
                   >
                     Correo: ecommerce@ferragro.com

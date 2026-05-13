@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import api, { AUTH_EXPIRED_EVENT, API_PREFIX, clearAccessToken, setAccessToken } from "../api/client";
+import api, { AUTH_EXPIRED_EVENT, API_PREFIX, clearAccessToken, getAccessToken, setAccessToken } from "../api/client";
 
 const AuthContext = createContext(null);
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
@@ -74,7 +74,47 @@ export function AuthProvider({ children }) {
     sessionStorage.setItem(REDIRECT_TO_LOGIN_KEY, "1");
     window.dispatchEvent(new Event(AUTH_SESSION_CHANGED_EVENT));
     setSession(null);
+    if (typeof window !== "undefined") {
+      window.history.replaceState({ ferragroAuth: "public" }, "", window.location.pathname);
+    }
   }, [clearStoredSession]);
+
+  const validateStoredSession = useCallback(async () => {
+    const storedRole = sessionStorage.getItem("role");
+    const hasRecentActivity = Boolean(sessionStorage.getItem(LAST_ACTIVITY_KEY));
+    if (!storedRole && !hasRecentActivity && !getAccessToken()) {
+      if (session) {
+        clearStoredSession();
+        setSession(null);
+      }
+      return;
+    }
+    if (!storedRole && !getAccessToken()) {
+      clearStoredSession();
+      setSession(null);
+      return;
+    }
+    try {
+      const refreshResponse = await api.post(`${API_PREFIX}/auth/refresh`);
+      const payload = refreshResponse?.data;
+      if (!payload?.success || !payload?.data?.access_token) {
+        throw new Error(payload?.message || "No se pudo recuperar sesión");
+      }
+      setAccessToken(payload.data.access_token);
+      const role = payload?.data?.role || storedRole || "";
+      const email = sessionStorage.getItem("user_email");
+      if (role) {
+        sessionStorage.setItem("role", role);
+      }
+      sessionStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+      setSession({ role, email: email || null });
+    } catch {
+      clearStoredSession();
+      sessionStorage.setItem(REDIRECT_TO_LOGIN_KEY, "1");
+      window.dispatchEvent(new Event(AUTH_SESSION_CHANGED_EVENT));
+      setSession(null);
+    }
+  }, [clearStoredSession, session]);
 
   const refreshActivity = useCallback(() => {
     sessionStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
@@ -117,6 +157,27 @@ export function AuthProvider({ children }) {
     };
   }, [logout, refreshActivity, session]);
 
+  useEffect(() => {
+    if (isBootstrapping) return undefined;
+
+    const onPageShow = (event) => {
+      if (!event.persisted && !session && !sessionStorage.getItem("role")) return;
+      void validateStoredSession();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!session && !sessionStorage.getItem("role")) return;
+      void validateStoredSession();
+    };
+
+    window.addEventListener("pageshow", onPageShow);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("pageshow", onPageShow);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [isBootstrapping, session, validateStoredSession]);
+
   const value = useMemo(
     () => ({
       session,
@@ -131,6 +192,9 @@ export function AuthProvider({ children }) {
         sessionStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
         window.dispatchEvent(new Event(AUTH_SESSION_CHANGED_EVENT));
         setSession({ role, email: email || null });
+        if (typeof window !== "undefined") {
+          window.history.replaceState({ ferragroAuth: "private" }, "", window.location.pathname);
+        }
       },
       logout,
     }),

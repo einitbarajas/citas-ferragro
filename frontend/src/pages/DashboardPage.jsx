@@ -11,11 +11,18 @@ import { getPanelGuidedSteps } from "../guidedTour/panelSteps";
 import api, { API_PREFIX, parseApiError, parseApiResponse } from "../api/client";
 import AppointmentForm from "../components/AppointmentForm";
 import AppointmentList from "../components/AppointmentList";
+import AppointmentReschedulePanel from "../components/AppointmentReschedulePanel";
 import ConfirmDialog from "../components/ConfirmDialog";
 import BrandLogo from "../components/BrandLogo";
+import NotificationCenter from "../components/NotificationCenter";
 
 const GuidedTourDialog = lazy(() => import("../components/GuidedTourDialog"));
 import { useAuth } from "../context/AuthContext";
+import {
+  describeProviderSlotAvailability,
+  unwrapProviderDayAvailability,
+} from "../utils/providerAvailability";
+import { formatReportRangeLabel, getReportRangeBounds } from "../utils/reportRange";
 
 function todayISO() {
   const d = new Date();
@@ -74,7 +81,6 @@ const ADMIN_NAV = [
 const card = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
 const inlay = "rounded-lg border border-slate-200 bg-slate-50/90 p-4";
 const TOAST_AUTO_DISMISS_MS = 5000;
-const APPOINTMENT_DRAFT_KEY = "ferragro_appt_form_draft_v1";
 const input =
   "w-full rounded-lg border border-slate-400 bg-white px-3 py-2 text-sm text-[#121212] placeholder:text-slate-500 focus:border-[#35783C] focus:outline-none focus:ring-2 focus:ring-[#35783C]/30";
 const btnPrimary =
@@ -92,46 +98,6 @@ function analyticsStatusSummary(byStatus) {
     { key: "no_presentada", label: "No presentada", value: Number(source.no_presentada || 0), color: "#64748b" },
     { key: "cancelado", label: "Cancelado", value: Number(source.cancelado || 0), color: "#ef4444" },
   ];
-}
-
-function getCitasRangeBounds(range) {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const end = new Date(start);
-  if (range === "month") {
-    end.setMonth(end.getMonth() + 1);
-    return { start, end };
-  }
-  if (range === "week") {
-    end.setDate(end.getDate() + 7);
-    return { start, end };
-  }
-  if (range === "biweekly") {
-    end.setDate(end.getDate() + 15);
-    return { start, end };
-  }
-  end.setDate(end.getDate() + 1);
-  return { start, end };
-}
-
-function getReviewRangeBounds(range) {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const end = new Date(start);
-  if (range === "month") {
-    end.setMonth(end.getMonth() + 1);
-    return { start, end };
-  }
-  if (range === "week") {
-    end.setDate(end.getDate() + 7);
-    return { start, end };
-  }
-  if (range === "biweekly") {
-    end.setDate(end.getDate() + 15);
-    return { start, end };
-  }
-  end.setDate(end.getDate() + 1);
-  return { start, end };
 }
 
 function getInitials(name) {
@@ -171,14 +137,38 @@ function formatLongEsDateFromISO(isoDate) {
   return formatLongEsDate(new Date(y, m - 1, d));
 }
 
-function formatTodayWindowsHint(dayIso, resolvedData) {
+function formatTodayWindowsHint(dayIso, resolvedData, availability = null) {
   const franjas = Array.isArray(resolvedData?.franjas) ? resolvedData.franjas : [];
+  const slot = Number(resolvedData?.slot_minutes || availability?.slotMinutes || 90);
+
   if (franjas.length === 0) {
     return `Hoy (${dayIso}) no tiene franjas configuradas para agendar.`;
   }
+
   const ranges = franjas.map((w) => `${w.start_local}-${w.end_local}`).join(", ");
-  const slot = Number(resolvedData?.slot_minutes || 90);
-  return `Hoy (${dayIso}) puedes agendar entre: ${ranges}. Turnos cada ${slot} minutos.`;
+  const franjaLine = `Hoy (${dayIso}) la franja habilitada es ${ranges} (turnos cada ${slot} minutos).`;
+
+  if (!availability) {
+    return franjaLine;
+  }
+
+  const reason = String(availability.reason || "").trim();
+  const message = String(availability.message || "").trim();
+  const minHours = Number(availability.minimumNoticeHours) || 24;
+  const times = Array.isArray(availability.times) ? availability.times : [];
+
+  if (reason === "minimum_notice") {
+    if (message) return `${franjaLine} ${message}`;
+    return `${franjaLine} No puedes agendar para este día: hace falta al menos ${minHours} horas de anticipación antes de la hora de la cita.`;
+  }
+
+  if (times.length > 0) {
+    return `${franjaLine} Puedes agendar hoy en: ${times.join(", ")}.`;
+  }
+
+  if (message) return `${franjaLine} ${message}`;
+
+  return franjaLine;
 }
 
 function buildMonthCalendar(referenceDate, allowedDays) {
@@ -290,11 +280,17 @@ export default function DashboardPage() {
   const [providerAvailableDays, setProviderAvailableDays] = useState([]);
   const [providerSelectedDay, setProviderSelectedDay] = useState(todayISO());
   const [providerSelectedSlots, setProviderSelectedSlots] = useState([]);
+  const [providerSlotUnavailableMessage, setProviderSlotUnavailableMessage] = useState("");
+  const [providerSlotUnavailableReason, setProviderSlotUnavailableReason] = useState("");
+  const [providerMinimumNoticeHours, setProviderMinimumNoticeHours] = useState(24);
+  const [providerDayAvailabilityLoading, setProviderDayAvailabilityLoading] = useState(false);
+  const [providerDayAvailabilityError, setProviderDayAvailabilityError] = useState("");
   const [providerSelectedSlotMinutes, setProviderSelectedSlotMinutes] = useState(90);
   const [providerTimeChoice, setProviderTimeChoice] = useState("");
   const [providerMaterialDescription, setProviderMaterialDescription] = useState("");
   const [providerAppointments, setProviderAppointments] = useState([]);
   const [providerCancelReasonById, setProviderCancelReasonById] = useState({});
+  const [providerRescheduleId, setProviderRescheduleId] = useState(null);
   const [reminders, setReminders] = useState([]);
   const [franjaRows, setFranjaRows] = useState([
     { start_local: "08:00", end_local: "11:00" },
@@ -572,12 +568,28 @@ export default function DashboardPage() {
     const today = todayISO();
     const resolvedResponse = await api.get(`${API_PREFIX}/crud/appointment-franjas/resolved?day=${today}`);
     const resolvedPayload = parseApiResponse(resolvedResponse);
+    let availability = null;
+    if (isProveedor) {
+      try {
+        const availabilityResponse = await api.get(`${API_PREFIX}/appointments/available-slots?day=${today}`);
+        const sourceData = unwrapProviderDayAvailability(availabilityResponse);
+        availability = {
+          times: Array.isArray(sourceData?.available_times) ? sourceData.available_times : [],
+          reason: String(sourceData?.unavailable_reason || "").trim(),
+          message: String(sourceData?.unavailable_message || "").trim(),
+          minimumNoticeHours: Number(sourceData?.minimum_notice_hours || 24),
+          slotMinutes: Number(sourceData?.slot_minutes || 90),
+        };
+      } catch {
+        availability = null;
+      }
+    }
     if (resolvedPayload.success) {
-      setTodayWindowsHint(formatTodayWindowsHint(today, resolvedPayload.data || null));
+      setTodayWindowsHint(formatTodayWindowsHint(today, resolvedPayload.data || null, availability));
     } else {
       setTodayWindowsHint("");
     }
-  }, [session]);
+  }, [session, isProveedor]);
 
   const loadSpecialDayWindows = useCallback(
     async (day) => {
@@ -622,25 +634,55 @@ export default function DashboardPage() {
     setError("");
   }, [session, isProveedor]);
 
+  const fetchProviderDayAvailability = useCallback(
+    async (dayIso, excludeAppointmentId = null) => {
+      if (!session || !isProveedor || !dayIso) {
+        return { times: [], reason: "", message: "", minimumNoticeHours: 24, slotMinutes: 90 };
+      }
+      let url = `${API_PREFIX}/appointments/available-slots?day=${dayIso}`;
+      if (excludeAppointmentId != null) {
+        url += `&exclude_appointment_id=${excludeAppointmentId}`;
+      }
+      const response = await api.get(url);
+      const sourceData = unwrapProviderDayAvailability(response);
+      const times = Array.isArray(sourceData?.available_times) ? sourceData.available_times : [];
+      return {
+        times: Array.from(new Set(times)).sort(),
+        reason: String(sourceData?.unavailable_reason || "").trim(),
+        message: String(sourceData?.unavailable_message || "").trim(),
+        minimumNoticeHours: Number(sourceData?.minimum_notice_hours || 24),
+        slotMinutes: Number(sourceData?.slot_minutes || 90),
+      };
+    },
+    [session, isProveedor]
+  );
+
   const loadProviderDayAvailability = useCallback(
     async (dayIso) => {
       if (!session || !isProveedor || !dayIso) return;
-      const response = await api.get(`${API_PREFIX}/appointments/available-slots?day=${dayIso}`);
-      const payload = parseApiResponse(response);
-      const raw = response?.data;
-      if (!payload.success && !(raw && typeof raw === "object" && !Array.isArray(raw))) {
-        throw new Error(payload.message || "No se pudo cargar la disponibilidad.");
+      setProviderDayAvailabilityLoading(true);
+      setProviderDayAvailabilityError("");
+      setProviderSlotUnavailableMessage("");
+      setProviderSlotUnavailableReason("");
+      try {
+        const availability = await fetchProviderDayAvailability(dayIso);
+        setProviderSelectedSlots(availability.times);
+        setProviderSelectedSlotMinutes(availability.slotMinutes);
+        setProviderMinimumNoticeHours(availability.minimumNoticeHours);
+        setProviderSlotUnavailableReason(availability.times.length === 0 ? availability.reason : "");
+        setProviderSlotUnavailableMessage(availability.times.length === 0 ? availability.message : "");
+        setProviderTimeChoice((prev) => (availability.times.includes(prev) ? prev : availability.times[0] || ""));
+        setError("");
+      } catch (err) {
+        setProviderSelectedSlots([]);
+        setProviderSlotUnavailableReason("");
+        setProviderSlotUnavailableMessage("");
+        setProviderDayAvailabilityError(parseApiError(err));
+      } finally {
+        setProviderDayAvailabilityLoading(false);
       }
-      const sourceData = payload.success ? payload.data : raw;
-      const slot = Number(sourceData?.slot_minutes || 90);
-      const times = Array.isArray(sourceData?.available_times) ? sourceData.available_times : [];
-      const uniqueTimes = Array.from(new Set(times)).sort();
-      setProviderSelectedSlots(uniqueTimes);
-      setProviderSelectedSlotMinutes(slot);
-      setProviderTimeChoice((prev) => (uniqueTimes.includes(prev) ? prev : uniqueTimes[0] || ""));
-      setError("");
     },
-    [session, isProveedor]
+    [session, isProveedor, fetchProviderDayAvailability]
   );
 
   const loadProviderMonthAvailability = useCallback(
@@ -912,7 +954,7 @@ export default function DashboardPage() {
       }
     };
     run();
-  }, [isProveedor, proveedorTab, providerSelectedDay, loadProviderDayAvailability]);
+  }, [isProveedor, proveedorTab, providerSelectedDay, session, loadProviderDayAvailability]);
 
   useEffect(() => {
     if (!isProveedor) return;
@@ -972,7 +1014,7 @@ export default function DashboardPage() {
   }, [isAdmin, adminTab]);
 
   const citasInRange = useMemo(() => {
-    const { start, end } = getCitasRangeBounds(citasRange);
+    const { start, end } = getReportRangeBounds(citasRange);
     return appointments.filter((a) => {
       const dt = new Date(a.start_time);
       return dt >= start && dt < end;
@@ -1027,14 +1069,7 @@ export default function DashboardPage() {
     () => Math.max(1, ...analyticsTopProviders.map((p) => Number(p.cantidad || 0))),
     [analyticsTopProviders]
   );
-  const analyticsRangeLabel =
-    analyticsRange === "today"
-      ? "hoy"
-      : analyticsRange === "week"
-        ? "semana"
-        : analyticsRange === "biweekly"
-          ? "quincena"
-          : "mes";
+  const analyticsRangeLabel = formatReportRangeLabel(analyticsRange);
   const analyticsStatusPie = useMemo(() => {
     if (analyticsStatusTotal <= 0) {
       return "conic-gradient(#e2e8f0 0deg 360deg)";
@@ -1078,7 +1113,7 @@ export default function DashboardPage() {
     });
   }, [logs, historyDateFilter]);
   const reviewAppointments = useMemo(() => {
-    const { start, end } = getReviewRangeBounds(reviewRange);
+    const { start, end } = getReportRangeBounds(reviewRange);
     return appointments.filter((a) => {
       if (a.status !== "sin_revision" && a.status !== "revisado") return false;
       const dt = new Date(a.start_time);
@@ -1138,26 +1173,39 @@ export default function DashboardPage() {
     }
   };
 
-  const onDuplicateAppointment = (appointment) => {
-    if (!appointment || !isAdmin) return;
-    const start = new Date(appointment.start_time);
-    const draft = {
-      provider_id: String(appointment.provider_id || ""),
-      material_description: String(appointment.material_description || ""),
-      appointment_date: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(
-        start.getDate()
-      ).padStart(2, "0")}`,
-      appointment_time: `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`,
-      duration_minutes: Number(appointment.duration_minutes || 90),
-      status: "sin_revision",
-    };
+  const onStaffRescheduleAppointment = async ({ appointmentId, startTime }) => {
     try {
-      localStorage.setItem(APPOINTMENT_DRAFT_KEY, JSON.stringify(draft));
-    } catch {
-      /* ignore */
+      setError("");
+      setSuccess("");
+      await api.put(`${API_PREFIX}/crud/appointments/${appointmentId}`, { start_time: startTime });
+      await loadAppointments();
+      await loadReminders();
+      if (isStaff) {
+        await loadLogs();
+      }
+      setSuccess("Cita reprogramada correctamente.");
+    } catch (err) {
+      const message = parseApiError(err);
+      setError(message);
+      throw new Error(message);
     }
-    setAdminTab("citas");
-    setSuccess("Datos duplicados: revisa y guarda la nueva cita desde el formulario.");
+  };
+
+  const onProviderRescheduleAppointment = async ({ appointmentId, startTime }) => {
+    try {
+      setError("");
+      setSuccess("");
+      await api.patch(`${API_PREFIX}/appointments/${appointmentId}/reschedule`, { start_time: startTime });
+      setProviderRescheduleId(null);
+      await loadProviderAppointments();
+      await loadProviderMonthAvailability(providerCalendarBase);
+      await loadProviderDayAvailability(providerSelectedDay);
+      setSuccess("Cita reprogramada correctamente.");
+    } catch (err) {
+      const message = parseApiError(err);
+      setError(message);
+      throw new Error(message);
+    }
   };
 
   const providerStatusLabel = (status) => {
@@ -1527,6 +1575,23 @@ export default function DashboardPage() {
     }
   };
 
+  const handleNotificationNavigate = useCallback(
+    (item) => {
+      if (!item) return;
+      setError("");
+      setMobileNavOpen(false);
+      if (item.kind === "cita_para_revisar") {
+        if (isAdmin) setAdminTab("revision_citas");
+        if (isLogistica) setLogisticaTab("revision_citas");
+        return;
+      }
+      if (item.kind === "cita_actualizada" && isProveedor) {
+        setProveedorTab("mis_citas");
+      }
+    },
+    [isAdmin, isLogistica, isProveedor]
+  );
+
   const showCitasSection = isStaff && (!isAdmin || adminTab === "citas") && (!isLogistica || logisticaTab === "citas");
   const showBuscarCitasSection = isStaff && (adminTab === "buscar_citas" || (isLogistica && logisticaTab === "buscar_citas"));
   const showRevisionSection = isStaff && (adminTab === "revision_citas" || (isLogistica && logisticaTab === "revision_citas"));
@@ -1577,11 +1642,46 @@ export default function DashboardPage() {
   }, [providerAppointments, windowsPack?.timezone]);
   const providerCannotScheduleSlot = useMemo(() => {
     if (!providerSelectedDay) return true;
+    if (providerDayAvailabilityLoading) return true;
     if (providerBookedDays.has(providerSelectedDay)) return true;
     if (providerSelectedSlots.length === 0) return true;
     if (!providerTimeChoice || !providerSelectedSlots.includes(providerTimeChoice)) return true;
     return false;
-  }, [providerSelectedDay, providerBookedDays, providerSelectedSlots, providerTimeChoice]);
+  }, [
+    providerSelectedDay,
+    providerDayAvailabilityLoading,
+    providerBookedDays,
+    providerSelectedSlots,
+    providerTimeChoice,
+  ]);
+  const providerSlotAvailabilityCopy = useMemo(
+    () =>
+      describeProviderSlotAvailability({
+        loading: providerDayAvailabilityLoading,
+        loadError: providerDayAvailabilityError,
+        hasExistingAppointment: providerBookedDays.has(providerSelectedDay),
+        reason: providerSlotUnavailableReason,
+        message: providerSlotUnavailableMessage,
+        minimumNoticeHours: providerMinimumNoticeHours,
+        selectedDayOpen: providerAvailableDays.includes(providerSelectedDay),
+      }),
+    [
+      providerDayAvailabilityLoading,
+      providerDayAvailabilityError,
+      providerBookedDays,
+      providerSelectedDay,
+      providerSlotUnavailableReason,
+      providerSlotUnavailableMessage,
+      providerMinimumNoticeHours,
+      providerAvailableDays,
+    ]
+  );
+  const providerSlotAvailabilityNoticeClass =
+    providerSlotAvailabilityCopy.tone === "error"
+      ? "border-rose-200 bg-rose-50 text-rose-900"
+      : providerSlotAvailabilityCopy.tone === "info"
+        ? "border-slate-200 bg-slate-50 text-slate-700"
+        : "border-amber-200 bg-amber-50 text-amber-950";
 
   useEffect(() => {
     if (!isProveedor || !providerSelectedDay) return;
@@ -1859,14 +1959,7 @@ export default function DashboardPage() {
     </header>
   );
 
-  const citasRangeLabel =
-    citasRange === "today"
-      ? "dia actual"
-      : citasRange === "week"
-        ? "proximos 7 dias"
-        : citasRange === "biweekly"
-          ? "proximos 15 dias"
-          : "proximo mes";
+  const citasRangeLabel = formatReportRangeLabel(citasRange);
 
   const quickActions =
     isAdmin &&
@@ -2008,7 +2101,8 @@ export default function DashboardPage() {
           </div>
           <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">{activeNavLabel}</p>
         </div>
-        <div className="mb-4 flex justify-end">
+        <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+          <NotificationCenter onNavigate={handleNotificationNavigate} />
           <button
             type="button"
             onClick={startManualTour}
@@ -2031,16 +2125,9 @@ export default function DashboardPage() {
                 Solo puedes agendar en fechas en las que la empresa habilitó franja en el calendario (días en verde claro). La franja semanal general no habilita el día hasta que se abra por fecha.
               </p>
             </header>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className={card}>
-                <p className="text-xs font-medium uppercase text-slate-500">Cuenta activa</p>
-                <p className="mt-2 text-sm font-medium text-slate-900">{session?.email || "Sin correo"}</p>
-                <p className="mt-1 text-xs text-slate-500">Rol: {session?.role || "Proveedor"}</p>
-              </div>
-              <div className={card}>
-                <p className="text-xs font-medium uppercase text-slate-500">Franja vigente</p>
-                <p className="mt-2 text-sm text-slate-700">{todayWindowsHint || windowsPack?.hint || "Sin detalle disponible por ahora."}</p>
-              </div>
+            <div className={card}>
+              <p className="text-xs font-medium uppercase text-slate-500">Franja vigente</p>
+              <p className="mt-2 text-sm text-slate-700">{todayWindowsHint || windowsPack?.hint || "Sin detalle disponible por ahora."}</p>
             </div>
             <div className={card}>
               <div className="mb-2 flex items-center justify-between">
@@ -2101,6 +2188,17 @@ export default function DashboardPage() {
             <div className={card}>
               <p className="text-xs font-medium uppercase text-slate-500">Disponibilidad del día</p>
               <p className="mt-1 text-xs text-slate-600">{formatLongEsDateFromISO(providerSelectedDay)} ({providerSelectedDay})</p>
+              {providerCannotScheduleSlot && providerSlotAvailabilityCopy.title && (
+                <div
+                  className={`mt-3 rounded-lg border px-3 py-2 text-sm ${providerSlotAvailabilityNoticeClass}`}
+                  role="alert"
+                >
+                  <p className="font-medium">{providerSlotAvailabilityCopy.title}</p>
+                  {providerSlotAvailabilityCopy.detail && (
+                    <p className="mt-1 text-xs leading-relaxed">{providerSlotAvailabilityCopy.detail}</p>
+                  )}
+                </div>
+              )}
               <div className="mt-3 grid gap-2 md:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-600">Hora disponible</label>
@@ -2110,10 +2208,8 @@ export default function DashboardPage() {
                     onChange={(e) => setProviderTimeChoice(e.target.value)}
                     disabled={providerCannotScheduleSlot}
                   >
-                    {providerBookedDays.has(providerSelectedDay) ? (
-                      <option value="">Ya tienes cita este día</option>
-                    ) : providerSelectedSlots.length === 0 ? (
-                      <option value="">Sin disponibilidad</option>
+                    {providerSelectedSlots.length === 0 ? (
+                      <option value="">{providerSlotAvailabilityCopy.optionLabel}</option>
                     ) : (
                       providerSelectedSlots.map((h) => (
                         <option key={h} value={h}>
@@ -2157,7 +2253,7 @@ export default function DashboardPage() {
             <header className="rounded-xl border border-emerald-100 bg-white p-5 shadow-sm">
               <p className="text-xs font-medium uppercase tracking-wide text-emerald-600">Proveedor</p>
               <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Mis citas</h1>
-              <p className="mt-2 text-sm text-slate-600">Consulta tus citas agendadas, su estado y cancélalas cuando aplique.</p>
+              <p className="mt-2 text-sm text-slate-600">Consulta tus citas agendadas, reprográmalas o cancélalas cuando aplique.</p>
             </header>
             <div className={card}>
               <p className="text-xs font-medium uppercase text-slate-500">Mis citas</p>
@@ -2169,20 +2265,43 @@ export default function DashboardPage() {
                     <p className="text-xs text-slate-600">Estado: {providerStatusLabel(a.status)}</p>
                     <p className="text-xs text-slate-600">Descripción: {a.material_description}</p>
                     {a.status !== "cancelado" && a.status !== "finalizada" && a.status !== "no_presentada" && (
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <input
-                          className={input + " w-full sm:max-w-md"}
-                          placeholder="Motivo de cancelación"
-                          value={providerCancelReasonById[a.id] || ""}
-                          onChange={(e) => setProviderCancelReasonById((prev) => ({ ...prev, [a.id]: e.target.value }))}
-                        />
-                        <button
-                          type="button"
-                          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
-                          onClick={() => onProviderCancelAppointment(a.id)}
-                        >
-                          Cancelar cita
-                        </button>
+                      <div className="mt-2 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(a.status === "sin_revision" || a.status === "revisado") && (
+                            <button
+                              type="button"
+                              className="rounded-lg border border-[#35783C] bg-white px-3 py-2 text-xs font-semibold text-[#35783C] hover:bg-emerald-50"
+                              onClick={() =>
+                                setProviderRescheduleId((prev) => (prev === a.id ? null : a.id))
+                              }
+                            >
+                              {providerRescheduleId === a.id ? "Cerrar reprogramación" : "Cambiar día y hora"}
+                            </button>
+                          )}
+                          <input
+                            className={input + " w-full sm:max-w-md"}
+                            placeholder="Motivo de cancelación"
+                            value={providerCancelReasonById[a.id] || ""}
+                            onChange={(e) => setProviderCancelReasonById((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                          />
+                          <button
+                            type="button"
+                            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                            onClick={() => onProviderCancelAppointment(a.id)}
+                          >
+                            Cancelar cita
+                          </button>
+                        </div>
+                        {providerRescheduleId === a.id && (
+                          <AppointmentReschedulePanel
+                            appointment={a}
+                            variant="provider"
+                            inputClass={input}
+                            buttonClass={btnPrimary}
+                            loadProviderDayAvailability={fetchProviderDayAvailability}
+                            onReschedule={onProviderRescheduleAppointment}
+                          />
+                        )}
                       </div>
                     )}
                   </div>
@@ -3064,7 +3183,7 @@ export default function DashboardPage() {
               onReview={onReview}
               onChangeStatus={onChangeStatus}
               onExtend={onExtend}
-              onDuplicate={onDuplicateAppointment}
+              onReschedule={onStaffRescheduleAppointment}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
               filterDay={filterDay}
@@ -3103,7 +3222,7 @@ export default function DashboardPage() {
               onReview={onReview}
               onChangeStatus={onChangeStatus}
               onExtend={onExtend}
-              onDuplicate={onDuplicateAppointment}
+              onReschedule={onStaffRescheduleAppointment}
               reviewMode
               title="Revision de citas"
               emptyMessage="No hay citas para revisar."

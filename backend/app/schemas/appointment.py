@@ -24,6 +24,10 @@ class AppointmentProviderCancel(BaseModel):
     reason: str = Field(min_length=5, max_length=300)
 
 
+class AppointmentProviderReschedule(BaseModel):
+    start_time: datetime
+
+
 class AppointmentOut(BaseModel):
     id: int
     provider_id: str

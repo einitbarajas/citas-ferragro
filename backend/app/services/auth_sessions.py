@@ -6,6 +6,20 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.refresh_session import RefreshSession
+from app.models.provider import Provider
+from app.models.user import User
+
+
+def credential_id_for_subject(db: Session, subject: str, role_name: str) -> int | None:
+    if role_name == "Proveedor":
+        try:
+            nit = int(subject)
+        except ValueError:
+            return None
+        provider = db.get(Provider, nit)
+        return int(provider.credential_id) if provider else None
+    user = db.get(User, subject)
+    return int(user.credential_id) if user else None
 
 
 def persist_refresh_session(db: Session, credential_id: int, jti: UUID, expires_at: datetime) -> RefreshSession:

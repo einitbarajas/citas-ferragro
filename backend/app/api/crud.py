@@ -22,6 +22,7 @@ from app.models.profile_photo import ProfilePhoto
 from app.models.reminder_run import ReminderExecution
 from app.models.role import Role
 from app.models.user import User
+from app.services.notification_service import notify_provider_appointment_updated, notify_staff_review_needed
 from app.schemas.crud import (
     AppointmentDateWindowReplace,
     AppointmentDateWindowBulkReplace,
@@ -57,6 +58,7 @@ from app.services.appointment_windows import (
     replace_windows,
 )
 from app.services.appointment_service import finalize_elapsed_appointments, reserve_slot_fifo_or_raise
+from app.services.range_bounds import business_local_range_bounds
 
 router = APIRouter(prefix="/crud", tags=["crud"])
 
@@ -694,12 +696,18 @@ def _staff_appointments_select(
         end = start + timedelta(days=1)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
     elif mode == "week":
-        start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=7)
+        tz = ZoneInfo(settings.business_timezone)
+        local_now = datetime.now(tz)
+        start_local, end_local = business_local_range_bounds("week", local_now, tz)
+        start = start_local.astimezone(timezone.utc)
+        end = end_local.astimezone(timezone.utc)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
     elif mode == "biweekly":
-        start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=15)
+        tz = ZoneInfo(settings.business_timezone)
+        local_now = datetime.now(tz)
+        start_local, end_local = business_local_range_bounds("biweekly", local_now, tz)
+        start = start_local.astimezone(timezone.utc)
+        end = end_local.astimezone(timezone.utc)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
     elif mode == "month" and month and year:
         stmt = stmt.where(
@@ -836,6 +844,9 @@ def create_appointment(
     appointment = Appointment(**payload.model_dump())
     db.add(appointment)
     db.commit()
+    db.refresh(appointment)
+    notify_staff_review_needed(db, appointment)
+    db.commit()
     appointment = db.execute(
         select(Appointment).options(joinedload(Appointment.provider)).where(Appointment.id == appointment.id)
     ).unique().scalar_one()
@@ -875,10 +886,18 @@ def update_appointment(
     for key, value in updates.items():
         setattr(appointment, key, value)
     now = datetime.now(timezone.utc)
+    changed_labels: list[str] = []
+    field_labels = {
+        "status": "estado",
+        "start_time": "fecha y hora",
+        "duration_minutes": "duración",
+        "material_description": "descripción",
+    }
     for key, old_val in snapshots.items():
         new_val = getattr(appointment, key)
         if old_val == new_val:
             continue
+        changed_labels.append(field_labels.get(key, key))
         db.add(
             ChangeLog(
                 actor_id=actor_id,
@@ -890,6 +909,12 @@ def update_appointment(
                 old_value=str(old_val),
                 new_value=str(new_val),
             )
+        )
+    if changed_labels:
+        notify_provider_appointment_updated(
+            db,
+            appointment,
+            summary=f"La empresa actualizó {', '.join(changed_labels)} de tu cita.",
         )
     db.commit()
     appointment = db.execute(
@@ -1126,25 +1151,8 @@ def analytics_summary(
     local_now = datetime.now(tz)
     local_today_start = datetime(local_now.year, local_now.month, local_now.day, tzinfo=tz)
     local_today_end = local_today_start + timedelta(days=1)
-    if range_mode == "month":
-        next_month_year = local_now.year + (1 if local_now.month == 12 else 0)
-        next_month = 1 if local_now.month == 12 else local_now.month + 1
-        next_day = local_now.day
-        while next_day > 28:
-            try:
-                local_range_end = datetime(next_month_year, next_month, next_day, tzinfo=tz)
-                break
-            except ValueError:
-                next_day -= 1
-        else:
-            local_range_end = datetime(next_month_year, next_month, 28, tzinfo=tz)
-    elif range_mode == "week":
-        local_range_end = local_today_start + timedelta(days=7)
-    elif range_mode == "biweekly":
-        local_range_end = local_today_start + timedelta(days=15)
-    else:
-        local_range_end = local_today_start + timedelta(days=1)
-    range_start_utc = local_today_start.astimezone(timezone.utc)
+    local_range_start, local_range_end = business_local_range_bounds(range_mode, local_now, tz)
+    range_start_utc = local_range_start.astimezone(timezone.utc)
     range_end_utc = local_range_end.astimezone(timezone.utc)
 
     # Totales por estado para el rango seleccionado (filtro de analítica).
@@ -1193,8 +1201,7 @@ def analytics_summary(
         .all()
     )
     citas_30 = [{"fecha": str(d), "cantidad": int(c)} for d, c in day_rows]
-    week_start_local = local_today_start - timedelta(days=local_today_start.weekday())
-    week_end_local = week_start_local + timedelta(days=7)
+    week_start_local, week_end_local = business_local_range_bounds("week", local_now, tz)
     week_start = week_start_local.astimezone(timezone.utc)
     week_end = week_end_local.astimezone(timezone.utc)
     weekday_rows = (

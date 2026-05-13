@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
+from uuid import UUID
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -11,6 +13,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.provider import Provider
 from app.models.user import User
+from app.services.auth_sessions import credential_id_for_subject, get_active_refresh_session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -59,14 +62,25 @@ def get_security_principal(
         subject = str(payload.get("sub") or "")
         role_name = str(payload.get("role") or "")
         token_type = str(payload.get("token_type") or "")
+        jti_raw = str(payload.get("jti") or "")
         exp = payload.get("exp")
         if not subject or not role_name:
             raise credentials_exception
         if token_type and token_type != "access":
             raise credentials_exception
+        if not jti_raw:
+            raise credentials_exception
+        try:
+            session_jti = UUID(jti_raw)
+        except ValueError:
+            raise credentials_exception
         if exp and datetime.fromtimestamp(exp, tz=timezone.utc) < datetime.now(timezone.utc):
             raise credentials_exception
     except (JWTError, ValueError, TypeError):
+        raise credentials_exception
+
+    cred_id = credential_id_for_subject(db, subject, role_name)
+    if cred_id is None or get_active_refresh_session(db, cred_id, session_jti) is None:
         raise credentials_exception
 
     if role_name == "Proveedor":

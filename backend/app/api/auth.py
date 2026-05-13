@@ -22,6 +22,7 @@ from app.models.user import User, UserRole
 from app.schemas.auth import ChangePasswordRequest, ForgotPasswordRequest, LoginRequest, TokenResponse
 from app.schemas.user import UserCreate, UserOut
 from app.services.auth_sessions import (
+    credential_id_for_subject,
     get_active_refresh_session,
     persist_refresh_session,
     revoke_all_refresh_for_credential,
@@ -45,15 +46,7 @@ def _client_ip(request: Request) -> str | None:
 
 
 def _credential_id_for_subject(db: Session, subject: str, role_name: str) -> int | None:
-    if role_name == "Proveedor":
-        try:
-            nit = int(subject)
-        except ValueError:
-            return None
-        prov = db.get(Provider, nit)
-        return int(prov.credential_id) if prov else None
-    user = db.get(User, subject)
-    return int(user.credential_id) if user else None
+    return credential_id_for_subject(db, subject, role_name)
 
 
 def _audit_login(
@@ -192,10 +185,11 @@ def register(payload: UserCreate, request: Request, db: Session = Depends(get_db
 def _issue_tokens(response: Response, db: Session, credential_id: int, subject: str, role_name: str):
     from datetime import datetime, timezone
 
-    access_token = create_access_token(subject=subject, role=role_name)
+    revoke_all_refresh_for_credential(db, credential_id)
     refresh_token_str, jti = create_refresh_token(subject=subject, role=role_name)
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
     persist_refresh_session(db, credential_id, jti, expires_at)
+    access_token = create_access_token(subject=subject, role=role_name, session_jti=jti)
     _set_refresh_cookie(response, refresh_token_str)
     reset_state = db.get(PasswordResetState, credential_id)
     token_out = TokenResponse(
@@ -203,6 +197,7 @@ def _issue_tokens(response: Response, db: Session, credential_id: int, subject: 
         role=role_name,
         must_change_password=bool(reset_state and reset_state.must_change_password),
     )
+    db.commit()
     return ok_response(token_out.model_dump(), "Inicio de sesión exitoso")
 
 
@@ -244,43 +239,15 @@ def login(
     user = db.execute(select(User).where(User.credential_id == cred.id)).scalar_one_or_none()
     if user:
         role_name = user.role.name if user.role else ""
-        access_token = create_access_token(subject=str(user.document_id), role=role_name)
-        refresh_token_str, jti = create_refresh_token(subject=str(user.document_id), role=role_name)
-        from datetime import datetime, timezone
-
-        expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
-        persist_refresh_session(db, cred.id, jti, expires_at)
-        _set_refresh_cookie(response, refresh_token_str)
         _audit_login(db, credential_id=cred.id, email=email, success=True, ip=ip, user_agent=ua)
-        db.commit()
-        reset_state = db.get(PasswordResetState, cred.id)
-        token_out = TokenResponse(
-            access_token=access_token,
-            role=role_name,
-            must_change_password=bool(reset_state and reset_state.must_change_password),
-        )
-        return ok_response(token_out.model_dump(), "Inicio de sesión exitoso")
+        return _issue_tokens(response, db, cred.id, str(user.document_id), role_name)
 
     provider = db.execute(select(Provider).where(Provider.credential_id == cred.id)).scalar_one_or_none()
     if provider:
         role_name = "Proveedor"
         subject = str(int(provider.nit))
-        access_token = create_access_token(subject=subject, role=role_name)
-        refresh_token_str, jti = create_refresh_token(subject=subject, role=role_name)
-        from datetime import datetime, timezone
-
-        expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
-        persist_refresh_session(db, cred.id, jti, expires_at)
-        _set_refresh_cookie(response, refresh_token_str)
         _audit_login(db, credential_id=cred.id, email=email, success=True, ip=ip, user_agent=ua)
-        db.commit()
-        reset_state = db.get(PasswordResetState, cred.id)
-        token_out = TokenResponse(
-            access_token=access_token,
-            role=role_name,
-            must_change_password=bool(reset_state and reset_state.must_change_password),
-        )
-        return ok_response(token_out.model_dump(), "Inicio de sesión exitoso")
+        return _issue_tokens(response, db, cred.id, subject, role_name)
 
     _audit_login(db, credential_id=cred.id, email=email, success=False, ip=ip, user_agent=ua, failure_reason="cuenta_sin_actor")
     db.commit()
@@ -314,12 +281,12 @@ def refresh_access_token(request: Request, response: Response, db: Session = Dep
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesión revocada o expirada")
 
     revoke_refresh_jti(db, jti)
-    new_access = create_access_token(subject=subject, role=role_name)
     new_refresh_str, new_jti = create_refresh_token(subject=subject, role=role_name)
     from datetime import datetime, timezone
 
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
     persist_refresh_session(db, cred_id, new_jti, expires_at)
+    new_access = create_access_token(subject=subject, role=role_name, session_jti=new_jti)
     _set_refresh_cookie(response, new_refresh_str)
     reset_state = db.get(PasswordResetState, cred_id)
     token_out = TokenResponse(

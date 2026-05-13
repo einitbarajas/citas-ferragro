@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     login_max_attempts: int = 5
     login_lockout_minutes: int = 15
     forgot_password_cooldown_seconds: int = 60
-    appointment_minimum_notice_hours: int = 48
+    # Horas mínimas entre el momento de agendar/reprogramar y el inicio de la cita (proveedor).
+    appointment_minimum_notice_hours: int = 24
     reminder_scheduler_interval_seconds: int = 300
     rate_limit_per_minute_default: int = 120
     rate_limit_per_minute_auth: int = 20

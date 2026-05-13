@@ -16,6 +16,7 @@ from app.schemas.appointment import (
     AppointmentExtend,
     AppointmentOut,
     AppointmentProviderCancel,
+    AppointmentProviderReschedule,
     AppointmentUpdateStatus,
 )
 from app.services.appointment_service import (
@@ -26,6 +27,8 @@ from app.services.appointment_service import (
     slot_conflict_check,
 )
 from app.services.appointment_windows import SLOT_MINUTES, assert_start_within_windows, list_date_windows_ordered
+from app.services.notification_service import notify_provider_appointment_updated, notify_staff_review_needed
+from app.services.range_bounds import business_local_range_bounds
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
@@ -170,6 +173,8 @@ def create_appointment(
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+    notify_staff_review_needed(db, appointment)
+    db.commit()
     return _serialize(appointment)
 
 
@@ -220,12 +225,18 @@ def list_appointments(
         end = start + timedelta(days=1)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
     elif mode == "week":
-        start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=7)
+        tz = ZoneInfo(settings.business_timezone)
+        local_now = datetime.now(tz)
+        start_local, end_local = business_local_range_bounds("week", local_now, tz)
+        start = start_local.astimezone(timezone.utc)
+        end = end_local.astimezone(timezone.utc)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
     elif mode == "biweekly":
-        start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=15)
+        tz = ZoneInfo(settings.business_timezone)
+        local_now = datetime.now(tz)
+        start_local, end_local = business_local_range_bounds("biweekly", local_now, tz)
+        start = start_local.astimezone(timezone.utc)
+        end = end_local.astimezone(timezone.utc)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
     elif mode == "month" and month and year:
         stmt = stmt.where(
@@ -274,35 +285,53 @@ def check_slot_conflict(
 @router.get("/available-slots")
 def list_available_slots_for_provider_day(
     day: date = Query(...),
+    exclude_appointment_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(require_roles(UserRole.proveedor)),
 ):
     tz = ZoneInfo(settings.business_timezone)
-    minimum_start_utc = datetime.now(timezone.utc) + timedelta(hours=12)
+    minimum_hours = settings.appointment_minimum_notice_hours
+    minimum_start_utc = datetime.now(timezone.utc) + timedelta(hours=minimum_hours)
     windows = list_date_windows_ordered(db, day)
     source = "date_override"
     if not windows:
         return ok_response(
-            {"day": str(day), "slot_minutes": SLOT_MINUTES, "source": "none", "available_times": []},
+            {
+                "day": str(day),
+                "slot_minutes": SLOT_MINUTES,
+                "source": "none",
+                "available_times": [],
+                "minimum_notice_hours": minimum_hours,
+                "unavailable_reason": "no_windows",
+                "unavailable_message": "Este día no tiene franjas habilitadas para citas.",
+            },
             "Disponibilidad obtenida",
         )
     start_utc, end_utc = _local_day_utc_bounds(day)
     provider_id = int(principal.subject)
-    if (
-        db.execute(
-            select(Appointment.id)
-            .where(
-                Appointment.provider_id == provider_id,
-                Appointment.status != AppointmentStatus.cancelado,
-                Appointment.start_time >= start_utc,
-                Appointment.start_time < end_utc,
-            )
-            .limit(1)
-        ).scalar_one_or_none()
-        is not None
-    ):
+    same_day_stmt = (
+        select(Appointment.id)
+        .where(
+            Appointment.provider_id == provider_id,
+            Appointment.status != AppointmentStatus.cancelado,
+            Appointment.start_time >= start_utc,
+            Appointment.start_time < end_utc,
+        )
+        .limit(1)
+    )
+    if exclude_appointment_id is not None:
+        same_day_stmt = same_day_stmt.where(Appointment.id != exclude_appointment_id)
+    if db.execute(same_day_stmt).scalar_one_or_none() is not None:
         return ok_response(
-            {"day": str(day), "slot_minutes": SLOT_MINUTES, "source": source, "available_times": []},
+            {
+                "day": str(day),
+                "slot_minutes": SLOT_MINUTES,
+                "source": source,
+                "available_times": [],
+                "minimum_notice_hours": minimum_hours,
+                "unavailable_reason": "provider_has_appointment",
+                "unavailable_message": "Ya tienes una cita agendada para este día. Solo se permite una cita por día.",
+            },
             "Disponibilidad obtenida",
         )
     appointments = (
@@ -317,6 +346,8 @@ def list_available_slots_for_provider_day(
         .all()
     )
     available_times: list[str] = []
+    slots_in_window = 0
+    slots_after_notice = 0
     for w in windows:
         start_minutes = w.start_local.hour * 60 + w.start_local.minute
         end_minutes = w.end_local.hour * 60 + w.end_local.minute
@@ -327,11 +358,15 @@ def list_available_slots_for_provider_day(
             local_dt = datetime(day.year, day.month, day.day, hh, mm, tzinfo=tz)
             cand_start_utc = local_dt.astimezone(timezone.utc)
             cand_end_utc = cand_start_utc + timedelta(minutes=90)
+            slots_in_window += 1
             if cand_start_utc < minimum_start_utc:
                 t += SLOT_MINUTES
                 continue
+            slots_after_notice += 1
             overlap = False
             for appt in appointments:
+                if exclude_appointment_id is not None and appt.id == exclude_appointment_id:
+                    continue
                 appt_end = appt.start_time + timedelta(minutes=appt.duration_minutes)
                 if cand_start_utc < appt_end and cand_end_utc > appt.start_time:
                     overlap = True
@@ -339,10 +374,32 @@ def list_available_slots_for_provider_day(
             if not overlap:
                 available_times.append(f"{hh:02d}:{mm:02d}")
             t += SLOT_MINUTES
-    return ok_response(
-        {"day": str(day), "slot_minutes": SLOT_MINUTES, "source": source, "available_times": sorted(set(available_times))},
-        "Disponibilidad obtenida",
-    )
+    payload = {
+        "day": str(day),
+        "slot_minutes": SLOT_MINUTES,
+        "source": source,
+        "available_times": sorted(set(available_times)),
+        "minimum_notice_hours": minimum_hours,
+    }
+    if not payload["available_times"]:
+        earliest_local = minimum_start_utc.astimezone(tz)
+        if slots_in_window == 0:
+            payload["unavailable_reason"] = "no_valid_slots"
+            payload["unavailable_message"] = "No hay horarios válidos en la franja habilitada para este día."
+        elif slots_after_notice == 0:
+            payload["unavailable_reason"] = "minimum_notice"
+            payload["unavailable_message"] = (
+                f"No puedes agendar para esta fecha porque la cita debe solicitarse con al menos "
+                f"{minimum_hours} horas de anticipación. El primer horario que podrías elegir es después de las "
+                f"{earliest_local.strftime('%H:%M')} ({settings.business_timezone})."
+            )
+            payload["earliest_bookable_at"] = earliest_local.isoformat()
+        else:
+            payload["unavailable_reason"] = "fully_booked"
+            payload["unavailable_message"] = (
+                "Disponibilidad llena: todos los horarios de esta franja ya fueron tomados por otras citas."
+            )
+    return ok_response(payload, "Disponibilidad obtenida")
 
 
 @router.patch("/{appointment_id}/status", response_model=AppointmentOut)
@@ -364,12 +421,13 @@ def update_status(
     if payload.status == AppointmentStatus.cancelado:
         if principal.role_name == UserRole.logistica:
             raise HTTPException(status_code=403, detail="Logística no está autorizada para cancelar citas")
-        now_utc = datetime.now(timezone.utc)
-        if appt.start_time - now_utc < timedelta(hours=24):
-            raise HTTPException(
-                status_code=400,
-                detail="La cita solo se puede cancelar con minimo 24 horas de anticipacion",
-            )
+        if principal.role_name != UserRole.admin:
+            now_utc = datetime.now(timezone.utc)
+            if appt.start_time - now_utc < timedelta(hours=24):
+                raise HTTPException(
+                    status_code=400,
+                    detail="La cita solo se puede cancelar con minimo 24 horas de anticipacion",
+                )
     old_status = appt.status
     appt.status = payload.status
     db.add(
@@ -383,6 +441,11 @@ def update_status(
             old_value=old_status.value,
             new_value=payload.status.value,
         )
+    )
+    notify_provider_appointment_updated(
+        db,
+        appt,
+        summary=f"La empresa cambió el estado de tu cita de {old_status.value} a {payload.status.value}.",
     )
     db.commit()
     db.refresh(appt)
@@ -421,6 +484,90 @@ def extend_appointment(
             new_value=str(appt.duration_minutes),
         )
     )
+    notify_provider_appointment_updated(
+        db,
+        appt,
+        summary=f"La empresa extendió la duración de tu cita a {appt.duration_minutes} minutos.",
+    )
+    db.commit()
+    db.refresh(appt)
+    return _serialize(appt)
+
+
+@router.patch("/{appointment_id}/reschedule", response_model=AppointmentOut)
+def provider_reschedule_appointment(
+    appointment_id: int,
+    payload: AppointmentProviderReschedule,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(require_roles(UserRole.proveedor)),
+):
+    appt = db.get(Appointment, appointment_id)
+    if not appt:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+    if int(appt.provider_id) != int(principal.subject):
+        raise HTTPException(status_code=403, detail="No autorizado para reprogramar esta cita")
+    if appt.status in {AppointmentStatus.cancelado, AppointmentStatus.finalizada, AppointmentStatus.no_presentada}:
+        raise HTTPException(status_code=400, detail="Esta cita ya no puede reprogramarse")
+
+    provider_id = int(principal.subject)
+    day_local = payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).date()
+    start_utc, end_utc = _local_day_utc_bounds(day_local)
+    already_same_day = db.execute(
+        select(Appointment.id)
+        .where(
+            Appointment.provider_id == provider_id,
+            Appointment.status != AppointmentStatus.cancelado,
+            Appointment.start_time >= start_utc,
+            Appointment.start_time < end_utc,
+            Appointment.id != appointment_id,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if already_same_day is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Ya tienes una cita agendada para ese día. Solo se permite una cita por día.",
+        )
+    date_windows = list_date_windows_ordered(db, day_local)
+    if not date_windows:
+        raise HTTPException(
+            status_code=400,
+            detail="Este día no tiene franjas habilitadas para citas. Solo puedes agendar en fechas que la empresa abrió en el calendario de franjas.",
+        )
+    enforce_minimum_notice(payload.start_time, minimum_hours=settings.appointment_minimum_notice_hours)
+    assert_start_within_windows(db, payload.start_time)
+    reserve_slot_fifo_or_raise(
+        db,
+        payload.start_time,
+        appt.duration_minutes,
+        exclude_appointment_id=appointment_id,
+    )
+
+    old_start = appt.start_time
+    appt.start_time = payload.start_time
+    if appt.status not in {
+        AppointmentStatus.cancelado,
+        AppointmentStatus.finalizada,
+        AppointmentStatus.no_presentada,
+    }:
+        appt.status = AppointmentStatus.sin_revision
+    db.add(
+        AuditLog(
+            actor_id=str(principal.subject),
+            appointment_id=appt.id,
+            action="provider_reschedule",
+            description=(
+                "Proveedor reprograma cita de "
+                f"{old_start.astimezone(ZoneInfo(settings.business_timezone)).isoformat()} a "
+                f"{payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).isoformat()}"
+            ),
+            created_at=datetime.now(timezone.utc),
+            critical_field="start_time",
+            old_value=old_start.isoformat(),
+            new_value=payload.start_time.isoformat(),
+        )
+    )
+    notify_staff_review_needed(db, appt)
     db.commit()
     db.refresh(appt)
     return _serialize(appt)

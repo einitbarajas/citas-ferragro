@@ -17,7 +17,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 
-from app.api import admin, appointments, auth, crud
+from app.api import admin, appointments, auth, crud, notifications
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.responses import error_response, ok_response
@@ -219,6 +219,7 @@ for api_prefix in ("/api", "/api/v1"):
     app.include_router(auth.router, prefix=api_prefix)
     app.include_router(crud.router, prefix=api_prefix)
     app.include_router(appointments.router, prefix=api_prefix)
+    app.include_router(notifications.router, prefix=api_prefix)
     app.include_router(admin.router, prefix=api_prefix)
 
 # Último add_middleware: primero en la lista de usuario → capa exterior que intercepta `send`.
@@ -309,10 +310,23 @@ def integrity_exception_handler(_, exc: IntegrityError):
 
 
 @app.exception_handler(DataError)
-def data_exception_handler(_, __):
+def data_exception_handler(_, exc: DataError):
+    original = str(getattr(exc, "orig", exc) or "").lower()
+    if "out of range" in original or "fuera de rango" in original:
+        message = (
+            "Un valor numérico supera el tamaño permitido en la base de datos. "
+            "Si reprogramaste o actualizaste una cita, revisa que el NIT del proveedor sea válido."
+        )
+    elif "invalid input syntax" in original or "sintaxis de entrada no es válida" in original:
+        message = "El formato de fecha, hora o número enviado no es válido."
+    elif "value too long" in original or "demasiado largo" in original:
+        message = "Uno de los campos supera la longitud máxima permitida."
+    else:
+        message = "El formato o tamaño de uno o más campos es inválido."
+
     return JSONResponse(
         status_code=400,
-        content=error_response("El formato o tamaño de uno o más campos es inválido."),
+        content=error_response(message),
     )
 
 

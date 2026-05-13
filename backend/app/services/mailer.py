@@ -155,3 +155,26 @@ def send_welcome_email(to_email: str, recipient_name: str) -> bool:
           </p>
 """
     return send_branded_email(subject, to_email, plain_body, content_html)
+
+
+def send_notification_email(to_email: str, title: str, message: str) -> bool:
+    subject = f"Ferragro - {title}"
+    plain_body = (
+        f"{title}\n\n"
+        f"{message}\n\n"
+        "Ingresa al panel de Ferragro para ver el detalle.\n\n"
+        f"Soporte: {SUPPORT_EMAIL} | WhatsApp: {SUPPORT_PHONE}\n"
+        f"Direccion: {COMPANY_ADDRESS}\n"
+        f"Sitio web: {COMPANY_WEBSITE}\n\n"
+        "Ferragro"
+    )
+    safe_title = title.replace("<", "&lt;").replace(">", "&gt;")
+    safe_message = message.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br />")
+    content_html = f"""
+          <h1 style="margin:0 0 16px;font-size:22px;color:#0f6e2f;">{safe_title}</h1>
+          <p style="margin:0;line-height:1.6;">{safe_message}</p>
+          <p style="margin:18px 0 0;line-height:1.6;">
+            Ingresa al panel de Ferragro para ver el detalle.
+          </p>
+"""
+    return send_branded_email(subject, to_email, plain_body, content_html)

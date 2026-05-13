@@ -32,11 +32,19 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def create_access_token(subject: str, role: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    subject: str,
+    role: str,
+    *,
+    session_jti: UUID | None = None,
+    expires_delta: Optional[timedelta] = None,
+) -> str:
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
     payload = {"sub": subject, "role": role, "exp": expire, "token_type": "access"}
+    if session_jti is not None:
+        payload["jti"] = str(session_jti)
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 

@@ -16,6 +16,9 @@ function defaultTipForStep(step, stepIndex) {
 function defaultAhoraLine(step) {
   if (step.ahora) return step.ahora;
   const t = String(step.title || "");
+  if (t.includes("Centro de notificaciones") || t.includes("notificaciones")) {
+    return "Mira arriba a la derecha del panel central: icono de campana junto a «Manual guiado».";
+  }
   if (t.startsWith("Contenido:")) {
     return "Mira el panel central (zona grande): ahí trabajas con formularios y listas.";
   }

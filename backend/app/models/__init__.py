@@ -11,6 +11,7 @@ from app.models.provider import Provider
 from app.models.profile_photo import ProfilePhoto
 from app.models.refresh_session import RefreshSession
 from app.models.reminder_run import ReminderExecution
+from app.models.user_notification import UserNotification
 from app.models.role import Role
 from app.models.user import User, UserRole
 
@@ -33,4 +34,5 @@ __all__ = [
     "LoginAudit",
     "PasswordResetState",
     "ReminderExecution",
+    "UserNotification",
 ]

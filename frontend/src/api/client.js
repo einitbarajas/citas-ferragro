@@ -117,12 +117,25 @@ export function parseApiResponse(response) {
 }
 
 export function parseApiError(error) {
+  const status = error?.response?.status;
   const payload = error?.response?.data;
   if (payload?.message) {
+    if (status === 422 && Array.isArray(payload?.data) && payload.data.length > 0) {
+      const first = payload.data[0];
+      const field = Array.isArray(first?.loc) ? first.loc.filter((part) => part !== "body").join(".") : "";
+      const detail = String(first?.msg || "").trim();
+      if (detail) {
+        return field ? `${field}: ${detail}` : detail;
+      }
+    }
     return payload.message;
   }
   if (typeof payload?.detail === "string" && payload.detail.trim()) {
-    return payload.detail.trim();
+    const detail = payload.detail.trim();
+    if (status === 404 && detail.toLowerCase() === "not found") {
+      return "No se encontró el recurso solicitado. Si acabas de actualizar el sistema, reinicia el backend.";
+    }
+    return detail;
   }
   if (Array.isArray(payload?.detail) && payload.detail.length > 0) {
     const first = payload.detail[0];
