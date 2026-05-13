@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +50,16 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
+
+    @model_validator(mode="after")
+    def apply_production_defaults(self) -> "Settings":
+        if not self.is_production:
+            return self
+        if not self.refresh_cookie_secure:
+            object.__setattr__(self, "refresh_cookie_secure", True)
+        if self.refresh_cookie_samesite.lower() in {"", "lax"}:
+            object.__setattr__(self, "refresh_cookie_samesite", "none")
+        return self
 
 
 settings = Settings()

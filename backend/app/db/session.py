@@ -17,5 +17,15 @@ def _postgresql_psycopg_url(url: str) -> str:
     return url
 
 
-engine = create_engine(_postgresql_psycopg_url(settings.database_url), future=True)
+def _engine_connect_args(url: str) -> dict[str, str]:
+    if settings.is_production and "localhost" not in url and "127.0.0.1" not in url and "sslmode=" not in url:
+        return {"sslmode": "require"}
+    return {}
+
+
+engine = create_engine(
+    _postgresql_psycopg_url(settings.database_url),
+    connect_args=_engine_connect_args(settings.database_url),
+    future=True,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)

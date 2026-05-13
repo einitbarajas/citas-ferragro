@@ -387,3 +387,55 @@ Para validar cambios con ZAP o herramientas similares:
 3. En modo desarrollo (`npm run dev`) pueden aparecer alertas informativas por tooling de frontend; para validar un escenario más cercano a producción usa `npm run build` y `npm run preview` (o el servidor estático que despliegues).
 
 Documentación operativa (RPO/RTO, backups, roles DB): `documentacion/operacion_continuidad.md`.
+
+## 5) Despliegue en la nube (Vercel + Render)
+
+La documentación funcional y técnica permanece en este repositorio de GitHub (`README.md`, `documentacion/`, `db/README.md`). El contrato del API en producción se consulta en `https://<tu-api>.onrender.com/docs`.
+
+### 5.1) Render (PostgreSQL + backend)
+
+1. En [Render](https://render.com), conecta el repositorio de GitHub.
+2. Crea un **Blueprint** desde `render.yaml` (recomendado) o crea manualmente:
+   - **PostgreSQL** (plan Free o superior).
+   - **Web Service** Python con **Root Directory** `backend`.
+   - **Build command:** `pip install -r requirements.txt`
+   - **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - **Health check path:** `/health`
+3. Variables de entorno del servicio (además de `DATABASE_URL` enlazada a la BD):
+   - `ENVIRONMENT=production`
+   - `SECRET_KEY` (valor largo y aleatorio; Render puede generarlo en el Blueprint)
+   - `CORS_ORIGINS` (se completa en el paso 5.3)
+   - Opcional: SMTP y Cloudinary (mismas claves que en `.env.example`)
+4. Cuando la BD esté **Available**, aplica el esquema desde tu máquina con la **External Database URL** de Render:
+
+   ```bash
+   export DATABASE_URL="postgresql://..."
+   bash db/run-database-all.sh
+   ```
+
+   No uses `--seed` en producción salvo que quieras datos de demostración.
+
+5. Comprueba `https://<tu-api>.onrender.com/health` y `/docs`.
+
+### 5.2) Vercel (frontend)
+
+1. En [Vercel](https://vercel.com), importa el mismo repositorio de GitHub.
+2. **Root Directory:** `frontend`
+3. **Framework Preset:** Vite (o deja que detecte `vercel.json`).
+4. Variables de entorno de **Production** (y Preview si quieres):
+   - `VITE_API_URL=https://<tu-api>.onrender.com` (sin barra final)
+   - `VITE_API_PREFIX=/api/v1`
+5. Despliega y anota la URL HTTPS del sitio (por ejemplo `https://tu-proyecto.vercel.app`).
+
+### 5.3) Enlazar front y back
+
+1. En Render, edita el Web Service y define `CORS_ORIGINS` con la URL HTTPS de Vercel (varias separadas por coma si tienes dominio custom y preview).
+2. Redespliega el backend.
+3. En Vercel, **Redeploy** el frontend si cambiaste `VITE_API_URL`.
+4. Prueba login, refresh de sesión, logout y el panel con la URL de Vercel.
+
+### 5.4) Notas
+
+- El plan Free de Render puede **dormir** el API; la primera petición tras inactividad tarda más.
+- Entre dominios distintos (Vercel + Render) la cookie de refresh usa `Secure` y `SameSite=None` en producción.
+- Los scripts SQL viven en `db/`; el backend también ejecuta `create_all` al arrancar, pero el flujo recomendado es aplicar `db/run-database-all.sh` contra la BD de Render.
