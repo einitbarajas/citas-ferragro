@@ -107,6 +107,27 @@ api.interceptors.response.use(
   }
 );
 
+/** Intenta login probando variantes de mayúsculas (API legacy sensible a mayúsculas). */
+export async function postLogin(email, password) {
+  const trimmed = String(email || "").trim();
+  const variants = [...new Set([trimmed, trimmed.toUpperCase(), trimmed.toLowerCase()])].filter(Boolean);
+  let lastError = null;
+  for (const variant of variants) {
+    try {
+      const response = await api.post(`${API_PREFIX}/auth/login`, { email: variant, password });
+      const payload = parseApiResponse(response);
+      if (payload.success) {
+        return { payload, emailUsed: variant };
+      }
+      lastError = new Error(payload.message || "Error de inicio de sesión");
+    } catch (err) {
+      if (err?.response?.status === 429) throw err;
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("Email o contraseña inválidos");
+}
+
 export function parseApiResponse(response) {
   const payload = response?.data;
   if (!payload || typeof payload !== "object") {

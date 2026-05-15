@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import SecurityPrincipal, get_db, get_security_principal
@@ -28,6 +28,7 @@ from app.services.auth_sessions import (
     revoke_all_refresh_for_credential,
     revoke_refresh_jti,
 )
+from app.services.credential_cleanup import credential_has_active_owner
 from app.services.login_policy import is_login_blocked, record_login_failure, reset_login_failures
 from app.services.mailer import send_temporary_password_email, send_welcome_email
 
@@ -85,6 +86,18 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         max_age=int(timedelta(days=settings.refresh_token_expire_days).total_seconds()),
         path="/",
     )
+
+
+def _resolve_credential_by_email(db: Session, email: str) -> Credential | None:
+    """Busca credencial por correo (sin distinguir mayúsculas). Prioriza cuenta con usuario o proveedor."""
+    normalized = email.strip().lower()
+    creds = db.execute(select(Credential).where(func.lower(Credential.email) == normalized)).scalars().all()
+    if not creds:
+        return None
+    for cred in creds:
+        if credential_has_active_owner(db, cred.id):
+            return cred
+    return creds[0]
 
 
 def _clear_refresh_cookie(response: Response) -> None:
@@ -213,7 +226,7 @@ def login(
     ip = _client_ip(request)
     ua = request.headers.get("user-agent")
 
-    cred = db.execute(select(Credential).where(Credential.email == email)).scalar_one_or_none()
+    cred = _resolve_credential_by_email(db, email)
     if not cred:
         _audit_login(db, credential_id=None, email=email, success=False, ip=ip, user_agent=ua, failure_reason="correo_no_registrado")
         db.commit()
@@ -302,7 +315,7 @@ def refresh_access_token(request: Request, response: Response, db: Session = Dep
 @limiter.limit(f"{settings.rate_limit_per_minute_auth}/minute")
 def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
     email = str(payload.email).strip()
-    cred = db.execute(select(Credential).where(Credential.email == email)).scalar_one_or_none()
+    cred = _resolve_credential_by_email(db, email)
     if not cred:
         # Respuesta genérica para no filtrar qué correos existen.
         return ok_response(None, "Si el correo existe, se enviará una contraseña temporal.")

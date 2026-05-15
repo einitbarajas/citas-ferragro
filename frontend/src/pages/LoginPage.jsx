@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import api, { API_PREFIX, getRetryAfterSeconds, parseApiError, parseApiResponse } from "../api/client";
+import api, { API_PREFIX, getRetryAfterSeconds, parseApiError, parseApiResponse, postLogin } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import BrandLogo from "../components/BrandLogo";
 import PasswordVisibilityButton from "../components/PasswordVisibilityButton";
@@ -193,8 +193,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
           throw new Error(registerPayload.message);
         }
       }
-      const loginResponse = await api.post(`${API_PREFIX}/auth/login`, { email: form.correo_empresa, password: form.password });
-      const loginPayload = parseApiResponse(loginResponse);
+      const { payload: loginPayload, emailUsed } = await postLogin(form.correo_empresa, form.password);
       if (!loginPayload.success) {
         throw new Error(loginPayload.message);
       }
@@ -208,7 +207,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
       login({
         token: loginPayload.data.access_token,
         role: loginPayload.data.role,
-        email: form.correo_empresa?.trim() || undefined,
+        email: emailUsed || form.correo_empresa?.trim() || undefined,
       });
     } catch (err) {
       const waitSeconds = getRetryAfterSeconds(err);
