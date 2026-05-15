@@ -122,7 +122,7 @@ Consulta realizada contra `ferragro-db` en Render:
 | Rol | Cómo se crea |
 |-----|----------------|
 | **Admin** | Solo con script `bootstrap-admin.ps1` o otro Admin en el panel |
-| **Logística** | Panel Admin → **Crear usuario**, o registro público (pestaña Registrarme, rol Logística) |
+| **Logística** | Panel Admin → **Equipo** → formulario *Alta Admin o Logística* |
 | **Proveedor** | Registro público en la web (Registrarme) |
 
 #### Usuarios de demostración (solo desarrollo local)
@@ -198,12 +198,62 @@ Cuando responda `{"success":true,...}`, el backend ya está listo. Luego entra a
 
 **Redespliegue manual (si hiciste cambios):**
 
-- **Backend:** push a `main` en GitHub (auto-deploy) o en Render → `ferragro-api` → **Manual Deploy**.
-- **Frontend:** en Vercel → **Deployments** → **Redeploy**, o desde la carpeta `frontend`:
+| Qué cambiaste | Dónde desplegar | Cómo |
+|---------------|-----------------|------|
+| Solo pantallas (React, CSS, JS) | **Vercel** (frontend) | Redeploy en panel o CLI (abajo) |
+| API, reglas de negocio, borrado de usuarios | **Render** (`ferragro-api`) | Push a `main` o Manual Deploy en Render |
+| Base de datos (SQL en `db/init/`) | **PostgreSQL** en Render | Scripts SQL contra la BD (sin seed) |
 
-  ```bash
-  npx vercel deploy --prod
-  ```
+> Si arreglas algo del **correo al eliminar usuarios**, del **login** o de la **API**, debes desplegar el **backend en Render**. Subir solo a Vercel **no** aplica esos cambios.
+
+#### Frontend en Vercel (recomendado desde PC)
+
+1. Inicia sesión en Vercel (una vez): `npx vercel login`
+2. Enlaza el proyecto (una vez por clon del repo), desde la carpeta `frontend`:
+
+   ```powershell
+   cd "c:\dev\trabajo ferragro\frontend"
+   npx vercel link --project frontend --scope ferragro --yes
+   ```
+
+3. Cada vez que quieras publicar producción:
+
+   ```powershell
+   cd "c:\dev\trabajo ferragro\frontend"
+   npx vercel deploy --prod --yes
+   ```
+
+4. Comprueba que la web sirve archivos nuevos: abre https://frontend-ferragro.vercel.app y, si hace falta, recarga forzada o incógnito en el móvil.
+
+**Configuración en el panel Vercel** (Settings → General):
+
+- **Root Directory:** `frontend` (no la raíz del monorepo).
+- **Production Branch:** `main`.
+- Variables: `VITE_API_URL`, `VITE_API_PREFIX` (ver sección 2).
+
+**Alternativa sin CLI:** Vercel → proyecto `frontend` → **Deployments** → último deploy → **Redeploy** (opción *Clear build cache* si no ves cambios).
+
+#### Backend en Render
+
+- **Automático:** `git push origin main` (si el servicio está conectado a GitHub).
+- **Manual:** https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0 → **Manual Deploy** → *Deploy latest commit*.
+
+Comprueba: `https://ferragro-api.onrender.com/health` debe responder `200` con `"status":"ok"`.
+
+### Usuarios internos: eliminar y volver a registrar el mismo correo
+
+Al **eliminar** un usuario Admin/Logística desde el panel:
+
+- Se borran sus datos de acceso (usuario y credencial).
+- **Se conserva** el historial de auditoría y de citas que hizo (tablas `HistorialCambios`, `AuditoriaSistema`, etc.).
+
+Después del arreglo en la API (deploy en Render), puedes **crear otro usuario** con el **mismo correo** y un documento distinto (o el mismo, si ya no existe ese documento).
+
+Si aún aparece *"El email ya está registrado"* tras eliminar:
+
+1. Confirma que el **backend en Render** tiene el último código (redeploy del API).
+2. Vuelve a intentar **Crear usuario** (la API limpia credenciales huérfanas si las hubiera).
+3. Si persiste, revisa en la BD que no exista otro proveedor con ese correo.
 
 ### Desarrollo local (en tu PC)
 
@@ -343,4 +393,6 @@ Usuario (navegador)
 
 ---
 
-*Última actualización según despliegue en Vercel + Render (marzo 2026). Si cambias nombres de servicios o dominios en los dashboards, actualiza las URLs de este documento.*
+*Última actualización: mayo 2026 (Vercel CLI `frontend/`, Render API, reutilización de correo al eliminar usuarios). Si cambias nombres de servicios o dominios en los dashboards, actualiza las URLs de este documento.*
+
+**Versión web en producción (referencia):** frontend en https://frontend-ferragro.vercel.app — despliegue con `npx vercel deploy --prod` desde `frontend/`.

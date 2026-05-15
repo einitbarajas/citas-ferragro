@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
-from sqlalchemy import Date, cast, extract, func, select
+from sqlalchemy import Date, cast, delete, extract, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import SecurityPrincipal, get_db, get_security_principal, require_roles
@@ -18,10 +18,14 @@ from app.models.audit_log import ChangeLog
 from app.models.appointment_date_window import AppointmentDateWindow
 from app.models.credential import Credential
 from app.models.provider import Provider
+from app.models.login_attempt import LoginAttempt
+from app.models.password_reset_state import PasswordResetState
 from app.models.profile_photo import ProfilePhoto
+from app.models.refresh_session import RefreshSession
 from app.models.reminder_run import ReminderExecution
 from app.models.role import Role
 from app.models.user import User
+from app.services.auth_sessions import revoke_all_refresh_for_credential
 from app.services.notification_service import notify_provider_appointment_updated, notify_staff_review_needed
 from app.schemas.crud import (
     AppointmentDateWindowReplace,
@@ -261,6 +265,44 @@ def _log_admin_event(db: Session, actor_id: str, action: str, description: str, 
     )
 
 
+def _credential_has_active_owner(db: Session, credential_id: int) -> bool:
+    user = db.execute(select(User).where(User.credential_id == credential_id)).scalar_one_or_none()
+    if user:
+        return True
+    provider = db.execute(select(Provider).where(Provider.credential_id == credential_id)).scalar_one_or_none()
+    return provider is not None
+
+
+def _purge_credential_dependencies(db: Session, credential_id: int) -> None:
+    db.execute(delete(ProfilePhoto).where(ProfilePhoto.credential_id == credential_id))
+    revoke_all_refresh_for_credential(db, credential_id)
+    db.execute(delete(RefreshSession).where(RefreshSession.credential_id == credential_id))
+    attempt = db.get(LoginAttempt, credential_id)
+    if attempt:
+        db.delete(attempt)
+    reset = db.get(PasswordResetState, credential_id)
+    if reset:
+        db.delete(reset)
+
+
+def _delete_credential_fully(db: Session, credential_id: int) -> None:
+    _purge_credential_dependencies(db, credential_id)
+    cred = db.get(Credential, credential_id)
+    if cred:
+        db.delete(cred)
+
+
+def _assert_email_available_for_new_account(db: Session, email: str, *, exclude_credential_id: int | None = None) -> None:
+    """Bloquea correo en uso; elimina credenciales huérfanas (usuario/proveedor ya borrados)."""
+    query = select(Credential).where(Credential.email == email)
+    if exclude_credential_id is not None:
+        query = query.where(Credential.id != exclude_credential_id)
+    for cred in db.execute(query).scalars().all():
+        if _credential_has_active_owner(db, cred.id):
+            raise HTTPException(status_code=400, detail="El email ya está registrado")
+        _delete_credential_fully(db, cred.id)
+
+
 def _resolve_principal_entities(
     principal,
     db: Session,
@@ -357,8 +399,7 @@ def create_user(
         )
     if db.get(User, payload.document_id):
         raise HTTPException(status_code=400, detail="El documento ya está registrado")
-    if db.execute(select(Credential).where(Credential.email == str(payload.email))).scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="El email ya está registrado")
+    _assert_email_available_for_new_account(db, str(payload.email))
 
     cred = Credential(email=str(payload.email), password_hash=get_password_hash(payload.password))
     db.add(cred)
@@ -438,6 +479,7 @@ def delete_user(
     cid = user.credential_id
     deleted_name = user.full_name
     db.delete(user)
+    db.flush()
     _log_admin_event(
         db=db,
         actor_id=principal.document_id,
@@ -445,11 +487,8 @@ def delete_user(
         description=f"Eliminó usuario interno {deleted_name} ({document_id})",
         target_document_id=document_id,
     )
+    _delete_credential_fully(db, cid)
     db.commit()
-    cred = db.get(Credential, cid)
-    if cred:
-        db.delete(cred)
-        db.commit()
     return ok_response(None, "Usuario eliminado correctamente")
 
 
@@ -653,6 +692,7 @@ def delete_provider(
     cid = provider.credential_id
     deleted_name = provider.company_name
     db.delete(provider)
+    db.flush()
     _log_admin_event(
         db=db,
         actor_id=principal.document_id,
@@ -660,11 +700,8 @@ def delete_provider(
         description=f"Eliminó proveedor {deleted_name} (NIT {nit})",
         target_document_id=str(nit),
     )
+    _delete_credential_fully(db, cid)
     db.commit()
-    cred = db.get(Credential, cid)
-    if cred:
-        db.delete(cred)
-        db.commit()
     return ok_response(None, "Proveedor eliminado correctamente")
 
 

@@ -763,7 +763,10 @@ export default function DashboardPage() {
   const pushToast = useCallback((message, type = "error") => {
     if (!message) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev) => {
+      if (prev.some((toast) => toast.message === message && toast.type === type)) return prev;
+      return [...prev, { id, message, type }];
+    });
     setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, TOAST_AUTO_DISMISS_MS);
@@ -2834,7 +2837,7 @@ export default function DashboardPage() {
             </div>
             <div className={`${card} md:col-span-2`}>
               <h3 className="mb-2 text-sm font-semibold text-slate-800">Usuarios internos actuales</h3>
-              <div className="mb-3 grid gap-2 md:grid-cols-2">
+              <div className="mb-3 flex flex-col gap-2">
                 <input
                   className={input}
                   placeholder="Filtrar por nombre o correo"
