@@ -101,6 +101,27 @@ def parse_md_to_docx(md_path: Path, out_path: Path) -> None:
             i += 1
             continue
 
+        if line.startswith("### "):
+            doc.add_heading(line[4:].strip(), level=2)
+            i += 1
+            continue
+
+        if line.strip().startswith("```"):
+            i += 1
+            block_lines: list[str] = []
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                block_lines.append(lines[i])
+                i += 1
+            if i < len(lines):
+                i += 1
+            if block_lines:
+                p = doc.add_paragraph()
+                run = p.add_run("\n".join(block_lines))
+                run.font.name = "Consolas"
+                run.font.size = Pt(9)
+                p.paragraph_format.space_after = Pt(6)
+            continue
+
         if line.startswith("|"):
             block: list[str] = []
             while i < len(lines) and lines[i].startswith("|"):
@@ -133,8 +154,16 @@ def parse_md_to_docx(md_path: Path, out_path: Path) -> None:
 
 def main() -> None:
     root = repo_root()
-    md = root / "PRUEBAS.md"
-    out = root / "PRUEBAS.docx"
+    if len(sys.argv) >= 3:
+        md = Path(sys.argv[1])
+        out = Path(sys.argv[2])
+        if not md.is_file():
+            md = root / md
+        if not out.is_absolute():
+            out = root / out
+    else:
+        md = root / "PRUEBAS.md"
+        out = root / "PRUEBAS.docx"
     if not md.is_file():
         print(f"No existe {md}", file=sys.stderr)
         sys.exit(1)

@@ -1,5 +1,4 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import {
   isNarrowPanelTourViewport,
   manualTourBootDelayMs,
@@ -15,6 +14,7 @@ import AppointmentReschedulePanel from "../components/AppointmentReschedulePanel
 import ConfirmDialog from "../components/ConfirmDialog";
 import BrandLogo from "../components/BrandLogo";
 import NotificationCenter from "../components/NotificationCenter";
+import PasswordVisibilityButton from "../components/PasswordVisibilityButton";
 
 const GuidedTourDialog = lazy(() => import("../components/GuidedTourDialog"));
 import { useAuth } from "../context/AuthContext";
@@ -240,7 +240,7 @@ function getFranjaValidationError(rows, context = "franja") {
 }
 
 export default function DashboardPage() {
-  const { session, logout } = useAuth();
+  const { session, authReady, logout } = useAuth();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [appointments, setAppointments] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -352,11 +352,20 @@ export default function DashboardPage() {
   const isProveedor = session?.role === "Proveedor";
 
   useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
     const previousHtmlOverflow = document.documentElement.style.overflow;
     const previousBodyOverflow = document.body.style.overflow;
-    document.documentElement.style.overflow = "hidden";
-    document.body.style.overflow = "hidden";
+
+    const applyScrollLock = () => {
+      const lock = mq.matches;
+      document.documentElement.style.overflow = lock ? "hidden" : "";
+      document.body.style.overflow = lock ? "hidden" : "";
+    };
+
+    applyScrollLock();
+    mq.addEventListener("change", applyScrollLock);
     return () => {
+      mq.removeEventListener("change", applyScrollLock);
       document.documentElement.style.overflow = previousHtmlOverflow;
       document.body.style.overflow = previousBodyOverflow;
     };
@@ -418,17 +427,15 @@ export default function DashboardPage() {
     const narrow = isNarrowPanelTourViewport();
     const navId = step.moduleTarget ? MODULE_TO_NAV_TOUR_ID[step.moduleTarget] || "" : "";
 
-    flushSync(() => {
-      if (narrow) {
-        if (step.sidebarMobile === "open") setMobileNavOpen(true);
-        else if (step.sidebarMobile === "close") setMobileNavOpen(false);
-      }
-      if (step.moduleTarget) {
-        if (isAdmin) setAdminTab(step.moduleTarget);
-        if (isLogistica) setLogisticaTab(step.moduleTarget);
-        if (isProveedor) setProveedorTab(step.moduleTarget);
-      }
-    });
+    if (narrow) {
+      if (step.sidebarMobile === "open") setMobileNavOpen(true);
+      else if (step.sidebarMobile === "close") setMobileNavOpen(false);
+    }
+    if (step.moduleTarget) {
+      if (isAdmin) setAdminTab(step.moduleTarget);
+      if (isLogistica) setLogisticaTab(step.moduleTarget);
+      if (isProveedor) setProveedorTab(step.moduleTarget);
+    }
 
     window.requestAnimationFrame(() => {
       if (!navId) return;
@@ -448,10 +455,8 @@ export default function DashboardPage() {
   const startManualTour = useCallback(() => {
     const narrow = isNarrowPanelTourViewport();
     if (narrow) {
-      flushSync(() => {
-        setPanelTourLayout(true);
-        setMobileNavOpen(true);
-      });
+      setPanelTourLayout(true);
+      setMobileNavOpen(true);
     }
     if (isAdmin) setAdminTab("citas");
     if (isLogistica) setLogisticaTab("citas");
@@ -468,7 +473,7 @@ export default function DashboardPage() {
   }, [isAdmin, isLogistica, isProveedor]);
 
   const loadAppointments = useCallback(async () => {
-    if (!session || (!isAdmin && !isLogistica)) return;
+    if (!session || !authReady || (!isAdmin && !isLogistica)) return;
     const isRevisionTabActive =
       (isAdmin && adminTab === "revision_citas") || (isLogistica && logisticaTab === "revision_citas");
     const requestMode = isRevisionTabActive ? "list" : viewMode;
@@ -492,8 +497,15 @@ export default function DashboardPage() {
       }
       const inner = payload.data;
       setAppointments(Array.isArray(inner) ? inner : inner?.items ?? []);
-    } catch {
-      // Fallback para evitar que la vista se quede desactualizada por filtros incompatibles.
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        throw err;
+      }
+      if (requestMode === "list") {
+        throw err;
+      }
+      // Fallback solo si el filtro activo falla por datos incompatibles, no por sesión.
       const response = await api.get(`${API_PREFIX}/crud/appointments?${buildParams("list").toString()}`);
       const payload = parseApiResponse(response);
       if (!payload.success) {
@@ -502,7 +514,7 @@ export default function DashboardPage() {
       const inner = payload.data;
       setAppointments(Array.isArray(inner) ? inner : inner?.items ?? []);
     }
-  }, [session, viewMode, filterDay, filterMonth, filterYear, isAdmin, isLogistica, adminTab, logisticaTab]);
+  }, [session, authReady, viewMode, filterDay, filterMonth, filterYear, isAdmin, isLogistica, adminTab, logisticaTab]);
 
   const loadLogs = useCallback(async () => {
     if (!session || (!isAdmin && !isLogistica)) return;
@@ -544,14 +556,14 @@ export default function DashboardPage() {
   }, [session, isAdmin]);
 
   const loadInternalUsers = useCallback(async () => {
-    if (!session || !isAdmin) return;
+    if (!session || !authReady || !isAdmin) return;
     const response = await api.get(`${API_PREFIX}/crud/users`);
     const payload = parseApiResponse(response);
     if (!payload.success) {
       throw new Error(payload.message);
     }
     setInternalUsers(payload.data || []);
-  }, [session, isAdmin]);
+  }, [session, authReady, isAdmin]);
 
   const loadWindows = useCallback(async () => {
     if (!session) return;
@@ -793,7 +805,7 @@ export default function DashboardPage() {
   }, [success, pushToast]);
 
   useEffect(() => {
-    if (!session) {
+    if (!session || !authReady) {
       initialBootstrapDoneRef.current = false;
       return;
     }
@@ -821,6 +833,7 @@ export default function DashboardPage() {
     run();
   }, [
     session,
+    authReady,
     loadAppointments,
     loadLogs,
     loadReminders,
@@ -839,7 +852,7 @@ export default function DashboardPage() {
   ]);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || !authReady) return;
     const refreshData = async () => {
       try {
         if (isStaff) {
@@ -871,6 +884,7 @@ export default function DashboardPage() {
     };
   }, [
     session,
+    authReady,
     isStaff,
     isProveedor,
     proveedorTab,
@@ -893,16 +907,18 @@ export default function DashboardPage() {
   }, [isAdmin, adminTab, loadAnalytics, analyticsRange]);
 
   useEffect(() => {
-    if (!session || !isStaff) return;
+    if (!session || !authReady || !isStaff) return;
     const run = async () => {
       try {
         await loadAppointments();
       } catch (err) {
+        const status = err?.response?.status;
+        if (status === 401 || status === 403) return;
         setError(parseApiError(err));
       }
     };
     run();
-  }, [session, isStaff, loadAppointments, viewMode, filterDay, filterMonth, filterYear, adminTab, logisticaTab]);
+  }, [session, authReady, isStaff, loadAppointments, viewMode, filterDay, filterMonth, filterYear, adminTab, logisticaTab]);
 
   useEffect(() => {
     if (!isAdmin || adminTab !== "horarios") return;
@@ -1410,12 +1426,37 @@ export default function DashboardPage() {
       if (!payload.success) {
         throw new Error(payload.message);
       }
-      const applied = payload.data?.applied_days?.length || 0;
-      const skipped = payload.data?.skipped_days?.length || 0;
-      setBulkMessage(`Lote aplicado. Días actualizados: ${applied}. Días omitidos: ${skipped}.`);
+      const appliedDays = Array.isArray(payload.data?.applied_days) ? payload.data.applied_days : [];
+      const skippedDays = Array.isArray(payload.data?.skipped_days) ? payload.data.skipped_days : [];
+      const applied = appliedDays.length;
+      const skipped = skippedDays.length;
+      const skipReasonLabel = (reason) => {
+        if (reason === "past_day") return "día pasado";
+        if (reason === "has_appointments") return "tiene citas vigentes";
+        return reason || "omitido";
+      };
+      let bulkSummary = `Lote aplicado. Días actualizados: ${applied}. Días omitidos: ${skipped}.`;
+      if (skippedDays.length > 0) {
+        const details = skippedDays
+          .slice(0, 5)
+          .map((item) => `${item.day} (${skipReasonLabel(item.reason)})`)
+          .join(", ");
+        bulkSummary += ` Omitidos: ${details}${skippedDays.length > 5 ? ", ..." : ""}.`;
+      }
+      setBulkMessage(bulkSummary);
       await loadSpecialDayWindows(specialDay);
       await loadCalendarOverrideSummary(calendarBase);
-      setSuccess("Lote de franjas aplicado exitosamente.");
+      if (applied > 0) {
+        setSuccess(
+          skipped > 0
+            ? `Lote aplicado en ${applied} día(s); ${skipped} día(s) se omitieron.`
+            : "Lote de franjas aplicado exitosamente."
+        );
+      } else if (skipped > 0) {
+        setError("No se actualizó ningún día del lote. Revisa los días omitidos en el resumen.");
+      } else {
+        setSuccess("Lote procesado sin cambios.");
+      }
     } catch (err) {
       setError(parseApiError(err));
     }
@@ -1949,7 +1990,7 @@ export default function DashboardPage() {
   const mainHeader = (
     <header className="mb-8" aria-label="Encabezado del módulo activo">
       <p className="text-xs font-medium uppercase tracking-wide text-emerald-600">{activeNavLabel}</p>
-      <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">{saludoHorario()}</h1>
+      <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">{saludoHorario()}</h1>
       <p className="mt-2 max-w-2xl text-sm text-slate-600">
         {isAdmin &&
           "Gestiona citas de entrega, franjas horarias, equipo interno y auditoría desde un solo panel."}
@@ -1982,7 +2023,7 @@ export default function DashboardPage() {
             <option value="month">Mes</option>
           </select>
         </div>
-        <div className="grid gap-4 lg:grid-cols-3 xl:grid-cols-6">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <div className={card}>
           <p className="text-xs font-medium uppercase text-slate-500">Citas agendadas</p>
           <p className="mt-2 text-3xl font-bold text-slate-900">{citasRangeCount}</p>
@@ -2044,7 +2085,7 @@ export default function DashboardPage() {
     );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/50 text-[#121212]">
+    <div className="flex h-[100dvh] max-h-[100dvh] overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/50 text-[#121212] lg:h-screen lg:max-h-screen">
       <ConfirmDialog
         open={Boolean(confirmDeleteUserId)}
         title="Eliminar usuario"
@@ -2085,7 +2126,7 @@ export default function DashboardPage() {
         id="dashboard-main-content"
         data-tour="main-workspace"
         aria-label="Contenido del panel"
-        className={`min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-5 lg:px-10 lg:py-8 ${isProveedor ? "space-y-5" : ""}`}
+        className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-6 pb-[calc(7rem+env(safe-area-inset-bottom,0px))] sm:px-5 sm:pb-[calc(6rem+env(safe-area-inset-bottom,0px))] lg:px-10 lg:py-8 lg:pb-8 ${isProveedor ? "space-y-5" : ""}`}
       >
         <div className="mb-4 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm lg:hidden">
           <div className="flex items-center justify-between gap-3">
@@ -2130,13 +2171,13 @@ export default function DashboardPage() {
               <p className="mt-2 text-sm text-slate-700">{todayWindowsHint || windowsPack?.hint || "Sin detalle disponible por ahora."}</p>
             </div>
             <div className={card}>
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-medium uppercase text-slate-500">Días con franja abierta (empresa)</p>
-                <div className="flex items-center gap-2">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="min-w-0 text-xs font-medium uppercase text-slate-500">Días con franja abierta (empresa)</p>
+                <div className="flex shrink-0 items-center gap-2">
                   <button type="button" className={btnGhost + " px-2 py-1 text-xs"} onClick={() => setProviderCalendarMonthOffset((v) => v - 1)} aria-label="Ir al mes anterior del calendario">
                     ◀
                   </button>
-                  <span className="text-xs font-medium capitalize text-slate-700">{providerCalendarLabel}</span>
+                  <span className="max-w-[9rem] truncate text-center text-xs font-medium capitalize text-slate-700 sm:max-w-none">{providerCalendarLabel}</span>
                   <button type="button" className={btnGhost + " px-2 py-1 text-xs"} onClick={() => setProviderCalendarMonthOffset((v) => v + 1)} aria-label="Ir al mes siguiente del calendario">
                     ▶
                   </button>
@@ -2261,7 +2302,7 @@ export default function DashboardPage() {
                 {providerAppointmentsSorted.length === 0 && <p className="text-sm text-slate-500">Aún no tienes citas agendadas.</p>}
                 {providerAppointmentsSorted.map((a) => (
                   <div key={a.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                    <p className="text-sm font-medium text-slate-800">Cita #{a.id} - {new Date(a.start_time).toLocaleString()}</p>
+                    <p className="break-words text-sm font-medium text-slate-800">Cita #{a.id} - {new Date(a.start_time).toLocaleString()}</p>
                     <p className="text-xs text-slate-600">Estado: {providerStatusLabel(a.status)}</p>
                     <p className="text-xs text-slate-600">Descripción: {a.material_description}</p>
                     {a.status !== "cancelado" && a.status !== "finalizada" && a.status !== "no_presentada" && (
@@ -2324,7 +2365,7 @@ export default function DashboardPage() {
                 {providerHistoryAppointments.length === 0 && <p className="text-sm text-slate-500">No tienes historial todavía.</p>}
                 {providerHistoryAppointments.map((a) => (
                   <div key={a.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                    <p className="text-sm font-medium text-slate-800">Cita #{a.id} - {new Date(a.start_time).toLocaleString()}</p>
+                    <p className="break-words text-sm font-medium text-slate-800">Cita #{a.id} - {new Date(a.start_time).toLocaleString()}</p>
                     <p className="text-xs text-slate-600">Estado: {providerStatusLabel(a.status)}</p>
                     <p className="text-xs text-slate-600">Descripción: {a.material_description}</p>
                   </div>
@@ -2458,9 +2499,9 @@ export default function DashboardPage() {
               <div>
                 <p className="mt-2 text-xs text-slate-500">Hoy es {formatLongEsDate(new Date())}.</p>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="text-sm font-medium text-slate-700">Calendario de días habilitados</p>
-                    <div className="flex items-center gap-2">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <p className="min-w-0 text-sm font-medium text-slate-700">Calendario de días habilitados</p>
+                    <div className="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
                         className={btnGhost + " px-2 py-1 text-xs"}
@@ -2468,7 +2509,7 @@ export default function DashboardPage() {
                       >
                         ◀
                       </button>
-                      <span className="text-xs font-medium capitalize text-slate-700">{monthLabel}</span>
+                      <span className="max-w-[9rem] truncate text-center text-xs font-medium capitalize text-slate-700 sm:max-w-none">{monthLabel}</span>
                       <button
                         type="button"
                         className={btnGhost + " px-2 py-1 text-xs"}
@@ -2733,19 +2774,11 @@ export default function DashboardPage() {
                     required
                     minLength={8}
                   />
-                  <button
-                    type="button"
-                    aria-label="Ver contraseña"
-                    className="absolute inset-y-0 right-4 flex items-center text-slate-500 hover:text-slate-700"
-                    onMouseDown={() => setShowNuPass(true)}
-                    onMouseUp={() => setShowNuPass(false)}
-                    onMouseLeave={() => setShowNuPass(false)}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  </button>
+                  <PasswordVisibilityButton
+                    visible={showNuPass}
+                    onToggle={() => setShowNuPass((v) => !v)}
+                    label="contraseña"
+                  />
                 </div>
 
                 <div className="relative">
@@ -2759,19 +2792,11 @@ export default function DashboardPage() {
                     required
                     minLength={8}
                   />
-                  <button
-                    type="button"
-                    aria-label="Ver confirmar contraseña"
-                    className="absolute inset-y-0 right-4 flex items-center text-slate-500 hover:text-slate-700"
-                    onMouseDown={() => setShowNuPassConfirm(true)}
-                    onMouseUp={() => setShowNuPassConfirm(false)}
-                    onMouseLeave={() => setShowNuPassConfirm(false)}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  </button>
+                  <PasswordVisibilityButton
+                    visible={showNuPassConfirm}
+                    onToggle={() => setShowNuPassConfirm((v) => !v)}
+                    label="confirmar contraseña"
+                  />
                 </div>
                 <select className={input} value={nuRoleId} onChange={(e) => setNuRoleId(e.target.value)} required>
                   {internalRolesOnly.map((r) => (
@@ -2836,12 +2861,12 @@ export default function DashboardPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-between gap-2">
-                        <span>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <span className="min-w-0 break-words text-sm">
                           {u.full_name} — {u.role_name} — doc. {u.document_id} — {u.email}
                         </span>
                         {isAdmin && (
-                          <div className="flex gap-2">
+                          <div className="flex shrink-0 flex-wrap gap-2">
                             <button type="button" className={btnGhost} onClick={() => onStartEditUser(u)}>
                               Editar
                             </button>
@@ -2982,19 +3007,11 @@ export default function DashboardPage() {
                     required
                     minLength={8}
                   />
-                  <button
-                    type="button"
-                    aria-label="Ver contraseña actual"
-                    className="absolute inset-y-0 right-4 flex items-center text-slate-500 hover:text-slate-700"
-                    onMouseDown={() => setShowProfileCurrentPassword(true)}
-                    onMouseUp={() => setShowProfileCurrentPassword(false)}
-                    onMouseLeave={() => setShowProfileCurrentPassword(false)}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  </button>
+                  <PasswordVisibilityButton
+                    visible={showProfileCurrentPassword}
+                    onToggle={() => setShowProfileCurrentPassword((v) => !v)}
+                    label="contraseña actual"
+                  />
                 </div>
 
                 <div className="relative">
@@ -3008,19 +3025,11 @@ export default function DashboardPage() {
                     required
                     minLength={8}
                   />
-                  <button
-                    type="button"
-                    aria-label="Ver nueva contraseña"
-                    className="absolute inset-y-0 right-4 flex items-center text-slate-500 hover:text-slate-700"
-                    onMouseDown={() => setShowProfileNewPassword(true)}
-                    onMouseUp={() => setShowProfileNewPassword(false)}
-                    onMouseLeave={() => setShowProfileNewPassword(false)}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  </button>
+                  <PasswordVisibilityButton
+                    visible={showProfileNewPassword}
+                    onToggle={() => setShowProfileNewPassword((v) => !v)}
+                    label="nueva contraseña"
+                  />
                 </div>
 
                 <div className="relative">
@@ -3034,19 +3043,11 @@ export default function DashboardPage() {
                     required
                     minLength={8}
                   />
-                  <button
-                    type="button"
-                    aria-label="Ver confirmar nueva contraseña"
-                    className="absolute inset-y-0 right-4 flex items-center text-slate-500 hover:text-slate-700"
-                    onMouseDown={() => setShowProfileConfirmPassword(true)}
-                    onMouseUp={() => setShowProfileConfirmPassword(false)}
-                    onMouseLeave={() => setShowProfileConfirmPassword(false)}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  </button>
+                  <PasswordVisibilityButton
+                    visible={showProfileConfirmPassword}
+                    onToggle={() => setShowProfileConfirmPassword((v) => !v)}
+                    label="confirmar nueva contraseña"
+                  />
                 </div>
                 <button type="submit" className={btnPrimary}>
                   Actualizar contraseña
@@ -3115,7 +3116,7 @@ export default function DashboardPage() {
                 <option value="month">Mes</option>
               </select>
             </div>
-            <div className="grid gap-4 lg:grid-cols-3 xl:grid-cols-6">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               <div className={card}>
                 <p className="text-xs font-medium uppercase text-slate-500">Citas agendadas</p>
                 <p className="mt-2 text-3xl font-bold text-slate-900">{citasRangeCount}</p>
@@ -3276,7 +3277,7 @@ export default function DashboardPage() {
       </main>
       {toasts.length > 0 && (
         <div
-          className="pointer-events-none fixed bottom-3 left-3 right-3 z-50 flex flex-col gap-2 sm:bottom-5 sm:left-auto sm:right-5 sm:max-w-sm"
+          className="pointer-events-none fixed bottom-[5.25rem] left-3 right-3 z-50 flex flex-col gap-2 sm:bottom-5 sm:left-auto sm:right-5 sm:max-w-sm"
           role="status"
           aria-live="polite"
           aria-atomic="true"

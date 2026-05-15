@@ -1,0 +1,1 @@
+-- Plantilla: no ejecutar directamente. Usa db/bootstrap-admin.ps1

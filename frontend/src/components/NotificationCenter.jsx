@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import api, { API_PREFIX, parseApiError, parseApiResponse } from "../api/client";
+import api, { API_PREFIX, getAccessToken, parseApiError, parseApiResponse } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 
 const POLL_MS = 60_000;
 
@@ -16,6 +17,7 @@ function formatWhen(iso) {
 }
 
 export default function NotificationCenter({ onNavigate }) {
+  const { authReady } = useAuth();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [unreadTotal, setUnreadTotal] = useState(0);
@@ -24,6 +26,7 @@ export default function NotificationCenter({ onNavigate }) {
   const panelRef = useRef(null);
 
   const loadNotifications = useCallback(async () => {
+    if (!authReady || !getAccessToken()) return;
     setLoading(true);
     try {
       const response = await api.get(`${API_PREFIX}/notifications`, {
@@ -43,13 +46,14 @@ export default function NotificationCenter({ onNavigate }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authReady]);
 
   useEffect(() => {
+    if (!authReady) return undefined;
     loadNotifications();
     const timer = window.setInterval(loadNotifications, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [loadNotifications]);
+  }, [authReady, loadNotifications]);
 
   useEffect(() => {
     if (!open) return undefined;

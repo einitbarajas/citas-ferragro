@@ -11,7 +11,7 @@ const LoginPage = lazy(() => import("./pages/LoginPage"));
 const REDIRECT_TO_LOGIN_KEY = "redirect_to_login";
 
 export default function App() {
-  const { session } = useAuth();
+  const { session, authReady } = useAuth();
   const [publicView, setPublicView] = useState("landing"); // "landing" | "login" | "register"
   const [showCookieBanner, setShowCookieBanner] = useState(false);
   const [publicGuidedOpen, setPublicGuidedOpen] = useState(false);
@@ -91,6 +91,15 @@ export default function App() {
       </>
     );
   }
+
+  if (!authReady) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-slate-700">
+        <p className="text-sm font-medium">Preparando tu sesión…</p>
+      </main>
+    );
+  }
+
   return (
     <>
       <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-600">Cargando panel…</div>}>

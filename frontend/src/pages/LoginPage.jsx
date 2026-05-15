@@ -304,7 +304,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 px-4 py-10">
-      <div className={`mx-auto grid w-full items-stretch gap-6 ${showInfoPanel ? "max-w-5xl lg:grid-cols-2" : "max-w-xl"}`}>
+      <div className={`mx-auto grid w-full min-w-0 items-stretch gap-6 ${showInfoPanel ? "max-w-5xl lg:grid-cols-2" : "max-w-xl"}`}>
         {showInfoPanel && <div className="rounded-2xl border border-emerald-100 bg-white/70 p-7 shadow-lg backdrop-blur">
           <div className="mb-5">
             <BrandLogo className="h-20 w-auto max-w-full sm:h-28 md:h-32" />
@@ -344,7 +344,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
           </div>
         </div>}
 
-        <div className="w-full rounded-2xl border border-emerald-100 bg-white/95 p-7 shadow-xl backdrop-blur">
+        <div className="w-full min-w-0 rounded-2xl border border-emerald-100 bg-white/95 p-5 shadow-xl backdrop-blur sm:p-7">
           {typeof onBack === "function" && (
             <button
               type="button"
@@ -685,7 +685,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
         </div>
         {isRegister && (
           <div id={`${formIdPrefix}-password-rules`} className={`rounded-lg border p-3 ${passwordStrength.bg}`}>
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
               <p className="text-sm font-semibold text-[#121212]">Criterios de contraseña segura</p>
               <p className={`text-sm font-semibold ${passwordStrength.className}`}>
                 {passwordStrength.icon} Seguridad: {passwordStrength.label}
@@ -745,12 +745,12 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
               Para completar el registro debes leer y aceptar las políticas de tratamiento de datos personales conforme a la{" "}
               <span className="font-medium">Ley 1581 de 2012</span>.
             </p>
-            <div className="mt-3 flex items-center justify-between gap-3">
+            <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <button
                 type="button"
                 ref={lawTriggerRef}
                 data-tour="register-privacy"
-                className="min-h-11 rounded-lg border border-[#35783C] bg-white px-3 py-2 font-medium text-[#121212] transition hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
+                className="min-h-11 w-full rounded-lg border border-[#35783C] bg-white px-3 py-2 text-left font-medium text-[#121212] transition hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 sm:w-auto"
                 onClick={() => setShowLawModal(true)}
               >
                 Leer políticas (Ley 1581 de 2012)

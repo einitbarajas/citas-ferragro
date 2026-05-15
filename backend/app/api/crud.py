@@ -76,7 +76,17 @@ def _appointments_count_on_local_day(db: Session, target_day: date) -> int:
         db.execute(
             select(func.count())
             .select_from(Appointment)
-            .where(Appointment.start_time >= start_utc, Appointment.start_time < end_utc)
+            .where(
+                Appointment.start_time >= start_utc,
+                Appointment.start_time < end_utc,
+                Appointment.status.not_in(
+                    (
+                        AppointmentStatus.cancelado,
+                        AppointmentStatus.finalizada,
+                        AppointmentStatus.no_presentada,
+                    )
+                ),
+            )
         ).scalar_one()
         or 0
     )

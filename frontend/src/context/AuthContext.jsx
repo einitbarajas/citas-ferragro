@@ -191,9 +191,12 @@ export function AuthProvider({ children }) {
     };
   }, [isBootstrapping, session, validateStoredSession]);
 
+  const authReady = !isBootstrapping && (!session || Boolean(getAccessToken()));
+
   const value = useMemo(
     () => ({
       session,
+      authReady,
       login: ({ token, role, email }) => {
         setAccessToken(token);
         sessionStorage.setItem("role", role);
@@ -211,7 +214,7 @@ export function AuthProvider({ children }) {
       },
       logout,
     }),
-    [logout, session]
+    [authReady, logout, session]
   );
 
   if (isBootstrapping) {

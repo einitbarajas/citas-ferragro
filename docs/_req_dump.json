@@ -1,0 +1,2425 @@
+{
+  "sheets": {
+    "ReqFunBackend": [
+      {
+        "row": 2,
+        "cells": [
+          "",
+          "LISTADO DE REQUERIMIENTOS DEL SISTEMA IMPLEMENTACION DEL SOFTWARE DE GESTION DE CITAS DE ENTREGA DE MATERIALES EN UNA EMPRESA",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 4,
+        "cells": [
+          "",
+          "SI",
+          "Marque con una equis (X) si el sistema cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 5,
+        "cells": [
+          "",
+          "NO",
+          "Marque con una equis (X) si el sistema no cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 6,
+        "cells": [
+          "",
+          "ADI",
+          "Marque con una equis (X) si el sistema debe adicionar la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 7,
+        "cells": [
+          "",
+          "Observaciones:Espacio para complementar respuestas",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 9,
+        "cells": [
+          "",
+          "",
+          "",
+          "",
+          "Nivel de cumplimiento",
+          "",
+          "",
+          "OBSERVACIONES",
+          ""
+        ]
+      },
+      {
+        "row": 10,
+        "cells": [
+          "",
+          "REQUISITOS FUNCIONALES BACKEND",
+          "",
+          "",
+          "SI",
+          "Parcial",
+          "NO",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 12,
+        "cells": [
+          "",
+          "1",
+          "Registro e inicio de sesión de usuarios (proveedor, gerente, administrador).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 13,
+        "cells": [
+          "",
+          "2",
+          "Autenticación mediante JWT.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 14,
+        "cells": [
+          "",
+          "3",
+          "Gestión de roles y permisos.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 15,
+        "cells": [
+          "",
+          "4",
+          "CRUD de citas (crear, consultar, actualizar, eliminar).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 16,
+        "cells": [
+          "",
+          "5",
+          "Validación de citas con mínimo 2 días de anticipación.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 17,
+        "cells": [
+          "",
+          "6",
+          "Validación de conflictos de horario (no permitir solapamientos).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 18,
+        "cells": [
+          "GERENTE",
+          "7",
+          "Permitir al gerente:Consultar citas por día, mes o lista.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 19,
+        "cells": [
+          "",
+          "8",
+          "Permitir al gerente:Cambiar estado de citas (“sin revisión” → “revisado”).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 20,
+        "cells": [
+          "",
+          "9",
+          "Permitir al gerente:Extender duración de citas (si no hay conflicto posterior).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 21,
+        "cells": [
+          "ADMINISTRADOR",
+          "10",
+          "Permitir al administrador:Acceso total a funciones del gerente.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 22,
+        "cells": [
+          "",
+          "11",
+          "Permitir al administrador:Visualización de historial de cambios.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 23,
+        "cells": [
+          "",
+          "12",
+          "Registro (log) de acciones realizadas por el gerente.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 24,
+        "cells": [
+          "",
+          "13",
+          "Manejo de errores y respuestas HTTP adecuadas.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 25,
+        "cells": [
+          "",
+          "14",
+          "Exposición de API REST para comunicación con frontend.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 26,
+        "cells": [
+          "",
+          "15",
+          "Invalidar refresh tokens al cerrar sesion en todos los dispositivos del usuario.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 27,
+        "cells": [
+          "",
+          "16",
+          "16. Bloquear temporalmente el acceso despues de multiples intentos fallidos de autenticacion.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 28,
+        "cells": [
+          "",
+          "17",
+          "17. Registrar en auditoria los eventos de login exitoso y login fallido.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 29,
+        "cells": [
+          "",
+          "18",
+          "18. Permitir filtrado de citas por estado y por proveedor en endpoints de consulta.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 30,
+        "cells": [
+          "",
+          "19",
+          "19. Permitir exportar listado de citas en formato CSV para roles internos autorizados.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 31,
+        "cells": [
+          "",
+          "20",
+          "20. Incluir paginacion y ordenamiento en consultas de citas y logs.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 32,
+        "cells": [
+          "",
+          "21",
+          "21. Enviar recordatorios de cita programada mediante tarea automatizada (scheduler).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 33,
+        "cells": [
+          "",
+          "22",
+          "22. Implementar endpoint de salud (`/health`) para monitoreo del servicio.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 34,
+        "cells": [
+          "",
+          "23",
+          "23. Versionar API (`/api/v1/...`) para compatibilidad futura.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 35,
+        "cells": [
+          "",
+          "24",
+          "24. Agregar trazabilidad de cambios de campos criticos (estado, fecha, hora, duracion) con valor anterior y nuevo valor.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      }
+    ],
+    "ReqNoFunBackend": [
+      {
+        "row": 2,
+        "cells": [
+          "",
+          "LISTADO DE REQUERIMIENTOS DEL SISTEMA IMPLEMENTACION DEL SOFTWARE DE GESTION DE CITAS DE ENTREGA DE MATERIALES EN UNA EMPRESA",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 4,
+        "cells": [
+          "",
+          "SI",
+          "Marque con una equis (X) si el sistema cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 5,
+        "cells": [
+          "",
+          "NO",
+          "Marque con una equis (X) si el sistema no cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 6,
+        "cells": [
+          "",
+          "ADI",
+          "Marque con una equis (X) si el sistema debe adicionar la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 7,
+        "cells": [
+          "",
+          "Observaciones:Espacio para complementar respuestas",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 9,
+        "cells": [
+          "",
+          "",
+          "",
+          "",
+          "Nivel de cumplimiento",
+          "",
+          "",
+          "OBSERVACIONES",
+          ""
+        ]
+      },
+      {
+        "row": 10,
+        "cells": [
+          "",
+          "REQUISITOS NO FUNCIONALES BACKEND",
+          "",
+          "",
+          "SI",
+          "Parcial",
+          "NO",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 12,
+        "cells": [
+          "",
+          "1",
+          "Alto rendimiento en consultas y procesamiento.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 13,
+        "cells": [
+          "",
+          "2",
+          "Seguridad en autenticación y manejo de datos sensibles.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 14,
+        "cells": [
+          "",
+          "3",
+          "Escalabilidad (capacidad de soportar más usuarios).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 15,
+        "cells": [
+          "",
+          "4",
+          "Código modular y mantenible.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 16,
+        "cells": [
+          "",
+          "5",
+          "Documentación automática de API (Swagger/OpenAPI).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 17,
+        "cells": [
+          "",
+          "6",
+          "Tiempo de respuesta óptimo (<500 ms en operaciones comunes).",
+          "",
+          "",
+          "",
+          "x",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 18,
+        "cells": [
+          "",
+          "7",
+          "Manejo de concurrencia (evitar conflictos en citas simultáneas).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 19,
+        "cells": [
+          "",
+          "8",
+          "Uso de buenas prácticas (clean architecture).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 20,
+        "cells": [
+          "",
+          "9",
+          "Logs estructurados para auditoría.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 21,
+        "cells": [
+          "",
+          "10",
+          "Cobertura minima de pruebas automatizadas para modulos criticos de negocio.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 22,
+        "cells": [
+          "",
+          "11",
+          "Tolerancia a fallos con respuestas controladas ante caida de servicios dependientes.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 23,
+        "cells": [
+          "",
+          "12",
+          "Configuracion centralizada por ambiente (dev, test, prod) sin cambios de codigo.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 24,
+        "cells": [
+          "",
+          "13",
+          "Estandar de logs con identificador de correlacion por request.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 25,
+        "cells": [
+          "",
+          "14",
+          "Limite de tasa (rate limiting) en endpoints de autenticacion y operaciones sensibles.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 26,
+        "cells": [
+          "",
+          "15",
+          "Tiempo maximo de recuperacion del servicio definido para incidentes criticos.",
+          "",
+          "",
+          "",
+          "x",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 27,
+        "cells": [
+          "",
+          "16",
+          "Validacion estricta de payloads con esquemas y mensajes de error consistentes.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 28,
+        "cells": [
+          "",
+          "17",
+          "Compatibilidad con despliegue en contenedores para portabilidad operacional.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      }
+    ],
+    "ReqFunFrontend": [
+      {
+        "row": 2,
+        "cells": [
+          "",
+          "LISTADO DE REQUERIMIENTOS DEL SISTEMA IMPLEMENTACION DEL SOFTWARE DE GESTION DE CITAS DE ENTREGA DE MATERIALES EN UNA EMPRESA",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 4,
+        "cells": [
+          "",
+          "SI",
+          "Marque con una equis (X) si el sistema cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 5,
+        "cells": [
+          "",
+          "NO",
+          "Marque con una equis (X) si el sistema no cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 6,
+        "cells": [
+          "",
+          "ADI",
+          "Marque con una equis (X) si el sistema debe adicionar la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 7,
+        "cells": [
+          "",
+          "Observaciones:Espacio para complementar respuestas",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 9,
+        "cells": [
+          "",
+          "",
+          "",
+          "",
+          "Nivel de cumplimiento",
+          "",
+          "",
+          "OBSERVACIONES",
+          ""
+        ]
+      },
+      {
+        "row": 10,
+        "cells": [
+          "",
+          "REQUISITOS FUNCIONALES FRONTEND",
+          "",
+          "",
+          "SI",
+          "Parcial",
+          "NO",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 12,
+        "cells": [
+          "",
+          "1",
+          "Interfaz de registro e inicio de sesión.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 13,
+        "cells": [
+          "",
+          "2",
+          "Visualización de calendario interactivo para agendar citas.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 14,
+        "cells": [
+          "",
+          "3",
+          "Formulario para creación de citas con: Descripción detallada del material",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 15,
+        "cells": [
+          "",
+          "4",
+          "Formulario para creación de citas con: Fecha y hora",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 16,
+        "cells": [
+          "",
+          "5",
+          "Visualización de citas propias (proveedor).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 17,
+        "cells": [
+          "",
+          "6",
+          "Panel para gerente:Cambiar estado de citas.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 18,
+        "cells": [
+          "",
+          "7",
+          "Panel para gerente:Extender duración de citas.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 19,
+        "cells": [
+          "",
+          "8",
+          "Panel para gerente:Ver citas por día, mes y lista.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 20,
+        "cells": [
+          "",
+          "9",
+          "Panel para administrador:Ver historial de cambios.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 21,
+        "cells": [
+          "",
+          "10",
+          "Panel para administrador:Extender duración de citas.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 22,
+        "cells": [
+          "",
+          "11",
+          "Panel para administrador:Ver citas por día, mes y lista.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 23,
+        "cells": [
+          "",
+          "12",
+          "Panel para administrador:Cambiar estado de citas.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 24,
+        "cells": [
+          "",
+          "13",
+          "Notificaciones visuales (éxito/error).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 25,
+        "cells": [
+          "",
+          "14",
+          "Consumo de API del backend.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 26,
+        "cells": [
+          "",
+          "15",
+          "Manejo de estados (loading, error, success).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 27,
+        "cells": [
+          "",
+          "16",
+          "Cerrar sesion automaticamente cuando el refresh token expire y redirigir a login.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 28,
+        "cells": [
+          "",
+          "17",
+          "Mostrar historial de cambios de una cita desde el detalle de la misma (segun rol).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 29,
+        "cells": [
+          "",
+          "18",
+          "Permitir filtros combinados en el tablero (rango de fechas, estado, proveedor).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 30,
+        "cells": [
+          "",
+          "19",
+          "Incluir busqueda rapida de citas por texto (material o identificador).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 31,
+        "cells": [
+          "",
+          "20",
+          "Confirmar acciones criticas (cambio de estado, extension, eliminacion) con dialogo modal.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 32,
+        "cells": [
+          "",
+          "21",
+          "Permitir duplicar una cita existente para acelerar nuevos registros similares.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 33,
+        "cells": [
+          "",
+          "22",
+          "Mostrar indicador visual de conflicto potencial al editar fecha/hora antes de guardar.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 34,
+        "cells": [
+          "",
+          "23",
+          "Incorporar vista de resumen con metricas basicas (citas por estado y por periodo).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 35,
+        "cells": [
+          "",
+          "24",
+          "Permitir descarga local de resultados filtrados en CSV desde la interfaz.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 36,
+        "cells": [
+          "",
+          "25",
+          "Soportar cambio de contrasena desde perfil de usuario autenticado.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 37,
+        "cells": [
+          "",
+          "26",
+          "Mostrar el logotipo corporativo oficial de FERRAGRO en encabezados principales del portal.",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: logo oficial implementado en landing, login y dashboard.",
+          ""
+        ]
+      },
+      {
+        "row": 38,
+        "cells": [
+          "",
+          "27",
+          "Incluir bloque institucional visible de mision y vision corporativa en la pagina de acceso.",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: bloque institucional de mision/vision agregado en landing.",
+          ""
+        ]
+      },
+      {
+        "row": 39,
+        "cells": [
+          "",
+          "28",
+          "Implementar componente reutilizable de marca (BrandLogo) para encabezados y paneles, evitando inconsistencias visuales.",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: BrandLogo aplicado en landing, login y dashboard.",
+          ""
+        ]
+      }
+    ],
+    "ReqNoFunFrontend": [
+      {
+        "row": 2,
+        "cells": [
+          "",
+          "LISTADO DE REQUERIMIENTOS DEL SISTEMA IMPLEMENTACION DEL SOFTWARE DE GESTION DE CITAS DE ENTREGA DE MATERIALES EN UNA EMPRESA",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 4,
+        "cells": [
+          "",
+          "SI",
+          "Marque con una equis (X) si el sistema cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 5,
+        "cells": [
+          "",
+          "NO",
+          "Marque con una equis (X) si el sistema no cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 6,
+        "cells": [
+          "",
+          "ADI",
+          "Marque con una equis (X) si el sistema debe adicionar la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 7,
+        "cells": [
+          "",
+          "Observaciones:Espacio para complementar respuestas",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 9,
+        "cells": [
+          "",
+          "",
+          "",
+          "",
+          "Nivel de cumplimiento",
+          "",
+          "",
+          "OBSERVACIONES",
+          ""
+        ]
+      },
+      {
+        "row": 10,
+        "cells": [
+          "",
+          "REQUISITOS NO FUNCIONALES FRONTEND",
+          "",
+          "",
+          "SI",
+          "Parcial",
+          "NO",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 12,
+        "cells": [
+          "",
+          "1",
+          "Diseño responsivo (adaptable a móvil, tablet y escritorio).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 13,
+        "cells": [
+          "",
+          "2",
+          "Interfaz intuitiva y fácil de usar (UX/UI).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 14,
+        "cells": [
+          "",
+          "3",
+          "Tiempo de carga rápido (<2 segundos).",
+          "",
+          "",
+          "",
+          "x",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 15,
+        "cells": [
+          "",
+          "4",
+          "Código reutilizable y organizado (componentes).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 16,
+        "cells": [
+          "",
+          "5",
+          "Accesibilidad básica (contraste, navegación clara).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 17,
+        "cells": [
+          "",
+          "6",
+          "Compatibilidad con navegadores modernos.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 18,
+        "cells": [
+          "",
+          "7",
+          "Manejo eficiente del estado (ej: React hooks o librerías).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 19,
+        "cells": [
+          "",
+          "8",
+          "Seguridad básica (protección de rutas, manejo de tokens).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 20,
+        "cells": [
+          "",
+          "9",
+          "Mantener consistencia visual con un sistema de diseno (colores, tipografias y componentes).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 21,
+        "cells": [
+          "",
+          "10",
+          "Cumplir criterios basicos de accesibilidad WCAG (etiquetas, foco visible y navegacion teclado).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 22,
+        "cells": [
+          "",
+          "11",
+          "Reducir peso inicial del bundle mediante carga diferida de modulos no criticos.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 23,
+        "cells": [
+          "",
+          "12",
+          "Soportar modo de red lenta con mensajes de estado claros y reintento de peticiones.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 24,
+        "cells": [
+          "",
+          "13",
+          "Evitar perdida de datos en formularios con guardado temporal local.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 25,
+        "cells": [
+          "",
+          "14",
+          "Garantizar compatibilidad responsive en resoluciones comunes del entorno operativo.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 26,
+        "cells": [
+          "",
+          "15",
+          "Manejar errores globales de red con una capa unificada de notificaciones.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 27,
+        "cells": [
+          "",
+          "16",
+          "Internacionalizacion preparada para textos de interfaz (estructura i18n).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 28,
+        "cells": [
+          "",
+          "17",
+          "Aplicar color corporativo oficial Pantone 356 C (#35783C) y gris corporativo (#D7D8D8) en interfaz.",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: color corporativo homologado en componentes frontend y lineamientos base.",
+          ""
+        ]
+      },
+      {
+        "row": 29,
+        "cells": [
+          "",
+          "18",
+          "Respetar area de proteccion del logotipo evitando elementos que interfieran su lectura.",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: area de proteccion aplicada mediante contenedor de marca reutilizable.",
+          ""
+        ]
+      },
+      {
+        "row": 30,
+        "cells": [
+          "",
+          "19",
+          "Mantener la proporcion original del logotipo (sin estiramiento, compresion o distorsion).",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: logo renderizado con object-contain, sin distorsion en componentes principales.",
+          ""
+        ]
+      },
+      {
+        "row": 31,
+        "cells": [
+          "",
+          "20",
+          "Utilizar tipografia corporativa recomendada (Century Gothic) con fallback legible.",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: Century Gothic definida globalmente con fallback legible.",
+          ""
+        ]
+      },
+      {
+        "row": 32,
+        "cells": [
+          "",
+          "21",
+          "Evitar usos incorrectos de marca: recoloreo arbitrario, baja resolucion o efectos excesivos.",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: se estandarizaron usos de marca y controles visuales en componentes auditados.",
+          ""
+        ]
+      },
+      {
+        "row": 33,
+        "cells": [
+          "",
+          "22",
+          "Centralizar lineamientos de marca en configuracion global (tokens de color y fuente base).",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: colores corporativos y tipografia base definidos globalmente.",
+          ""
+        ]
+      },
+      {
+        "row": 34,
+        "cells": [
+          "",
+          "23",
+          "Garantizar cache-busting de activos de marca para despliegues y pruebas visuales.",
+          "",
+          "x",
+          "",
+          "",
+          "Cumplido: activo de logo versionado y referenciado en frontend.",
+          ""
+        ]
+      }
+    ],
+    "ReqFunBD": [
+      {
+        "row": 2,
+        "cells": [
+          "",
+          "LISTADO DE REQUERIMIENTOS DEL SISTEMA IMPLEMENTACION DEL SOFTWARE DE GESTION DE CITAS DE ENTREGA DE MATERIALES EN UNA EMPRESA",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 4,
+        "cells": [
+          "",
+          "SI",
+          "Marque con una equis (X) si el sistema cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 5,
+        "cells": [
+          "",
+          "NO",
+          "Marque con una equis (X) si el sistema no cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 6,
+        "cells": [
+          "",
+          "ADI",
+          "Marque con una equis (X) si el sistema debe adicionar la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 7,
+        "cells": [
+          "",
+          "Observaciones:Espacio para complementar respuestas",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 9,
+        "cells": [
+          "",
+          "",
+          "",
+          "",
+          "Nivel de cumplimiento",
+          "",
+          "",
+          "OBSERVACIONES",
+          ""
+        ]
+      },
+      {
+        "row": 10,
+        "cells": [
+          "",
+          "REQUISITOS FUNCIONALES BASE DE DATOS",
+          "",
+          "",
+          "SI",
+          "Parcial",
+          "NO",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 12,
+        "cells": [
+          "",
+          "1",
+          "Almacenamiento de usuarios con roles.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 13,
+        "cells": [
+          "",
+          "2",
+          "Almacenamiento de citas con: Fecha",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 14,
+        "cells": [
+          "",
+          "3",
+          "Almacenamiento de citas con: Hora",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 15,
+        "cells": [
+          "",
+          "4",
+          "Almacenamiento de citas con: Duración",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 16,
+        "cells": [
+          "",
+          "5",
+          "Almacenamiento de citas con: Estado",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 17,
+        "cells": [
+          "",
+          "6",
+          "Almacenamiento de citas con: Descripción",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 18,
+        "cells": [
+          "",
+          "7",
+          "Almacenamiento de citas con: Relación con proveedor",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 19,
+        "cells": [
+          "",
+          "8",
+          "Almacenamiento de estados de citas.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 20,
+        "cells": [
+          "",
+          "9",
+          "Registro de historial de cambios (logs).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 21,
+        "cells": [
+          "",
+          "10",
+          "Relación entre tablas (llaves foráneas).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 22,
+        "cells": [
+          "",
+          "11",
+          "Consultas eficientes para: Filtrar citas por fecha (día/mes)",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 23,
+        "cells": [
+          "",
+          "12",
+          "Consultas eficientes para: Validar conflictos de horario",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 24,
+        "cells": [
+          "",
+          "13",
+          "Soporte para actualización de estados de citas",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 25,
+        "cells": [
+          "",
+          "14",
+          "Almacenar refresh tokens y sesiones activas por usuario para permitir invalidacion selectiva o global.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 26,
+        "cells": [
+          "",
+          "15",
+          "Registrar en tabla de auditoria los cambios de estado de citas con usuario, fecha/hora y valores anterior/nuevo.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 27,
+        "cells": [
+          "",
+          "16",
+          "Soportar consulta eficiente de citas por estado, proveedor y rango de fechas mediante estructuras de datos adecuadas.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 28,
+        "cells": [
+          "",
+          "17",
+          "Mantener historial de reprogramaciones de citas (fecha/hora previa y nueva) con motivo del cambio.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 29,
+        "cells": [
+          "",
+          "18",
+          "Almacenar eventos de autenticacion (exitoso/fallido) con metadatos basicos para analisis posterior.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 30,
+        "cells": [
+          "",
+          "19",
+          "Persistir configuraciones operativas del sistema (parametros de negocio) en tablas administrables.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 31,
+        "cells": [
+          "",
+          "20",
+          "Registrar ejecuciones de tareas programadas (recordatorios) con estado, fecha de envio y resultado.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 32,
+        "cells": [
+          "",
+          "21",
+          "Versionar cambios de esquema y datos maestros mediante migraciones trazables en base de datos.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      }
+    ],
+    "ReqNoFunDB": [
+      {
+        "row": 2,
+        "cells": [
+          "",
+          "LISTADO DE REQUERIMIENTOS DEL SISTEMA IMPLEMENTACION DEL SOFTWARE DE GESTION DE CITAS DE ENTREGA DE MATERIALES EN UNA EMPRESA",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 4,
+        "cells": [
+          "",
+          "SI",
+          "Marque con una equis (X) si el sistema cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 5,
+        "cells": [
+          "",
+          "NO",
+          "Marque con una equis (X) si el sistema no cumple con la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 6,
+        "cells": [
+          "",
+          "ADI",
+          "Marque con una equis (X) si el sistema debe adicionar la función descrita",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 7,
+        "cells": [
+          "",
+          "Observaciones:Espacio para complementar respuestas",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 9,
+        "cells": [
+          "",
+          "",
+          "",
+          "",
+          "Nivel de cumplimiento",
+          "",
+          "",
+          "OBSERVACIONES",
+          ""
+        ]
+      },
+      {
+        "row": 10,
+        "cells": [
+          "",
+          "REQUISITOS NO FUNCIONALES BASE DE DATOS",
+          "",
+          "",
+          "SI",
+          "Parcial",
+          "NO",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 12,
+        "cells": [
+          "",
+          "1",
+          "Integridad de datos (constraints, claves primarias/foráneas).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 13,
+        "cells": [
+          "",
+          "2",
+          "Alto rendimiento en consultas (uso de índices).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 14,
+        "cells": [
+          "",
+          "3",
+          "Escalabilidad (crecimiento de datos).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 15,
+        "cells": [
+          "",
+          "4",
+          "Seguridad (control de accesos).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 16,
+        "cells": [
+          "",
+          "5",
+          "Respaldo y recuperación de datos (backups).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 17,
+        "cells": [
+          "",
+          "6",
+          "Disponibilidad (mínimo tiempo de caída).",
+          "",
+          "",
+          "",
+          "x",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 18,
+        "cells": [
+          "",
+          "7",
+          "Consistencia de datos (ACID).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 19,
+        "cells": [
+          "",
+          "8",
+          "Optimización de consultas complejas.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 20,
+        "cells": [
+          "",
+          "9",
+          "Manejo de concurrencia (transacciones).",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 21,
+        "cells": [
+          "",
+          "10",
+          "Politica de retencion de auditoria con archivado historico por periodos.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 22,
+        "cells": [
+          "",
+          "11",
+          "Estrategia de particionamiento para tablas de alto crecimiento (citas y logs).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 23,
+        "cells": [
+          "",
+          "12",
+          "Cifrado de respaldos y control de acceso al almacenamiento de copias.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 24,
+        "cells": [
+          "",
+          "13",
+          "Monitoreo de rendimiento con metricas de consultas lentas y uso de indices.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 25,
+        "cells": [
+          "",
+          "14",
+          "Definicion de objetivos RPO/RTO para continuidad del servicio.",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 26,
+        "cells": [
+          "",
+          "15",
+          "Ejecucion periodica de mantenimiento (vacuum/analyze o equivalente).",
+          "",
+          "",
+          "x",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 27,
+        "cells": [
+          "",
+          "16",
+          "Versionado de scripts SQL y trazabilidad de migraciones aplicadas.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "row": 28,
+        "cells": [
+          "",
+          "17",
+          "Politica de minimo privilegio para usuarios tecnicos y de aplicacion.",
+          "",
+          "x",
+          "",
+          "",
+          "",
+          ""
+        ]
+      }
+    ]
+  },
+  "duplicates": {}
+}

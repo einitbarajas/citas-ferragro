@@ -12,6 +12,7 @@ body {
   margin: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   font-family: "Century Gothic", "Avenir Next", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   color: #121212;
   background-color: #ffffff;

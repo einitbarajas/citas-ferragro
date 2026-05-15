@@ -4,12 +4,12 @@ export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
   return (
     <div className="min-h-screen bg-white">
       <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 py-3">
-          <div className="min-w-0 flex-1 pr-1 py-1">
-            <BrandLogo className="max-h-12" fetchPriority="high" />
+        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-2 px-4 py-3 sm:gap-3">
+          <div className="min-w-0 flex-1 basis-[min(100%,12rem)] pr-1 py-1 sm:basis-auto">
+            <BrandLogo className="max-h-10 w-auto sm:max-h-12" fetchPriority="high" />
           </div>
 
-          <nav aria-label="Acciones de acceso" className="ml-auto flex shrink-0 items-center gap-2">
+          <nav aria-label="Acciones de acceso" className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:gap-2">
             <button
               type="button"
               onClick={() => (typeof onStartTour === "function" ? onStartTour() : null)}
@@ -22,19 +22,19 @@ export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
               type="button"
               onClick={() => (typeof onLogin === "function" ? onLogin() : null)}
               data-tour="landing-login-btn"
-              className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              className="inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 sm:gap-2 sm:px-3"
             >
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
+              <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
                 <path d="M20 21a8 8 0 1 0-16 0" />
                 <circle cx="12" cy="9" r="4" />
               </svg>
-              Iniciar sesión
+              <span className="hidden sm:inline">Iniciar sesión</span>
             </button>
             <button
               type="button"
               onClick={() => (typeof onRegister === "function" ? onRegister() : null)}
               data-tour="landing-register-btn"
-              className="rounded-lg bg-[#2a5c30] px-3 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-900/25 transition hover:bg-[#1f4524]"
+              className="min-h-10 rounded-lg bg-[#2a5c30] px-2.5 py-2 text-xs font-semibold text-white shadow-sm shadow-emerald-900/25 transition hover:bg-[#1f4524] sm:px-3 sm:text-sm"
             >
               Registrarme
             </button>
@@ -75,7 +75,7 @@ export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
               <h2 id="landing-modules-title" className="text-sm font-semibold text-slate-900">
                 Módulos del portal
               </h2>
-              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div className="mt-4 grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 sm:grid-cols-3">
                 {[
                   "Solicitar cita de entrega",
                   "Notificaciones de cambios",
