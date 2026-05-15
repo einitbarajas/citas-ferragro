@@ -110,9 +110,6 @@ export default function App() {
           <CookieBanner />
         </Suspense>
       ) : null}
-      <div role="region" aria-label="Preferencias de visualización" className="contents">
-        <ThemeToggle />
-      </div>
     </>
   );
 }

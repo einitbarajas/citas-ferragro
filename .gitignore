@@ -17,3 +17,5 @@ __pycache__/
 # Node modules and build artifacts
 frontend/node_modules/
 frontend/dist/
+
+.vercel

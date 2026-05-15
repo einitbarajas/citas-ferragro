@@ -15,6 +15,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import BrandLogo from "../components/BrandLogo";
 import NotificationCenter from "../components/NotificationCenter";
 import PasswordVisibilityButton from "../components/PasswordVisibilityButton";
+import ThemeToggle from "../components/ThemeToggle";
 
 const GuidedTourDialog = lazy(() => import("../components/GuidedTourDialog"));
 import { useAuth } from "../context/AuthContext";
@@ -2125,6 +2126,11 @@ export default function DashboardPage() {
       )}
       {sidebar}
 
+      <div role="region" aria-label="Preferencias de visualización" className="contents">
+        {mobileNavOpen ? <ThemeToggle variant="fixed" className="lg:hidden" /> : null}
+        <ThemeToggle variant="fixed" className="hidden lg:inline-flex" />
+      </div>
+
       <main
         id="dashboard-main-content"
         data-tour="main-workspace"
@@ -2133,15 +2139,18 @@ export default function DashboardPage() {
       >
         <div className="mb-4 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm lg:hidden">
           <div className="flex items-center justify-between gap-3">
-            <BrandLogo className="h-7 w-auto" protectedArea={false} />
-            <button
-              type="button"
-              onClick={() => setMobileNavOpen(true)}
-              className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
-              aria-label="Abrir menú lateral"
-            >
-              Menú
-            </button>
+            <BrandLogo className="h-7 w-auto shrink-0" protectedArea={false} />
+            <div className="flex shrink-0 items-center gap-2">
+              {!mobileNavOpen ? <ThemeToggle variant="inline" /> : null}
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(true)}
+                className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
+                aria-label="Abrir menú lateral"
+              >
+                Menú
+              </button>
+            </div>
           </div>
           <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">{activeNavLabel}</p>
         </div>
