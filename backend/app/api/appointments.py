@@ -9,6 +9,7 @@ from app.api.deps import SecurityPrincipal, get_db, require_roles
 from app.core.responses import ok_response
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.audit_log import AuditLog
+from app.models.provider import Provider
 from app.models.user import UserRole
 from app.core.config import settings
 from app.schemas.appointment import (
@@ -27,7 +28,11 @@ from app.services.appointment_service import (
     slot_conflict_check,
 )
 from app.services.appointment_windows import SLOT_MINUTES, assert_start_within_windows, list_date_windows_ordered
-from app.services.notification_service import notify_provider_appointment_updated, notify_staff_review_needed
+from app.services.notification_service import (
+    notify_provider_appointment_updated,
+    notify_staff_provider_cancelled,
+    notify_staff_review_needed,
+)
 from app.services.range_bounds import business_local_range_bounds
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
@@ -591,15 +596,19 @@ def provider_cancel_appointment(
     if appt.start_time - now_utc < timedelta(hours=2):
         raise HTTPException(status_code=400, detail="La cita solo se puede cancelar con mínimo 2 horas de anticipación")
     appt.status = AppointmentStatus.cancelado
+    reason = payload.reason.strip()
+    provider = db.get(Provider, int(appt.provider_id))
+    provider_label = provider.company_name if provider else None
     db.add(
         AuditLog(
             actor_id=str(principal.subject),
             appointment_id=appt.id,
             action="provider_cancel",
-            description=f"Proveedor cancela cita. Motivo: {payload.reason.strip()}",
+            description=f"Proveedor cancela cita. Motivo: {reason}",
             created_at=datetime.now(timezone.utc),
         )
     )
+    notify_staff_provider_cancelled(db, appt, reason=reason, provider_label=provider_label)
     db.commit()
     db.refresh(appt)
     return _serialize(appt)

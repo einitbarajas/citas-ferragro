@@ -104,6 +104,7 @@ Si `email_enabled` es `false`, los correos **no salen** (solo notificaciones den
 | Registro público Logística | Bienvenida (usuario interno) |
 | Olvidé mi contraseña | Contraseña temporal |
 | Cambio de estado / revisión de cita | Aviso al proveedor o staff |
+| Proveedor cancela la cita | Aviso a **Admin** y **Logística** (correo + campana) |
 
 **Gmail:** activa verificación en 2 pasos y crea una **contraseña de aplicación** en la cuenta de Google.
 

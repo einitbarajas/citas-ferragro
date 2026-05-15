@@ -105,3 +105,32 @@ def notify_provider_appointment_updated(
     provider_email = _provider_credential_email(db, int(appointment.provider_id))
     if provider_email:
         _dispatch_notification_emails([provider_email], title=title, message=message)
+
+
+def notify_staff_provider_cancelled(
+    db: Session,
+    appointment: Appointment,
+    *,
+    reason: str,
+    provider_label: str | None = None,
+) -> None:
+    start_label = _format_start_local(appointment)
+    label = (provider_label or "").strip() or f"NIT {appointment.provider_id}"
+    title = f"Cita #{appointment.id} cancelada por el proveedor"
+    message = (
+        f"{label} canceló la cita que estaba programada para {start_label}. "
+        f"Motivo indicado: {reason.strip()}"
+    )
+    for role in (UserRole.admin, UserRole.logistica):
+        db.add(
+            UserNotification(
+                recipient_role=role,
+                recipient_provider_id=None,
+                appointment_id=appointment.id,
+                kind="cita_cancelada_proveedor",
+                title=title,
+                message=message,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        _dispatch_notification_emails(_staff_emails_for_role(db, role), title=title, message=message)
