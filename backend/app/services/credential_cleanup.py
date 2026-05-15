@@ -41,6 +41,18 @@ def delete_credential_fully(db: Session, credential_id: int) -> None:
         db.delete(cred)
 
 
+def purge_orphan_credentials(db: Session) -> list[int]:
+    """Elimina todas las credenciales sin usuario ni proveedor activo."""
+    removed: list[int] = []
+    cred_ids = db.execute(select(Credential.id)).scalars().all()
+    for cred_id in cred_ids:
+        if credential_has_active_owner(db, cred_id):
+            continue
+        delete_credential_fully(db, cred_id)
+        removed.append(cred_id)
+    return removed
+
+
 def release_email_for_reuse(db: Session, email: str, *, exclude_credential_id: int | None = None) -> list[int]:
     """Elimina credenciales huérfanas con ese correo. Devuelve ids eliminados."""
     normalized = email.strip().lower()

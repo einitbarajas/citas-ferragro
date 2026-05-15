@@ -22,8 +22,11 @@ from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.responses import error_response, ok_response
 from app.db.base import Base
-from app.db.session import engine
+from app.db.session import SessionLocal, engine
+from app.services.credential_cleanup import purge_orphan_credentials
 from app.services.reminder_scheduler import reminder_scheduler_loop
+
+API_BUILD_ID = "2026-05-15-orphan-cleanup"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -38,8 +41,22 @@ SUSPICIOUS_QUERY_PATTERNS = [
 ]
 
 
+def _purge_orphan_credentials_on_startup() -> None:
+    if not settings.is_production:
+        return
+    try:
+        with SessionLocal() as db:
+            removed = purge_orphan_credentials(db)
+            if removed:
+                db.commit()
+                logger.info("Credenciales huérfanas eliminadas al arranque: %s", removed)
+    except Exception:
+        logger.exception("No se pudo limpiar credenciales huérfanas al arranque")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _purge_orphan_credentials_on_startup()
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(reminder_scheduler_loop(stop_event))
     yield
@@ -348,7 +365,7 @@ def unhandled_exception_handler(_, __):
 
 @app.get("/health")
 def health():
-    return ok_response({"status": "ok"}, "Servicio activo")
+    return ok_response({"status": "ok", "build_id": API_BUILD_ID}, "Servicio activo")
 
 
 if __name__ == "__main__":
