@@ -4,15 +4,19 @@ import react from "@vitejs/plugin-react";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, "..", "");
   const apiTarget = (env.VITE_DEV_API_PROXY || "http://127.0.0.1:8000").replace(/\/$/, "");
+  const apiOrigin = (env.VITE_API_URL || "").trim().replace(/\/$/, "");
   const isDev = mode === "development";
+  const connectSrc = isDev
+    ? "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 ws://localhost:* ws://127.0.0.1:*"
+    : apiOrigin
+      ? `connect-src 'self' ${apiOrigin}`
+      : "connect-src 'self' https://*.onrender.com";
   const cspDirectives = [
     "default-src 'self'",
     isDev ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self'",
     isDev ? "style-src 'self' 'unsafe-inline'" : "style-src 'self'",
     "img-src 'self' data: https://res.cloudinary.com",
-    isDev
-      ? "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 ws://localhost:* ws://127.0.0.1:*"
-      : "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000",
+    connectSrc,
     "font-src 'self' data:",
     "frame-ancestors 'none'",
     "base-uri 'self'",
@@ -24,7 +28,6 @@ export default defineConfig(({ mode }) => {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Resource-Policy": "same-site",
     "Content-Security-Policy": `${cspDirectives.join("; ")};`,
   };
 
