@@ -2,6 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import api, { API_PREFIX, getRetryAfterSeconds, parseApiError, parseApiResponse } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import BrandLogo from "../components/BrandLogo";
+import PasswordVisibilityButton from "../components/PasswordVisibilityButton";
+import ThemeToggle from "../components/ThemeToggle";
 
 export default function LoginPage({ initialMode = "login", onBack, showInfoPanel = true, onStartTour } = {}) {
   const modalRef = useRef(null);
@@ -27,8 +29,9 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
   const [confirmPassword, setConfirmPassword] = useState("");
   const [acceptedLaw1581, setAcceptedLaw1581] = useState(false);
   const [showLawModal, setShowLawModal] = useState(false);
-  const fieldClass =
-    "mt-1 w-full rounded-lg border border-slate-400 bg-white px-3 py-2.5 text-slate-900 placeholder:text-slate-500 transition focus:border-[#35783C] focus:outline-none focus:ring-2 focus:ring-[#35783C]/30";
+  const fieldInputClass =
+    "w-full rounded-lg border border-slate-400 bg-white px-3 py-2.5 text-slate-900 placeholder:text-slate-500 transition focus:border-[#35783C] focus:outline-none focus:ring-2 focus:ring-[#35783C]/30";
+  const fieldClass = `mt-1 ${fieldInputClass}`;
   const errorId = `${formIdPrefix}-form-error`;
   const modalTitleId = `${formIdPrefix}-law-title`;
   const modalDescId = `${formIdPrefix}-law-description`;
@@ -347,7 +350,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
             </button>
           )}
           <header className="mb-5">
-            <div className="mb-2 flex justify-end">
+            <div className="mb-2 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => (typeof onStartTour === "function" ? onStartTour() : null)}
@@ -356,6 +359,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
               >
                 Manual
               </button>
+              <ThemeToggle variant="inline" />
             </div>
             <div className="inline-flex rounded-xl border border-emerald-100 bg-emerald-50/50 p-1" data-tour="login-tabs">
               <button
@@ -632,12 +636,13 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
           />
           </div>
         )}
-        <div className="relative" data-tour="login-password">
+        <div data-tour="login-password">
           <label htmlFor={`${formIdPrefix}-password`} className="text-sm font-medium text-[#121212]">
             Contraseña
           </label>
+          <div className="relative mt-1 overflow-hidden rounded-lg">
           <input
-            className={fieldClass + " pr-10"}
+            className={fieldInputClass + " pr-11"}
             type={showPassword ? "text" : "password"}
             id={`${formIdPrefix}-password`}
             name="password"
@@ -647,27 +652,12 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
             aria-describedby={error ? `${errorId} ${formIdPrefix}-password-rules` : `${formIdPrefix}-password-rules`}
             required
           />
-          <button
-            type="button"
-            onClick={togglePasswordVisibility(setShowPassword)}
-            className="absolute inset-y-0 right-0 mt-6 flex min-h-11 w-11 touch-manipulation items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
-            aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
-            aria-pressed={showPassword}
-          >
-            {showPassword ? (
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
-                <path d="M3 3l18 18" />
-                <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
-                <path d="M9.9 5.1A10.9 10.9 0 0 1 12 5c5.1 0 9.3 3.2 10.8 7-1 2.4-3 4.4-5.6 5.7" />
-                <path d="M6.2 6.2C3.7 7.6 1.9 9.7 1.2 12c1.5 3.8 5.7 7 10.8 7 1.1 0 2.2-.2 3.2-.5" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
-                <path d="M1.2 12C2.7 8.2 6.9 5 12 5s9.3 3.2 10.8 7c-1.5 3.8-5.7 7-10.8 7S2.7 15.8 1.2 12z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            )}
-          </button>
+            <PasswordVisibilityButton
+              visible={showPassword}
+              onToggle={() => setShowPassword((v) => !v)}
+              label="contraseña"
+            />
+          </div>
         </div>
         {isRegister && (
           <div id={`${formIdPrefix}-password-rules`} className={`rounded-lg border p-3 ${passwordStrength.bg}`}>
@@ -687,12 +677,13 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
           </div>
         )}
         {isRegister && (
-          <div className="relative">
+          <div>
             <label htmlFor={`${formIdPrefix}-confirm_password`} className="text-sm font-medium text-[#121212]">
               Confirmar contraseña
             </label>
+            <div className="relative mt-1 overflow-hidden rounded-lg">
             <input
-              className={fieldClass + " pr-10"}
+              className={fieldInputClass + " pr-11"}
               type={showConfirmPassword ? "text" : "password"}
               id={`${formIdPrefix}-confirm_password`}
               name="confirm_password"
@@ -703,27 +694,12 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
               aria-describedby={error ? errorId : undefined}
               required
             />
-            <button
-              type="button"
-              onClick={togglePasswordVisibility(setShowConfirmPassword)}
-              className="absolute inset-y-0 right-0 mt-6 flex min-h-11 w-11 touch-manipulation items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
-              aria-label={showConfirmPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
-              aria-pressed={showConfirmPassword}
-            >
-              {showConfirmPassword ? (
-                <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
-                  <path d="M3 3l18 18" />
-                  <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
-                  <path d="M9.9 5.1A10.9 10.9 0 0 1 12 5c5.1 0 9.3 3.2 10.8 7-1 2.4-3 4.4-5.6 5.7" />
-                  <path d="M6.2 6.2C3.7 7.6 1.9 9.7 1.2 12c1.5 3.8 5.7 7 10.8 7 1.1 0 2.2-.2 3.2-.5" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
-                  <path d="M1.2 12C2.7 8.2 6.9 5 12 5s9.3 3.2 10.8 7c-1.5 3.8-5.7 7-10.8 7S2.7 15.8 1.2 12z" />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-              )}
-            </button>
+            <PasswordVisibilityButton
+              visible={showConfirmPassword}
+              onToggle={() => setShowConfirmPassword((v) => !v)}
+              label="confirmar contraseña"
+            />
+          </div>
           </div>
         )}
         {isRegister && (

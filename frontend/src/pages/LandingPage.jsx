@@ -1,4 +1,5 @@
 import BrandLogo from "../components/BrandLogo";
+import ThemeToggle from "../components/ThemeToggle";
 
 export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
   return (
@@ -18,6 +19,7 @@ export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
             >
               Manual
             </button>
+            <ThemeToggle variant="inline" />
             <button
               type="button"
               onClick={() => (typeof onLogin === "function" ? onLogin() : null)}

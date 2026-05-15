@@ -1,6 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useAuth } from "./context/AuthContext";
-import ThemeToggle from "./components/ThemeToggle";
 const CookieBanner = lazy(() => import("./components/CookieBanner"));
 const GuidedTourDialog = lazy(() => import("./components/GuidedTourDialog"));
 
@@ -85,9 +84,6 @@ export default function App() {
             <CookieBanner />
           </Suspense>
         ) : null}
-        <div role="region" aria-label="Preferencias de visualización" className="contents">
-          <ThemeToggle />
-        </div>
       </>
     );
   }

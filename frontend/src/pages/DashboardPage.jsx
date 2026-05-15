@@ -2140,7 +2140,16 @@ export default function DashboardPage() {
         <div className="mb-4 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm lg:hidden">
           <div className="flex items-center justify-between gap-3">
             <BrandLogo className="h-7 w-auto shrink-0" protectedArea={false} />
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 flex-nowrap items-center gap-1.5">
+              <NotificationCenter compact onNavigate={handleNotificationNavigate} />
+              <button
+                type="button"
+                onClick={startManualTour}
+                data-tour="manual-btn"
+                className="inline-flex min-h-10 items-center rounded-lg border border-slate-300 bg-white px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 sm:px-3 sm:text-xs"
+              >
+                Manual
+              </button>
               {!mobileNavOpen ? <ThemeToggle variant="inline" /> : null}
               <button
                 type="button"
@@ -2154,7 +2163,7 @@ export default function DashboardPage() {
           </div>
           <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">{activeNavLabel}</p>
         </div>
-        <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+        <div className="mb-4 hidden flex-nowrap items-center justify-end gap-2 lg:flex">
           <NotificationCenter onNavigate={handleNotificationNavigate} />
           <button
             type="button"
@@ -2775,9 +2784,9 @@ export default function DashboardPage() {
                   onChange={(e) => setNuName(e.target.value)}
                   required
                 />
-                <div className="relative isolate overflow-visible">
+                <div className="relative overflow-hidden rounded-lg">
                   <input
-                    className={input + " pr-14"}
+                    className={input + " pr-11"}
                     placeholder="Contraseña"
                     type={showNuPass ? "text" : "password"}
                     value={nuPass}
@@ -2793,9 +2802,9 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                <div className="relative isolate overflow-visible">
+                <div className="relative overflow-hidden rounded-lg">
                   <input
-                    className={input + " pr-14"}
+                    className={input + " pr-11"}
                     placeholder="Confirmar contraseña"
                     type={showNuPassConfirm ? "text" : "password"}
                     value={nuPassConfirm}
@@ -2838,7 +2847,7 @@ export default function DashboardPage() {
                   <option value="Logistica">Logística</option>
                 </select>
               </div>
-              <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-slate-600">
+              <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-slate-600 max-lg:min-h-[22rem] max-lg:max-h-[32rem]">
                 {filteredStaffUsers.map((u) => (
                   <li key={u.document_id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                     {editingUserId === u.document_id ? (
@@ -3008,9 +3017,9 @@ export default function DashboardPage() {
               <h2 className="mb-2 text-lg font-semibold text-slate-900">Cambiar contraseña</h2>
               <p className="mb-3 text-xs text-slate-500">Usa una contraseña fuerte y confirma el cambio.</p>
               <form className="space-y-2" onSubmit={onChangeProfilePassword}>
-                <div className="relative">
+                <div className="relative overflow-hidden rounded-lg">
                   <input
-                    className={input + " pr-12"}
+                    className={input + " pr-11"}
                     placeholder="Contraseña actual"
                     type={showProfileCurrentPassword ? "text" : "password"}
                     value={profileCurrentPassword}
@@ -3026,9 +3035,9 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                <div className="relative">
+                <div className="relative overflow-hidden rounded-lg">
                   <input
-                    className={input + " pr-12"}
+                    className={input + " pr-11"}
                     placeholder="Nueva contraseña"
                     type={showProfileNewPassword ? "text" : "password"}
                     value={profileNewPassword}
@@ -3044,9 +3053,9 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                <div className="relative">
+                <div className="relative overflow-hidden rounded-lg">
                   <input
-                    className={input + " pr-12"}
+                    className={input + " pr-11"}
                     placeholder="Confirmar nueva contraseña"
                     type={showProfileConfirmPassword ? "text" : "password"}
                     value={profileConfirmPassword}
