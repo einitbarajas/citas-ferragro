@@ -28,11 +28,19 @@ body {
   #root {
     height: auto;
     min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  body.dashboard-panel-active {
+    background: linear-gradient(to bottom right, #f8fafc, #ffffff, #ecfdf5);
   }
 
   #dashboard-main-content {
+    min-height: 0 !important;
+    overflow: visible !important;
     -webkit-overflow-scrolling: touch;
-    scroll-padding-bottom: calc(11rem + env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: calc(12rem + env(safe-area-inset-bottom, 0px));
   }
 }
 

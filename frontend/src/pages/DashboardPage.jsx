@@ -353,21 +353,24 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
-    const previousHtmlOverflow = document.documentElement.style.overflow;
-    const previousBodyOverflow = document.body.style.overflow;
-
     const applyScrollLock = () => {
-      const lock = mq.matches;
-      document.documentElement.style.overflow = lock ? "hidden" : "";
-      document.body.style.overflow = lock ? "hidden" : "";
+      if (mq.matches) {
+        document.documentElement.style.overflow = "hidden";
+        document.body.style.overflow = "hidden";
+      } else {
+        document.documentElement.style.overflow = "";
+        document.body.style.overflow = "";
+      }
     };
 
     applyScrollLock();
     mq.addEventListener("change", applyScrollLock);
+    document.body.classList.add("dashboard-panel-active");
     return () => {
       mq.removeEventListener("change", applyScrollLock);
-      document.documentElement.style.overflow = previousHtmlOverflow;
-      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+      document.body.classList.remove("dashboard-panel-active");
     };
   }, []);
 
@@ -2085,7 +2088,7 @@ export default function DashboardPage() {
     );
 
   return (
-    <div className="min-h-[100dvh] bg-gradient-to-br from-slate-50 via-white to-emerald-50/50 text-[#121212] max-lg:overflow-x-hidden lg:flex lg:h-screen lg:max-h-screen lg:overflow-hidden">
+    <div className="bg-gradient-to-br from-slate-50 via-white to-emerald-50/50 text-[#121212] max-lg:min-h-0 max-lg:overflow-x-hidden lg:flex lg:min-h-screen lg:h-screen lg:max-h-screen lg:overflow-hidden">
       <ConfirmDialog
         open={Boolean(confirmDeleteUserId)}
         title="Eliminar usuario"
@@ -2126,7 +2129,7 @@ export default function DashboardPage() {
         id="dashboard-main-content"
         data-tour="main-workspace"
         aria-label="Contenido del panel"
-        className={`w-full px-4 py-6 pb-[calc(11rem+env(safe-area-inset-bottom,0px))] max-lg:min-h-[100dvh] sm:px-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-y-contain lg:px-10 lg:py-8 lg:pb-8 ${isProveedor ? "space-y-5" : ""}`}
+        className={`w-full px-4 py-6 pb-[max(12rem,calc(10rem+env(safe-area-inset-bottom,0px)))] sm:px-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-y-contain lg:px-10 lg:py-8 lg:pb-8 ${isProveedor ? "space-y-5" : ""}`}
       >
         <div className="mb-4 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm lg:hidden">
           <div className="flex items-center justify-between gap-3">
@@ -2763,9 +2766,9 @@ export default function DashboardPage() {
                   onChange={(e) => setNuName(e.target.value)}
                   required
                 />
-                <div className="relative">
+                <div className="relative isolate overflow-visible">
                   <input
-                    className={input + " pr-12"}
+                    className={input + " pr-14"}
                     placeholder="Contraseña"
                     type={showNuPass ? "text" : "password"}
                     value={nuPass}
@@ -2781,9 +2784,9 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                <div className="relative">
+                <div className="relative isolate overflow-visible">
                   <input
-                    className={input + " pr-12"}
+                    className={input + " pr-14"}
                     placeholder="Confirmar contraseña"
                     type={showNuPassConfirm ? "text" : "password"}
                     value={nuPassConfirm}

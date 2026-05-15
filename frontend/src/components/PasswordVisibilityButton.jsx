@@ -4,11 +4,13 @@ export default function PasswordVisibilityButton({ visible, onToggle, label = "c
   return (
     <button
       type="button"
+      onPointerDown={(e) => e.preventDefault()}
       onClick={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         onToggle();
       }}
-      className="absolute inset-y-0 right-0 z-10 flex min-h-11 min-w-11 touch-manipulation items-center justify-center rounded-md text-slate-500 transition hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
+      className="absolute inset-y-0 right-0 z-30 flex min-h-11 min-w-11 cursor-pointer touch-manipulation items-center justify-center rounded-md bg-white/80 text-slate-600 shadow-sm transition hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 dark:bg-slate-900/80 dark:text-slate-200"
       aria-label={visible ? `Ocultar${showLabel}` : `Mostrar${showLabel}`}
       aria-pressed={visible}
     >
