@@ -235,10 +235,32 @@ Cuando responda `{"success":true,...}`, el backend ya está listo. Luego entra a
 
 #### Backend en Render
 
-- **Automático:** `git push origin main` (si el servicio está conectado a GitHub).
-- **Manual:** https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0 → **Manual Deploy** → *Deploy latest commit*.
+- **Automático:** `git push origin main` (solo si el servicio está conectado al repo en GitHub).
+- **Manual (recomendado si no se actualiza solo):**
+  1. Abre https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0
+  2. Arriba a la derecha: **Manual Deploy** → **Deploy latest commit**
+  3. En **Events**, espera estado **Live** (3–8 min en plan Free).
+- **Deploy Hook (para automatizar desde GitHub):**
+  1. Render → `ferragro-api` → **Settings** → **Deploy Hook** → **Create Deploy Hook** → copia la URL.
+  2. GitHub → repo `citas-ferragro` → **Settings** → **Secrets and variables** → **Actions** → **New repository secret** → nombre `RENDER_DEPLOY_HOOK`, valor = la URL.
+  3. Cada `git push` a `main` que toque `backend/` disparará el workflow `.github/workflows/deploy-render-api.yml`.
+  4. O en tu PC: `$env:RENDER_DEPLOY_HOOK="https://api.render.com/deploy/..."` y `.\scripts\trigger-render-deploy.ps1`
 
-Comprueba: `https://ferragro-api.onrender.com/health` debe responder `200` con `"status":"ok"`.
+Comprueba el deploy:
+
+```text
+GET https://ferragro-api.onrender.com/health
+```
+
+Debe incluir `"build_id":"2026-05-15-orphan-cleanup-b"` (si ves solo `"status":"ok"` sin `build_id`, el API sigue en versión antigua).
+
+En el servicio, verifica también **Settings** → **Build Command**:
+
+```bash
+pip install -r requirements.txt && python scripts/purge_orphan_credentials.py
+```
+
+**Root Directory:** `backend`
 
 ### Usuarios internos: eliminar y volver a registrar el mismo correo
 
@@ -251,9 +273,14 @@ Después del arreglo en la API (deploy en Render), puedes **crear otro usuario**
 
 Si aún aparece *"El email ya está registrado"* tras eliminar:
 
-1. Confirma que el **backend en Render** tiene el último código (redeploy del API).
-2. Vuelve a intentar **Crear usuario** (la API limpia credenciales huérfanas si las hubiera).
-3. Si persiste, revisa en la BD que no exista otro proveedor con ese correo.
+1. **Causa habitual:** quedó una fila en `Credenciales` sin usuario (huérfana) al borrar antes del arreglo del API.
+2. **Solución rápida en Render (SQL):** panel `ferragro-db` → **Connect** → pestaña para ejecutar SQL → pega y ejecuta el contenido de `db/scripts/liberar-correo-ebarajas.sql` (cambia el correo en el script si es otro).
+3. **Solución por API** (cuando el deploy del API ya esté en Live): como Admin, llama  
+   `POST https://ferragro-api.onrender.com/api/v1/crud/admin/release-email?email=TU_CORREO@ejemplo.com`  
+   con el token Bearer del login.
+4. Confirma redeploy del API: Render → `ferragro-api` → **Manual Deploy** → *Deploy latest commit*.
+5. Vuelve a **Crear usuario** en el panel.
+6. Si persiste, revisa que no exista un **proveedor** activo con ese mismo correo.
 
 ### Desarrollo local (en tu PC)
 

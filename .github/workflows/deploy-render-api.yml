@@ -1,0 +1,29 @@
+# Dispara deploy del API en Render al hacer push a main (backend o render.yaml).
+# Configura el secreto RENDER_DEPLOY_HOOK en GitHub:
+#   Render → ferragro-api → Settings → Deploy Hook → copiar URL
+#   GitHub → repo → Settings → Secrets → Actions → RENDER_DEPLOY_HOOK
+name: Deploy Render API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "render.yaml"
+      - ".github/workflows/deploy-render-api.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK no configurado. Usa Manual Deploy en Render."
+            exit 0
+          fi
+          curl -fsSL -X POST "$DEPLOY_HOOK"
+          echo "Deploy solicitado en Render."

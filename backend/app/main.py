@@ -26,7 +26,7 @@ from app.db.session import SessionLocal, engine
 from app.services.credential_cleanup import purge_orphan_credentials
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
-API_BUILD_ID = "2026-05-15-orphan-cleanup"
+API_BUILD_ID = "2026-05-15-orphan-cleanup-b"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
