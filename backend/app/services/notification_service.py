@@ -11,7 +11,7 @@ from app.models.provider import Provider
 from app.models.role import Role
 from app.models.user import User, UserRole
 from app.models.user_notification import UserNotification
-from app.services.mailer import send_notification_email
+from app.services.email_dispatch import dispatch_notification_email
 
 
 def _format_start_local(appointment: Appointment) -> str:
@@ -55,11 +55,7 @@ def _provider_credential_email(db: Session, provider_id: int) -> str | None:
 
 def _dispatch_notification_emails(to_emails: list[str], *, title: str, message: str) -> None:
     for to_email in _dedupe_emails(to_emails):
-        try:
-            send_notification_email(to_email, title, message)
-        except Exception:
-            # No bloquea la operación principal si falla SMTP.
-            pass
+        dispatch_notification_email(to_email, title, message)
 
 
 def notify_staff_review_needed(db: Session, appointment: Appointment) -> None:

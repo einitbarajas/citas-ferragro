@@ -67,9 +67,45 @@ La **URL de conexión completa** (`DATABASE_URL`) con contraseña está en Rende
 | `REFRESH_COOKIE_SECURE` | Sí | `true` |
 | `REFRESH_COOKIE_SAMESITE` | Sí | `none` (front y back en dominios distintos) |
 | `PYTHON_VERSION` | Recomendada | `3.12.8` |
-| `SMTP_*` | No | Correo (recuperación de contraseña, avisos) |
+| `SMTP_*` | **Sí** (para correos) | Bienvenida, recuperar contraseña, avisos de citas |
 | `CLOUDINARY_*` | No | Fotos de perfil |
 | `BUSINESS_TIMEZONE` | No | Por defecto `America/Bogota` |
+
+#### Correo (SMTP) en Render — obligatorio para que lleguen los emails
+
+En tu PC el `.env` tiene SMTP; **Render no lee ese archivo**. Hay que copiar las mismas variables en el panel del servicio `ferragro-api` → **Environment**:
+
+| Variable | Ejemplo (Gmail) |
+|----------|-----------------|
+| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_USER` | cuenta que envía |
+| `SMTP_PASSWORD` | contraseña de aplicación (no la clave normal de Gmail) |
+| `SMTP_FROM_EMAIL` | mismo correo que `SMTP_USER` |
+| `SMTP_FROM_NAME` | `Ferragro` |
+| `SMTP_USE_TLS` | `true` |
+
+Tras guardar, **Manual Deploy** del API. Comprueba:
+
+```text
+GET https://ferragro-api.onrender.com/health
+→ "email_enabled": true
+```
+
+Si `email_enabled` es `false`, los correos **no salen** (solo notificaciones dentro del panel).
+
+**Qué correo dispara cada flujo:**
+
+| Acción | ¿Envía email? |
+|--------|----------------|
+| Registro público de proveedor | Bienvenida (proveedor) |
+| Crear proveedor desde Admin/Logística | Bienvenida (proveedor) |
+| Crear usuario interno (Admin en Equipo) | Bienvenida (usuario interno + rol) |
+| Registro público Logística | Bienvenida (usuario interno) |
+| Olvidé mi contraseña | Contraseña temporal |
+| Cambio de estado / revisión de cita | Aviso al proveedor o staff |
+
+**Gmail:** activa verificación en 2 pasos y crea una **contraseña de aplicación** en la cuenta de Google.
 
 ### Variables de entorno — Frontend (Vercel → proyecto `frontend`)
 

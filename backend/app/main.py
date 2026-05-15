@@ -41,6 +41,15 @@ SUSPICIOUS_QUERY_PATTERNS = [
 ]
 
 
+def _warn_if_smtp_missing_in_production() -> None:
+    if settings.is_production and not settings.smtp_configured:
+        logger.warning(
+            "SMTP no configurado en producción (SMTP_HOST / SMTP_FROM_EMAIL). "
+            "Los correos de bienvenida, recuperación de contraseña y avisos de citas "
+            "no se enviarán; solo quedarán en los logs del servicio."
+        )
+
+
 def _purge_orphan_credentials_on_startup() -> None:
     if not settings.is_production:
         return
@@ -56,6 +65,7 @@ def _purge_orphan_credentials_on_startup() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _warn_if_smtp_missing_in_production()
     _purge_orphan_credentials_on_startup()
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(reminder_scheduler_loop(stop_event))
@@ -365,7 +375,10 @@ def unhandled_exception_handler(_, __):
 
 @app.get("/health")
 def health():
-    return ok_response({"status": "ok", "build_id": API_BUILD_ID}, "Servicio activo")
+    return ok_response(
+        {"status": "ok", "build_id": API_BUILD_ID, "email_enabled": settings.smtp_configured},
+        "Servicio activo",
+    )
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ from app.models.reminder_run import ReminderExecution
 from app.models.role import Role
 from app.models.user import User
 from app.services.credential_cleanup import delete_credential_fully, release_email_for_reuse
+from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
 from app.services.notification_service import notify_provider_appointment_updated, notify_staff_review_needed
 from app.schemas.crud import (
     AppointmentDateWindowReplace,
@@ -381,6 +382,7 @@ def create_user(
     )
     db.commit()
     db.refresh(user)
+    dispatch_welcome_staff(email, payload.full_name, role.name)
     return ok_response(_user_to_out(user).model_dump(), "Usuario creado correctamente")
 
 
@@ -618,6 +620,7 @@ def create_provider(
     )
     db.commit()
     db.refresh(provider)
+    dispatch_welcome_provider(str(payload.company_email), payload.company_name)
     return ok_response(ProviderOut.model_validate(provider).model_dump(), "Proveedor creado correctamente")
 
 

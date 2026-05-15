@@ -30,7 +30,8 @@ from app.services.auth_sessions import (
 )
 from app.services.credential_cleanup import credential_has_active_owner
 from app.services.login_policy import is_login_blocked, record_login_failure, reset_login_failures
-from app.services.mailer import send_temporary_password_email, send_welcome_email
+from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
+from app.services.mailer import send_temporary_password_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -151,11 +152,7 @@ def register(payload: UserCreate, request: Request, db: Session = Depends(get_db
         )
         db.add(provider)
         db.commit()
-        try:
-            send_welcome_email(str(payload.email), payload.full_name)
-        except Exception:
-            # No bloquea el registro si falla SMTP.
-            pass
+        dispatch_welcome_provider(str(payload.email), payload.full_name)
         return ok_response(
             {
                 "document_id": payload.document_id,
@@ -180,11 +177,7 @@ def register(payload: UserCreate, request: Request, db: Session = Depends(get_db
     )
     db.add(user)
     db.commit()
-    try:
-        send_welcome_email(str(payload.email), payload.full_name)
-    except Exception:
-        # No bloquea el registro si falla SMTP.
-        pass
+    dispatch_welcome_staff(str(payload.email), payload.full_name, role.name)
     db.refresh(user)
     user_out = UserOut(
         document_id=user.document_id,
@@ -345,10 +338,16 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
         state.temporary_issued_at = now
 
     try:
-        send_temporary_password_email(email, temporary_password)
+        sent = send_temporary_password_email(email, temporary_password)
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="No fue posible enviar el correo de recuperación.")
+    if not sent:
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="El envío de correo no está configurado en el servidor. Contacta al administrador.",
+        )
 
     db.commit()
     return ok_response(None, "Si el correo existe, se enviará una contraseña temporal.")

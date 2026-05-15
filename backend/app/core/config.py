@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
 
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host.strip() and self.smtp_from_email.strip())
+
     @model_validator(mode="after")
     def apply_production_defaults(self) -> "Settings":
         if not self.is_production:

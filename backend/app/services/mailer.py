@@ -1,4 +1,5 @@
-"""Utilidad simple de correo SMTP (fallback a logs en desarrollo)."""
+"""Utilidad simple de correo SMTP (fallback a logs si no hay SMTP_HOST)."""
+import logging
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -7,6 +8,8 @@ from pathlib import Path
 import smtplib
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 SUPPORT_EMAIL = "ecommerce@ferragro.com"
 SUPPORT_PHONE = "+57 3142254819"
@@ -68,9 +71,13 @@ def _build_mail_layout(body_html: str) -> str:
 def send_branded_email(subject: str, to_email: str, plain_body: str, content_html: str) -> bool:
     html_body = _build_mail_layout(content_html)
 
-    if not settings.smtp_host or not settings.smtp_from_email:
-        print(f"[mail-fallback] To: {to_email} | Subject: {subject} | Body: {plain_body}")
-        return True
+    if not settings.smtp_configured:
+        logger.warning(
+            "Correo no enviado (SMTP no configurado). to=%s subject=%s",
+            to_email,
+            subject,
+        )
+        return False
 
     message = MIMEMultipart("related")
     message["Subject"] = subject
@@ -149,6 +156,35 @@ def send_welcome_email(to_email: str, recipient_name: str) -> bool:
           <p style="margin:0 0 14px;line-height:1.6;">Hola <strong>{display_name}</strong>,</p>
           <p style="margin:0 0 14px;line-height:1.6;">
             Tu registro fue creado correctamente y ya puedes ingresar a la plataforma para gestionar tus citas de entrega.
+          </p>
+          <p style="margin:0;line-height:1.6;">
+            Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.
+          </p>
+"""
+    return send_branded_email(subject, to_email, plain_body, content_html)
+
+
+def send_internal_welcome_email(to_email: str, recipient_name: str, role_name: str) -> bool:
+    subject = "Ferragro - Cuenta de usuario creada"
+    display_name = (recipient_name or "").strip() or "usuario(a)"
+    role_label = (role_name or "").strip() or "usuario interno"
+    plain_body = (
+        f"Hola {display_name},\n\n"
+        "Te damos la bienvenida a Ferragro.\n"
+        f"Se creó tu cuenta con rol {role_label}. Ya puedes ingresar al panel con tu correo "
+        "y la contraseña que te indicó el administrador.\n\n"
+        "Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.\n\n"
+        f"Soporte: {SUPPORT_EMAIL} | WhatsApp: {SUPPORT_PHONE}\n"
+        f"Direccion: {COMPANY_ADDRESS}\n"
+        f"Sitio web: {COMPANY_WEBSITE}\n\n"
+        "Ferragro"
+    )
+    content_html = f"""
+          <h1 style="margin:0 0 16px;font-size:22px;color:#0f6e2f;">¡Bienvenido(a) a Ferragro!</h1>
+          <p style="margin:0 0 14px;line-height:1.6;">Hola <strong>{display_name}</strong>,</p>
+          <p style="margin:0 0 14px;line-height:1.6;">
+            Se creó tu cuenta con rol <strong>{role_label}</strong>. Ya puedes ingresar al panel con tu correo
+            y la contraseña que te indicó el administrador.
           </p>
           <p style="margin:0;line-height:1.6;">
             Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.
