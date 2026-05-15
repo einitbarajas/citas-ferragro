@@ -13,12 +13,27 @@ body {
   overflow-x: hidden;
   overflow-y: auto;
   padding-bottom: env(safe-area-inset-bottom, 0px);
+  -webkit-overflow-scrolling: touch;
   font-family: "Century Gothic", "Avenir Next", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   color: #121212;
   background-color: #ffffff;
   transition:
     background-color 0.38s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.38s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (max-width: 1023px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+  }
+
+  #dashboard-main-content {
+    -webkit-overflow-scrolling: touch;
+    scroll-padding-bottom: calc(11rem + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 html.dark body {

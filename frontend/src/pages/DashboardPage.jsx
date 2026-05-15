@@ -2085,7 +2085,7 @@ export default function DashboardPage() {
     );
 
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/50 text-[#121212] lg:h-screen lg:max-h-screen">
+    <div className="min-h-[100dvh] bg-gradient-to-br from-slate-50 via-white to-emerald-50/50 text-[#121212] max-lg:overflow-x-hidden lg:flex lg:h-screen lg:max-h-screen lg:overflow-hidden">
       <ConfirmDialog
         open={Boolean(confirmDeleteUserId)}
         title="Eliminar usuario"
@@ -2126,7 +2126,7 @@ export default function DashboardPage() {
         id="dashboard-main-content"
         data-tour="main-workspace"
         aria-label="Contenido del panel"
-        className={`min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-6 pb-[calc(7rem+env(safe-area-inset-bottom,0px))] sm:px-5 sm:pb-[calc(6rem+env(safe-area-inset-bottom,0px))] lg:px-10 lg:py-8 lg:pb-8 ${isProveedor ? "space-y-5" : ""}`}
+        className={`w-full px-4 py-6 pb-[calc(11rem+env(safe-area-inset-bottom,0px))] max-lg:min-h-[100dvh] sm:px-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-y-contain lg:px-10 lg:py-8 lg:pb-8 ${isProveedor ? "space-y-5" : ""}`}
       >
         <div className="mb-4 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm lg:hidden">
           <div className="flex items-center justify-between gap-3">

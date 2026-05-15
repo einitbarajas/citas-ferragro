@@ -11,6 +11,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
   const { login } = useAuth();
   const [isRegister, setIsRegister] = useState(initialMode === "register");
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmittingForgot, setIsSubmittingForgot] = useState(false);
@@ -61,28 +62,10 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
     }
     setForm((p) => ({ ...p, [name]: value }));
   };
-  const buildPressToShowProps = (setVisible) => ({
-    onMouseDown: () => setVisible(true),
-    onMouseUp: () => setVisible(false),
-    onMouseLeave: () => setVisible(false),
-    onTouchStart: () => setVisible(true),
-    onTouchEnd: () => setVisible(false),
-    onTouchCancel: () => setVisible(false),
-    onKeyDown: (e) => {
-      if (e.key === " " || e.key === "Enter") {
-        e.preventDefault();
-        setVisible(true);
-      }
-    },
-    onKeyUp: (e) => {
-      if (e.key === " " || e.key === "Enter") {
-        setVisible(false);
-      }
-    },
-    onBlur: () => setVisible(false),
-  });
-  const showPasswordPressProps = buildPressToShowProps(setShowPassword);
-  const showNewPasswordPressProps = buildPressToShowProps(setShowNewPassword);
+  const togglePasswordVisibility = (setter) => (e) => {
+    e.preventDefault();
+    setter((v) => !v);
+  };
   const passwordChecks = [
     { label: "Mínimo 8 caracteres", valid: form.password.length >= 8 },
     { label: "Al menos una letra mayúscula", valid: /[A-Z]/.test(form.password) },
@@ -437,9 +420,10 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
                   />
                   <button
                     type="button"
-                    {...showNewPasswordPressProps}
-                    className="absolute inset-y-0 right-0 mt-1 flex min-h-11 w-11 items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
+                    onClick={togglePasswordVisibility(setShowNewPassword)}
+                    className="absolute inset-y-0 right-0 mt-1 flex min-h-11 w-11 touch-manipulation items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
                     aria-label={showNewPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                    aria-pressed={showNewPassword}
                   >
                     {showNewPassword ? (
                       <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
@@ -472,9 +456,10 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
                   />
                   <button
                     type="button"
-                    {...showNewPasswordPressProps}
-                    className="absolute inset-y-0 right-0 mt-1 flex min-h-11 w-11 items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
+                    onClick={togglePasswordVisibility(setShowNewPassword)}
+                    className="absolute inset-y-0 right-0 mt-1 flex min-h-11 w-11 touch-manipulation items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
                     aria-label={showNewPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                    aria-pressed={showNewPassword}
                   >
                     {showNewPassword ? (
                       <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
@@ -664,9 +649,10 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
           />
           <button
             type="button"
-            {...showPasswordPressProps}
-            className="absolute inset-y-0 right-0 mt-6 flex min-h-11 w-11 items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
+            onClick={togglePasswordVisibility(setShowPassword)}
+            className="absolute inset-y-0 right-0 mt-6 flex min-h-11 w-11 touch-manipulation items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
             aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+            aria-pressed={showPassword}
           >
             {showPassword ? (
               <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
@@ -707,7 +693,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
             </label>
             <input
               className={fieldClass + " pr-10"}
-              type={showPassword ? "text" : "password"}
+              type={showConfirmPassword ? "text" : "password"}
               id={`${formIdPrefix}-confirm_password`}
               name="confirm_password"
               placeholder="Confirmar contraseña"
@@ -719,11 +705,12 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
             />
             <button
               type="button"
-              {...showPasswordPressProps}
-              className="absolute inset-y-0 right-0 mt-6 flex min-h-11 w-11 items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
-              aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+              onClick={togglePasswordVisibility(setShowConfirmPassword)}
+              className="absolute inset-y-0 right-0 mt-6 flex min-h-11 w-11 touch-manipulation items-center justify-center rounded-md text-[#35783C] transition hover:text-[#121212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
+              aria-label={showConfirmPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+              aria-pressed={showConfirmPassword}
             >
-              {showPassword ? (
+              {showConfirmPassword ? (
                 <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
                   <path d="M3 3l18 18" />
                   <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
