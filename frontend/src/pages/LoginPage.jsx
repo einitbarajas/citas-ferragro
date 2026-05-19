@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import api, { API_PREFIX, getRetryAfterSeconds, parseApiError, parseApiResponse, postLogin } from "../api/client";
+import api, { API_PREFIX, getRetryAfterSeconds, parseApiError, parseApiResponse, postLogin, warmApi } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import BrandLogo from "../components/BrandLogo";
 import PasswordVisibilityButton from "../components/PasswordVisibilityButton";
@@ -83,6 +83,10 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
     if (passwordScore <= 4) return { label: "Media", icon: "●", className: "text-amber-700", bg: "bg-amber-50 border-amber-300" };
     return { label: "Alta", icon: "✓", className: "text-[#35783C]", bg: "bg-emerald-50 border-emerald-300" };
   }, [passwordScore]);
+
+  useEffect(() => {
+    warmApi();
+  }, []);
 
   useEffect(() => {
     if (retryAfterSeconds <= 0) return undefined;

@@ -136,8 +136,8 @@ El rol **Admin** no se crea desde “Registrarme” en la web. Debe existir en l
 
 | Campo | Valor |
 |-------|--------|
-| Correo | `admin@ferragro.com` |
-| Contraseña | `FerragroAdmin2026!` |
+| Correo | `admin@ferragro.com` (solo para **iniciar sesión**; no es buzón real — no uses “Olvidé contraseña”) |
+| Contraseña | `FerragroAdmin2026!` (si no entra, ejecuta `db/scripts/reset-admin-password.sql` en Render → `ferragro-db`) |
 | Documento | `90000001` |
 | Nombre | Administrador Portal |
 | Rol | Admin |

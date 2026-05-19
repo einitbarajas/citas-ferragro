@@ -8,22 +8,41 @@ export const API_PREFIX = (import.meta.env.VITE_API_PREFIX || "/api/v1").trim();
  *   Vite reenvía `/api` y `/health` al backend (proxy). Así no dependes del puerto 8000 expuesto en el navegador.
  * - `npm run build` + preview o archivos estáticos: define `VITE_API_URL` (p. ej. http://localhost:8000) o se usa el host actual :8000.
  */
+const PRODUCTION_API_URL = "https://ferragro-api.onrender.com";
+
 function resolveApiBaseUrl() {
   const explicit = import.meta.env.VITE_API_URL;
   if (typeof explicit === "string" && explicit.trim()) {
-    return explicit.trim();
+    return explicit.trim().replace(/\/$/, "");
   }
   if (import.meta.env.DEV) {
     return "";
   }
-  if (typeof window !== "undefined" && window.location?.hostname) {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
-  }
-  return "http://localhost:8000";
+  return PRODUCTION_API_URL;
 }
 
-/** Render Free puede tardar ~30–60 s en despertar; en móvil 10 s provoca timeout. */
-const API_TIMEOUT_MS = import.meta.env.PROD ? 60000 : 10000;
+/** Tras despertar el API, el login suele responder en pocos segundos. */
+const API_TIMEOUT_MS = import.meta.env.PROD ? 35000 : 10000;
+
+let apiWakePromise = null;
+
+/** Despierta el API en Render (plan Free) antes del login. */
+export function warmApi() {
+  const base = resolveApiBaseUrl();
+  if (!base || import.meta.env.DEV) {
+    return Promise.resolve();
+  }
+  if (!apiWakePromise) {
+    apiWakePromise = fetch(`${base}/health`, { method: "GET", credentials: "omit" })
+      .catch(() => {})
+      .finally(() => {
+        setTimeout(() => {
+          apiWakePromise = null;
+        }, 20000);
+      });
+  }
+  return apiWakePromise;
+}
 
 const api = axios.create({
   baseURL: resolveApiBaseUrl(),
@@ -112,6 +131,7 @@ api.interceptors.response.use(
 
 /** Login (un solo intento; el API ya resuelve correo sin distinguir mayúsculas). */
 export async function postLogin(email, password) {
+  await warmApi();
   const trimmed = String(email || "").trim();
   const response = await api.post(`${API_PREFIX}/auth/login`, { email: trimmed, password });
   const payload = parseApiResponse(response);
