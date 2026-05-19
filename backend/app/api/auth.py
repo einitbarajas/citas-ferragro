@@ -31,6 +31,7 @@ from app.services.auth_sessions import (
 from app.services.credential_cleanup import credential_has_active_owner
 from app.services.login_policy import is_login_blocked, record_login_failure, reset_login_failures
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
+from app.services.admin_password_reset import DEFAULT_ADMIN_PASSWORD, reset_admin_password
 from app.services.mailer import send_temporary_password_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -409,6 +410,27 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     _clear_refresh_cookie(response)
     db.commit()
     return ok_response(None, "Sesión cerrada")
+
+
+@router.post("/maintenance/reset-admin-password", include_in_schema=False)
+def maintenance_reset_admin_password(request: Request, db: Session = Depends(get_db)):
+    """
+    Restablece la clave del Admin (documento 90000001) a FerragroAdmin2026!
+    Requiere MAINTENANCE_TOKEN en el servidor y header X-Maintenance-Token.
+    """
+    expected = settings.maintenance_token.strip()
+    provided = request.headers.get("X-Maintenance-Token", "").strip()
+    if not expected or provided != expected:
+        raise HTTPException(status_code=404, detail="Not Found")
+    try:
+        email = reset_admin_password(db, password=DEFAULT_ADMIN_PASSWORD)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    db.commit()
+    return ok_response(
+        {"email": email, "document_id": "90000001"},
+        "Contraseña del Admin restablecida. Elimina MAINTENANCE_TOKEN del servidor.",
+    )
 
 
 @router.post("/logout-all-devices")

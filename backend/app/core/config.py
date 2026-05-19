@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_from_name: str = "Ferragro"
     smtp_use_tls: bool = True
+    # Solo para emergencias: POST /auth/maintenance/reset-admin-password con header X-Maintenance-Token.
+    # Déjalo vacío en producción normal; quítalo tras usarlo.
+    maintenance_token: str = ""
 
     @property
     def is_production(self) -> bool:
