@@ -19,10 +19,14 @@ def _looks_like_bcrypt_hash(hashed_password: str) -> bool:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     if not _looks_like_bcrypt_hash(hashed_password):
         return False
+    # pgcrypto (PostgreSQL) suele emitir $2a$; bcrypt en Python valida con prefijo $2b$.
+    normalized = hashed_password
+    if normalized.startswith("$2a$"):
+        normalized = "$2b$" + normalized[4:]
     try:
         return bcrypt.checkpw(
             plain_password.encode("utf-8"),
-            hashed_password.encode("utf-8"),
+            normalized.encode("utf-8"),
         )
     except ValueError:
         return False
