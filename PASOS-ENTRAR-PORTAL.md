@@ -58,10 +58,15 @@ Si Repository está vacío: **Settings** → conecta GitHub y el repo, guarda, l
 
 ## Paso 2 — Arreglar la base de datos (2 min)
 
-1. https://dashboard.render.com/d/dpg-d82dfn4vikkc73a6mcj0-a
-2. **ferragro-db** → **Connect** → PSQL
-3. Copiar y ejecutar **todo** `db/scripts/ENTRAR-AHORA.sql`
-4. Debe salir **1 fila**: `ebarajas@ferragro.com` | Admin | 90000001
+```powershell
+cd "c:\dev\trabajo ferragro"
+.\arreglar-portal.ps1
+```
+
+Pega la **External Database URL** (Render → ferragro-db → Connections).  
+**No** escribas `db/scripts/ENTRAR-AHORA.sql` en PowerShell; ese archivo no se ejecuta así.
+
+O en el panel: **ferragro-db** → **Connect** → PSQL → pegar todo `db/scripts/ENTRAR-AHORA.sql` → debe salir **1 fila** Admin.
 
 ---
 
