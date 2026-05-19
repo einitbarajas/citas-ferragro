@@ -84,8 +84,11 @@ En tu PC el `.env` tiene SMTP; **Render no lee ese archivo**. Hay que copiar las
 | `SMTP_FROM_EMAIL` | mismo correo que `SMTP_USER` |
 | `SMTP_FROM_NAME` | `Ferragro` |
 | `SMTP_USE_TLS` | `true` |
+| `PASSWORD_RESET_INBOX` | Tu Gmail real, ej. `nataliabarajas412@gmail.com` — los correos `@ferragro.com` no tienen buzón; la recuperación llega aquí |
 
-Tras guardar, **Manual Deploy** del API. Comprueba:
+Tras guardar, **Manual Deploy** del API.
+
+**Recuperar contraseña de `ebarajas@ferragro.com`:** en el login usa ese correo → *Olvidé mi contraseña*. La clave temporal llega a `PASSWORD_RESET_INBOX` (Gmail). El correo indica *Cuenta del portal: ebarajas@ferragro.com*. Ejecuta antes `db/scripts/preparar-recuperacion-ebarajas.sql` si hubo cuentas duplicadas. Comprueba:
 
 ```text
 GET https://ferragro-api.onrender.com/health

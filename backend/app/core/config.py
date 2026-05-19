@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     # Solo para emergencias: POST /auth/maintenance/reset-admin-password con header X-Maintenance-Token.
     # Déjalo vacío en producción normal; quítalo tras usarlo.
     maintenance_token: str = ""
+    # Si los correos @ferragro.com no tienen buzón, envía la recuperación aquí (ej. tu Gmail).
+    password_reset_inbox: str = ""
 
     @property
     def is_production(self) -> bool:
