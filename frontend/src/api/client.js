@@ -22,10 +22,13 @@ function resolveApiBaseUrl() {
   return "http://localhost:8000";
 }
 
+/** Render Free puede tardar ~30–60 s en despertar; en móvil 10 s provoca timeout. */
+const API_TIMEOUT_MS = import.meta.env.PROD ? 60000 : 10000;
+
 const api = axios.create({
   baseURL: resolveApiBaseUrl(),
   withCredentials: true,
-  timeout: 10000,
+  timeout: API_TIMEOUT_MS,
 });
 
 export const AUTH_EXPIRED_EVENT = "auth:expired";
@@ -107,25 +110,15 @@ api.interceptors.response.use(
   }
 );
 
-/** Intenta login probando variantes de mayúsculas (API legacy sensible a mayúsculas). */
+/** Login (un solo intento; el API ya resuelve correo sin distinguir mayúsculas). */
 export async function postLogin(email, password) {
   const trimmed = String(email || "").trim();
-  const variants = [...new Set([trimmed, trimmed.toUpperCase(), trimmed.toLowerCase()])].filter(Boolean);
-  let lastError = null;
-  for (const variant of variants) {
-    try {
-      const response = await api.post(`${API_PREFIX}/auth/login`, { email: variant, password });
-      const payload = parseApiResponse(response);
-      if (payload.success) {
-        return { payload, emailUsed: variant };
-      }
-      lastError = new Error(payload.message || "Error de inicio de sesión");
-    } catch (err) {
-      if (err?.response?.status === 429) throw err;
-      lastError = err;
-    }
+  const response = await api.post(`${API_PREFIX}/auth/login`, { email: trimmed, password });
+  const payload = parseApiResponse(response);
+  if (payload.success) {
+    return { payload, emailUsed: trimmed };
   }
-  throw lastError || new Error("Email o contraseña inválidos");
+  throw new Error(payload.message || "Email o contraseña inválidos");
 }
 
 export function parseApiResponse(response) {
@@ -162,14 +155,20 @@ export function parseApiError(error) {
     if (typeof first === "string") return first;
     if (first?.msg) return String(first.msg);
   }
+  if (error?.code === "ECONNABORTED" || error?.code === "ETIMEDOUT") {
+    return "El servidor tardó demasiado en responder. Espera unos segundos e intenta de nuevo (el API en Render puede despertar al primer intento).";
+  }
   if (error?.code === "ERR_NETWORK" || error?.message === "Network Error") {
     const dev = import.meta.env.DEV;
     return [
       "No se pudo conectar con el API.",
       dev
         ? "En modo desarrollo: arranca el backend en el puerto 8000 (por ejemplo `python main.py` en la carpeta backend) y recarga la página. Las peticiones a /api se reenvían desde Vite (puerto 2711) al 8000; no hace falta abrir el 8000 en el navegador."
-        : "En producción: define la variable VITE_API_URL al construir el front (ej. http://tu-servidor:8000) y asegúrate de que el API esté accesible y CORS permita el origen de esta web.",
+        : "En producción: verifica VITE_API_URL=https://ferragro-api.onrender.com en Vercel y que el API esté activo.",
     ].join(" ");
+  }
+  if (error?.message && !error?.response) {
+    return error.message;
   }
   return "No se pudo completar la operación";
 }
