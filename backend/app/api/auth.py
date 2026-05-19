@@ -32,7 +32,7 @@ from app.services.credential_cleanup import credential_has_active_owner
 from app.services.login_policy import is_login_blocked, record_login_failure, reset_login_failures
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
 from app.services.admin_password_reset import DEFAULT_ADMIN_PASSWORD, reset_admin_password
-from app.services.mailer import resolve_password_reset_delivery, send_temporary_password_email
+from app.services.mailer import send_temporary_password_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -339,10 +339,9 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
         state.temporary_issued_at = now
 
     account_email = cred.email.strip()
-    delivery_email = resolve_password_reset_delivery(account_email)
     try:
         sent = send_temporary_password_email(
-            delivery_email,
+            account_email,
             temporary_password,
             account_email=account_email,
         )

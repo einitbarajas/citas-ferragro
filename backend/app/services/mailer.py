@@ -103,33 +103,19 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
     return True
 
 
-def resolve_password_reset_delivery(account_email: str) -> str:
-    """Buzón real donde enviar la clave (útil si @ferragro.com no tiene correo)."""
-    account = str(account_email or "").strip()
-    inbox = settings.password_reset_inbox.strip()
-    if inbox and account.lower().endswith("@ferragro.com"):
-        return inbox
-    return account
-
-
 def send_temporary_password_email(
     to_email: str,
     temporary_password: str,
     *,
     account_email: str | None = None,
 ) -> bool:
-    account = str(account_email or to_email).strip()
-    delivery = resolve_password_reset_delivery(account)
-    account_note = ""
-    if delivery.lower() != account.lower():
-        account_note = f"\n\nCuenta del portal: {account}\n"
+    delivery = str(account_email or to_email).strip()
 
     subject = "Ferragro - Contraseña temporal"
     plain_body = (
         "Hola,\n\n"
         "Recibimos una solicitud para recuperar tu contraseña en Ferragro.\n\n"
-        f"Tu contraseña temporal es: {temporary_password}\n"
-        f"{account_note}\n"
+        f"Tu contraseña temporal es: {temporary_password}\n\n"
         "Por seguridad, en el primer ingreso deberás cambiarla inmediatamente.\n"
         "Si no solicitaste este cambio, contacta al equipo de soporte.\n\n"
         f"Soporte: {SUPPORT_EMAIL} | WhatsApp: {SUPPORT_PHONE}\n"
@@ -143,11 +129,6 @@ def send_temporary_password_email(
           <p style="margin:0 0 14px;line-height:1.6;">
             Recibimos una solicitud para recuperar tu contraseña en Ferragro.
           </p>
-          {
-            f'<p style="margin:0 0 14px;line-height:1.6;">Cuenta del portal: <strong>{account}</strong></p>'
-            if delivery.lower() != account.lower()
-            else ""
-          }
           <p style="margin:0 0 8px;line-height:1.6;">Tu contraseña temporal es:</p>
           <p style="margin:0 0 18px;">
             <span style="display:inline-block;padding:10px 14px;border:1px dashed #0f6e2f;border-radius:8px;background:#f6fff7;font-size:20px;font-weight:700;letter-spacing:1px;color:#0f6e2f;">
