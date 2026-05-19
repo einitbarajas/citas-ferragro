@@ -23,10 +23,11 @@ from app.core.rate_limit import limiter
 from app.core.responses import error_response, ok_response
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
+from app.services.admin_bootstrap import ensure_production_admin
 from app.services.credential_cleanup import purge_orphan_credentials
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
-API_BUILD_ID = "2026-05-15-orphan-cleanup-b"
+API_BUILD_ID = "2026-05-19-admin-bootstrap"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -63,10 +64,24 @@ def _purge_orphan_credentials_on_startup() -> None:
         logger.exception("No se pudo limpiar credenciales huérfanas al arranque")
 
 
+def _ensure_production_admin_on_startup() -> None:
+    if not settings.is_production or not settings.admin_bootstrap_enabled:
+        return
+    try:
+        with SessionLocal() as db:
+            purge_orphan_credentials(db)
+            ensure_production_admin(db)
+            db.commit()
+            logger.info("Admin de producción verificado al arranque")
+    except Exception:
+        logger.exception("No se pudo asegurar el Admin de producción al arranque")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _warn_if_smtp_missing_in_production()
     _purge_orphan_credentials_on_startup()
+    _ensure_production_admin_on_startup()
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(reminder_scheduler_loop(stop_event))
     yield

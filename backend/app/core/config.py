@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # Solo para emergencias: POST /auth/maintenance/reset-admin-password con header X-Maintenance-Token.
     # Déjalo vacío en producción normal; quítalo tras usarlo.
     maintenance_token: str = ""
+    # Producción: al arrancar el API, asegura Admin documento 90000001 (correo/clave válidos, sin bloqueo).
+    admin_bootstrap_enabled: bool = True
+    admin_bootstrap_email: str = "ebarajas@ferragro.com"
+    admin_bootstrap_password: str = "FerragroPortal2026!"
 
     @property
     def is_production(self) -> bool:
