@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 import uuid
 from contextlib import asynccontextmanager
@@ -27,7 +28,7 @@ from app.services.admin_bootstrap import ensure_production_admin
 from app.services.credential_cleanup import purge_orphan_credentials
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
-API_BUILD_ID = "2026-05-19-deploy-main"
+API_BUILD_ID = "2026-05-19-live-v2"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -407,6 +408,7 @@ def health():
         {
             "status": "ok",
             "build_id": API_BUILD_ID,
+            "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
             "email_enabled": settings.smtp_configured,
             "smtp_host": settings.smtp_host or None,
             "admin_email": admin_email,

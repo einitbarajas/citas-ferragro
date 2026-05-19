@@ -4,9 +4,15 @@
 
 Abre en el navegador: https://ferragro-api.onrender.com/health
 
-Debe decir `"build_id":"2026-05-19-deploy-main"` (o más reciente).
+Debe decir `"build_id":"2026-05-19-live-v2"` (o más reciente).
 
 Si dice `2026-05-15-orphan-cleanup-b` → **el API en Render NO está actualizado**.
+
+### Si en Events ves commit `10fe606` (15 mayo)
+
+Ese **no es el código nuevo**. GitHub ya tiene **18 commits más nuevos** (login, correo, scripts SQL).
+
+En Render debes desplegar el **último commit de `main`**, no el de mayo. Tras deploy correcto, `/health` mostrará `render_git_commit` empezando por `bbf359a` o más reciente (no `10fe606`).
 
 ---
 
@@ -43,7 +49,8 @@ Si Repository está vacío: **Settings** → conecta GitHub y el repo, guarda, l
 ## Paso 1 — Desplegar API en Render (3 min)
 
 1. https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0
-2. **Manual Deploy** → **Deploy latest commit**
+2. Arriba a la derecha: **Manual Deploy** → **Deploy latest commit**  
+   (No uses **Rollback** al commit `10fe606` del 15 de mayo.)
 3. Esperar **Live** (si falla, mira **Events** → log del build).
 4. Verificar `/health` con build nuevo (`2026-05-19-deploy-main` o posterior).
 
