@@ -27,7 +27,7 @@ from app.services.admin_bootstrap import ensure_production_admin
 from app.services.credential_cleanup import purge_orphan_credentials
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
-API_BUILD_ID = "2026-05-19-forgot-password-v2"
+API_BUILD_ID = "2026-05-19-deploy-main"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 

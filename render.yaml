@@ -11,6 +11,9 @@ services:
     name: ferragro-api
     runtime: python
     plan: free
+    repo: https://github.com/einitbarajas/citas-ferragro
+    branch: main
+    autoDeploy: true
     rootDir: backend
     buildCommand: pip install -r requirements.txt && python scripts/purge_orphan_credentials.py && python scripts/fix_production_admin.py
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
@@ -27,21 +30,6 @@ services:
       - key: CORS_ORIGINS
         sync: false
       # Correo (recuperar contraseña, bienvenida, citas). Outlook: smtp.office365.com:587
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: SMTP_FROM_EMAIL
-        sync: false
-      - key: SMTP_FROM_NAME
-        value: Ferragro
-      - key: SMTP_USE_TLS
-        value: "true"
-      # Recuperar contraseña y avisos por correo (Outlook: smtp.office365.com:587)
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
