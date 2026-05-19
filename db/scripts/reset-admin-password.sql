@@ -6,16 +6,22 @@
 -- Si regeneras la clave, genera otro hash con backend: get_password_hash('TuClave')
 
 UPDATE "Credenciales" c
-SET "HashContrasena" = '$2b$12$QRqZIsqM175eur9zYG.NPOTFoZKq3GWM1vIDqnk0JrrPqbkolVx4m'
+SET "HashContrasena" = '$2b$12$AgJ/YKsj5G/zHQWUMs0F5efyeeLNpVsseU6W.V8aI1KNwDIkVOYSG'
 FROM "Usuarios" u
 WHERE u."IdCredencial" = c."IdCredencial"
   AND u."IdDocumento" = '90000001';
 
 UPDATE "Credenciales"
-SET "HashContrasena" = '$2b$12$QRqZIsqM175eur9zYG.NPOTFoZKq3GWM1vIDqnk0JrrPqbkolVx4m'
+SET "HashContrasena" = '$2b$12$AgJ/YKsj5G/zHQWUMs0F5efyeeLNpVsseU6W.V8aI1KNwDIkVOYSG'
 WHERE lower("Correo") = lower('admin@ferragro.com');
 
 DELETE FROM "EstadoResetContrasena"
+WHERE "IdCredencial" IN (
+  SELECT c."IdCredencial" FROM "Credenciales" c
+  WHERE lower(c."Correo") = lower('admin@ferragro.com')
+);
+
+DELETE FROM "IntentosLogin"
 WHERE "IdCredencial" IN (
   SELECT c."IdCredencial" FROM "Credenciales" c
   WHERE lower(c."Correo") = lower('admin@ferragro.com')

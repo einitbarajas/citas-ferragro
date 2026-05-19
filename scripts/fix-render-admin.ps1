@@ -13,9 +13,25 @@ if (-not (Test-Path $Python)) {
     $Python = "python"
 }
 
+$localEnv = Join-Path $RepoRoot ".env.render.local"
 $url = $env:RENDER_DATABASE_URL
+if ([string]::IsNullOrWhiteSpace($url) -and (Test-Path -LiteralPath $localEnv)) {
+    foreach ($line in Get-Content -LiteralPath $localEnv -Encoding UTF8) {
+        if ($line -match '^\s*RENDER_DATABASE_URL\s*=\s*(.+)\s*$') {
+            $url = $Matches[1].Trim().Trim([char]0x22).Trim("'")
+            break
+        }
+        if ($line -match '^\s*DATABASE_URL\s*=\s*(.+)\s*$' -and $line -match 'render\.com') {
+            $url = $Matches[1].Trim().Trim([char]0x22).Trim("'")
+            break
+        }
+    }
+}
 if ([string]::IsNullOrWhiteSpace($url)) {
-    Write-Host "`nPega la External Database URL de Render (ferragro-db → Connections):" -ForegroundColor Cyan
+    Write-Host "`nCrea el archivo .env.render.local en la raíz del repo con:" -ForegroundColor Yellow
+    Write-Host '  RENDER_DATABASE_URL=postgresql://ferragro:...@dpg-....oregon-postgres.render.com:5432/ferragro' -ForegroundColor DarkGray
+    Write-Host "(Render → ferragro-db → Connections → External Database URL)`n" -ForegroundColor DarkGray
+    Write-Host "O pégala ahora:" -ForegroundColor Cyan
     $url = Read-Host
 }
 

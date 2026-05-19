@@ -94,13 +94,27 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
         logo_mime.add_header("Content-Disposition", "inline", filename="ferragro-blan-bord.png")
         message.attach(logo_mime)
 
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
-        if settings.smtp_use_tls:
-            client.starttls()
-        if settings.smtp_user:
-            client.login(settings.smtp_user, settings.smtp_password)
-        client.sendmail(settings.smtp_from_email, [to_email], message.as_string())
-    return True
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as client:
+            client.ehlo()
+            if settings.smtp_use_tls:
+                client.starttls()
+                client.ehlo()
+            if settings.smtp_user:
+                client.login(settings.smtp_user, settings.smtp_password)
+            client.sendmail(settings.smtp_from_email, [to_email], message.as_string())
+        return True
+    except smtplib.SMTPAuthenticationError as exc:
+        logger.error(
+            "SMTP autenticación fallida (host=%s user=%s): %s",
+            settings.smtp_host,
+            settings.smtp_user,
+            exc,
+        )
+        raise
+    except smtplib.SMTPException as exc:
+        logger.error("SMTP error al enviar a %s: %s", to_email, exc)
+        raise
 
 
 def send_temporary_password_email(
