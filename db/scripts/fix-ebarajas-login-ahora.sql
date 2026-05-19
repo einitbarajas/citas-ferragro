@@ -2,7 +2,7 @@
 -- Correo: ebarajas@ferragro.com | Contraseña: FerragroPortal2026!
 
 UPDATE "Credenciales" c
-SET "HashContrasena" = '$2b$12$7jpGFhqtcorc4mPqs/AcvubDMAzBTTOrMONfSJcJR1bO0d3KzcDfS',
+SET "HashContrasena" = '$2b$12$aUcXWqjg4WLU0Jcc77RmRevmIG/NfKrJgn.j3HXm9A14LndZm8Xni',
     "Correo" = 'ebarajas@ferragro.com'
 FROM "Usuarios" u
 JOIN "Rol" r ON r."Id" = u."IdRol"
@@ -11,7 +11,7 @@ WHERE u."IdCredencial" = c."IdCredencial"
   AND r."Nombre" = 'Admin';
 
 UPDATE "Credenciales" c
-SET "HashContrasena" = '$2b$12$7jpGFhqtcorc4mPqs/AcvubDMAzBTTOrMONfSJcJR1bO0d3KzcDfS'
+SET "HashContrasena" = '$2b$12$aUcXWqjg4WLU0Jcc77RmRevmIG/NfKrJgn.j3HXm9A14LndZm8Xni'
 WHERE lower(c."Correo") = lower('ebarajas@ferragro.com');
 
 DELETE FROM "IntentosLogin" il
