@@ -75,19 +75,46 @@ La **URL de conexión completa** (`DATABASE_URL`) con contraseña está en Rende
 
 En tu PC el `.env` tiene SMTP; **Render no lee ese archivo**. Hay que copiar las mismas variables en el panel del servicio `ferragro-api` → **Environment**:
 
-| Variable | Ejemplo (Gmail) |
-|----------|-----------------|
-| `SMTP_HOST` | `smtp.gmail.com` |
+#### Outlook / Microsoft 365 (recomendado para `ebarajas@ferragro.com`)
+
+En Render → `ferragro-api` → **Environment**:
+
+| Variable | Valor |
+|----------|--------|
+| `SMTP_HOST` | `smtp.office365.com` |
 | `SMTP_PORT` | `587` |
-| `SMTP_USER` | cuenta que envía |
-| `SMTP_PASSWORD` | contraseña de aplicación (no la clave normal de Gmail) |
-| `SMTP_FROM_EMAIL` | mismo correo que `SMTP_USER` |
+| `SMTP_USER` | `ebarajas@ferragro.com` |
+| `SMTP_PASSWORD` | contraseña de aplicación de Microsoft (ver abajo) |
+| `SMTP_FROM_EMAIL` | `ebarajas@ferragro.com` |
 | `SMTP_FROM_NAME` | `Ferragro` |
 | `SMTP_USE_TLS` | `true` |
 
-Tras guardar, **Manual Deploy** del API.
+**Contraseña de aplicación (Microsoft):**
 
-**Recuperar contraseña:** el correo se envía a la misma dirección de la cuenta (ej. `ebarajas@ferragro.com`). Esa dirección debe ser un **buzón real** (Microsoft 365, Google Workspace, etc. con dominio `ferragro.com`). Si el dominio no tiene correo configurado, el mensaje no llegará aunque el portal responda OK. Ejecuta `db/scripts/preparar-recuperacion-ebarajas.sql` si hubo credenciales duplicadas. Comprueba:
+1. https://mysignins.microsoft.com/security-info (o cuenta Microsoft con el correo Ferragro).
+2. Verificación en dos pasos **activada**.
+3. **Agregar método** → **Contraseña de aplicación** → nombre `Ferragro Portal`.
+4. Copia la contraseña de 16 caracteres en `SMTP_PASSWORD` en Render (sin espacios).
+
+Si no aparece “Contraseña de aplicación”, el administrador de IT de Ferragro debe habilitar **SMTP AUTH** para tu buzón (Exchange admin center → buzón → Correo → “SMTP autenticado” activado).
+
+**No uses** `PASSWORD_RESET_INBOX` (el correo va a la misma cuenta del portal).
+
+Tras guardar → **Manual Deploy** del API.
+
+#### Gmail (solo si no usas Outlook)
+
+| Variable | Valor |
+|----------|--------|
+| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_USER` | tu Gmail |
+| `SMTP_PASSWORD` | contraseña de aplicación Google |
+| `SMTP_FROM_EMAIL` | mismo que `SMTP_USER` |
+| `SMTP_FROM_NAME` | `Ferragro` |
+| `SMTP_USE_TLS` | `true` |
+
+**Recuperar contraseña (`ebarajas@ferragro.com`):** el mensaje se envía **a ese mismo correo** en Outlook. En el portal: *Olvidé mi contraseña* → revisa bandeja de entrada y **Correo no deseado**. Si antes falló, ejecuta `db/scripts/preparar-recuperacion-ebarajas.sql` en `ferragro-db`. Comprueba:
 
 ```text
 GET https://ferragro-api.onrender.com/health
