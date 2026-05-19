@@ -26,6 +26,36 @@ services:
         generateValue: true
       - key: CORS_ORIGINS
         sync: false
+      # Correo (recuperar contraseña, bienvenida, citas). Outlook: smtp.office365.com:587
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: Ferragro
+      - key: SMTP_USE_TLS
+        value: "true"
+      # Recuperar contraseña y avisos por correo (Outlook: smtp.office365.com:587)
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: Ferragro
+      - key: SMTP_USE_TLS
+        value: "true"
       - key: REFRESH_COOKIE_SECURE
         value: "true"
       - key: REFRESH_COOKIE_SAMESITE

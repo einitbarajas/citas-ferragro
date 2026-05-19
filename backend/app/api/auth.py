@@ -1,4 +1,5 @@
 from datetime import timedelta
+import logging
 import secrets
 import string
 from uuid import UUID
@@ -28,18 +29,29 @@ from app.services.auth_sessions import (
     revoke_all_refresh_for_credential,
     revoke_refresh_jti,
 )
-from app.services.credential_cleanup import credential_has_active_owner
+from app.services.admin_bootstrap import ensure_production_admin
+from app.services.credential_cleanup import credential_has_active_owner, purge_orphan_credentials
 from app.services.login_policy import is_login_blocked, record_login_failure, reset_login_failures
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
 from app.services.admin_password_reset import reset_admin_password
 from app.services.mailer import send_temporary_password_email
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _generate_temporary_password(length: int = 12) -> str:
-    alphabet = string.ascii_letters + string.digits + "!@#$%*?"
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+def _generate_temporary_password(length: int = 10) -> str:
+    """Contraseña temporal legible (sin símbolos que fallen al copiar desde el correo)."""
+    letters = string.ascii_letters + string.digits
+    while True:
+        value = "".join(secrets.choice(letters) for _ in range(length))
+        if (
+            any(c.islower() for c in value)
+            and any(c.isupper() for c in value)
+            and any(c.isdigit() for c in value)
+        ):
+            return value
 
 
 def _client_ip(request: Request) -> str | None:
@@ -99,7 +111,7 @@ def _resolve_credential_by_email(db: Session, email: str) -> Credential | None:
     for cred in creds:
         if credential_has_active_owner(db, cred.id):
             return cred
-    return creds[0]
+    return None
 
 
 def _clear_refresh_cookie(response: Response) -> None:
@@ -305,16 +317,39 @@ def refresh_access_token(request: Request, response: Response, db: Session = Dep
     return ok_response(token_out.model_dump(), "Token renovado")
 
 
+def _prepare_bootstrap_admin_for_recovery(db: Session, email: str) -> None:
+    """Asegura que el Admin de producción exista antes de recuperar contraseña."""
+    if not settings.is_production or not settings.admin_bootstrap_enabled:
+        return
+    bootstrap_email = settings.admin_bootstrap_email.strip().lower()
+    if email.strip().lower() != bootstrap_email:
+        return
+    try:
+        purge_orphan_credentials(db)
+        if ensure_production_admin(db):
+            db.commit()
+        else:
+            db.flush()
+    except Exception:
+        logger.exception("No se pudo asegurar Admin antes de recuperar contraseña")
+        db.rollback()
+
+
 @router.post("/forgot-password")
 @limiter.limit(f"{settings.rate_limit_per_minute_auth}/minute")
 def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    from datetime import datetime, timezone
+
     email = str(payload.email).strip()
+    _prepare_bootstrap_admin_for_recovery(db, email)
+
     cred = _resolve_credential_by_email(db, email)
     if not cred:
-        # Respuesta genérica para no filtrar qué correos existen.
-        return ok_response(None, "Si el correo existe, se enviará una contraseña temporal.")
+        return ok_response(
+            {"email_sent": False},
+            "Si el correo existe, se enviará una contraseña temporal.",
+        )
 
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     state = db.get(PasswordResetState, cred.id)
     if state and state.temporary_issued_at:
@@ -330,6 +365,7 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
 
     temporary_password = _generate_temporary_password()
     cred.password_hash = get_password_hash(temporary_password)
+    reset_login_failures(db, cred.id)
 
     if not state:
         state = PasswordResetState(credential_id=cred.id, must_change_password=True, temporary_issued_at=now)
@@ -339,24 +375,54 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
         state.temporary_issued_at = now
 
     account_email = cred.email.strip()
-    try:
-        sent = send_temporary_password_email(
+    db.commit()
+
+    sent = False
+    if settings.smtp_configured:
+        try:
+            sent = send_temporary_password_email(
+                account_email,
+                temporary_password,
+                account_email=account_email,
+            )
+        except Exception as exc:
+            logger.exception("Error SMTP al enviar recuperación a %s", account_email)
+            logger.warning(
+                "SMTP_RECOVERY correo=%s clave_temporal=%s (usa esta clave para ingresar)",
+                account_email,
+                temporary_password,
+            )
+            return ok_response(
+                {
+                    "email_sent": False,
+                    "smtp_configured": True,
+                    "must_change_password": True,
+                },
+                "La contraseña temporal ya está activa, pero no se pudo enviar el correo. "
+                "Revisa SMTP en Render (Outlook: smtp.office365.com) o los logs del API (busca SMTP_RECOVERY).",
+            )
+
+    if not sent:
+        logger.warning(
+            "SMTP_RECOVERY correo=%s clave_temporal=%s (SMTP no configurado en Render)",
             account_email,
             temporary_password,
-            account_email=account_email,
         )
-    except Exception:
-        db.rollback()
-        raise HTTPException(status_code=500, detail="No fue posible enviar el correo de recuperación.")
-    if not sent:
-        db.rollback()
-        raise HTTPException(
-            status_code=503,
-            detail="El envío de correo no está configurado en el servidor. Contacta al administrador.",
+        return ok_response(
+            {
+                "email_sent": False,
+                "smtp_configured": False,
+                "must_change_password": True,
+            },
+            "Contraseña temporal generada, pero el servidor no tiene SMTP configurado. "
+            "El administrador debe añadir SMTP_* en Render o revisar los logs del API (SMTP_RECOVERY).",
         )
 
-    db.commit()
-    return ok_response(None, "Si el correo existe, se enviará una contraseña temporal.")
+    return ok_response(
+        {"email_sent": True, "must_change_password": True},
+        "Contraseña temporal enviada a tu correo. Revisa bandeja de entrada y correo no deseado. "
+        "Ingresa con esa clave (no la anterior); el sistema te pedirá cambiarla.",
+    )
 
 
 @router.post("/change-password")

@@ -242,6 +242,14 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
       if (!payload.success) throw new Error(payload.message);
       setForgotRequested(true);
       setForgotCooldownSeconds(60);
+      if (payload.data?.email_sent === false) {
+        setError(
+          payload.message ||
+            "No se pudo enviar el correo. Configura SMTP en Render o revisa los logs del API (SMTP_RECOVERY)."
+        );
+      } else {
+        setError("");
+      }
     } catch (err) {
       const waitSeconds = getRetryAfterSeconds(err);
       if (err?.response?.status === 429 && waitSeconds > 0) {
@@ -594,9 +602,11 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
             </button>
           </div>
         )}
-        {forgotRequested && !isRegister && (
+        {forgotRequested && !isRegister && !error && (
           <p className="mt-2 text-xs text-emerald-700">
-            Si el correo existe, te enviamos una contraseña temporal.
+            Revisa tu bandeja de entrada y correo no deseado. Entra con la{" "}
+            <strong>contraseña temporal del correo</strong> (no uses FerragroPortal2026! ni la clave
+            antigua); el sistema te pedirá cambiarla al ingresar.
           </p>
         )}
         </div>

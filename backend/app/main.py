@@ -27,7 +27,7 @@ from app.services.admin_bootstrap import ensure_production_admin
 from app.services.credential_cleanup import purge_orphan_credentials
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
-API_BUILD_ID = "2026-05-19-admin-login-fix"
+API_BUILD_ID = "2026-05-19-forgot-password-v2"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -390,8 +390,27 @@ def unhandled_exception_handler(_, __):
 
 @app.get("/health")
 def health():
+    admin_email: str | None = None
+    if settings.is_production:
+        try:
+            from sqlalchemy import select
+
+            from app.models.user import User
+
+            with SessionLocal() as db:
+                user = db.execute(select(User).where(User.document_id == "90000001")).scalar_one_or_none()
+                if user and user.credential:
+                    admin_email = user.credential.email
+        except Exception:
+            logger.exception("No se pudo consultar Admin en health")
     return ok_response(
-        {"status": "ok", "build_id": API_BUILD_ID, "email_enabled": settings.smtp_configured},
+        {
+            "status": "ok",
+            "build_id": API_BUILD_ID,
+            "email_enabled": settings.smtp_configured,
+            "smtp_host": settings.smtp_host or None,
+            "admin_email": admin_email,
+        },
         "Servicio activo",
     )
 
