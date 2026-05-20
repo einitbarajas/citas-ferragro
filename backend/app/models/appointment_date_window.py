@@ -1,6 +1,6 @@
 from datetime import date, time
 
-from sqlalchemy import Date, Integer, Time, UniqueConstraint
+from sqlalchemy import Date, ForeignKey, Integer, Time, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -8,9 +8,12 @@ from app.db.base import Base
 
 class AppointmentDateWindow(Base):
     __tablename__ = "FranjasPermitidasCitaFecha"
-    __table_args__ = (UniqueConstraint("Fecha", "Orden", name="UqFranjaFechaOrden"),)
+    __table_args__ = (UniqueConstraint("Fecha", "IdBodega", "Orden", name="UqFranjaFechaBodegaOrden"),)
 
     id: Mapped[int] = mapped_column("Id", primary_key=True, autoincrement=True)
+    warehouse_id: Mapped[int] = mapped_column(
+        "IdBodega", Integer, ForeignKey("Bodegas.Id"), nullable=False, index=True
+    )
     day: Mapped[date] = mapped_column("Fecha", Date, nullable=False, index=True)
     start_local: Mapped[time] = mapped_column("HoraInicio", Time, nullable=False)
     end_local: Mapped[time] = mapped_column("HoraFin", Time, nullable=False)

@@ -27,7 +27,13 @@ from app.services.appointment_service import (
     reserve_slot_fifo_or_raise,
     slot_conflict_check,
 )
-from app.services.appointment_windows import SLOT_MINUTES, assert_start_within_windows, list_date_windows_ordered
+from app.services.appointment_windows import (
+    assert_appointment_slot,
+    get_active_warehouse_or_raise,
+    iter_bookable_slots,
+    list_date_windows_ordered,
+    list_windows_ordered,
+)
 from app.services.notification_service import (
     notify_provider_appointment_updated,
     notify_staff_provider_cancelled,
@@ -45,10 +51,13 @@ def _title_from_appointment(appointment: Appointment) -> str:
 
 
 def _serialize(appointment: Appointment) -> AppointmentOut:
+    warehouse_name = appointment.warehouse.name if appointment.warehouse else ""
     return AppointmentOut(
         id=appointment.id,
         provider_id=str(int(appointment.provider_id)),
         provider_name=appointment.provider.full_name,
+        warehouse_id=appointment.warehouse_id,
+        warehouse_name=warehouse_name,
         title=_title_from_appointment(appointment),
         material_description=appointment.material_description,
         start_time=appointment.start_time,
@@ -112,25 +121,42 @@ def _assert_logistics_business_rules(
             detail="Esta cita ya está cerrada y no permite más cambios desde Logística.",
         )
     actions = _staff_modification_actions(db, appt.id)
-    if len(actions) >= 2:
+    status_actions = [a for a in actions if a == "update_status"]
+    has_extend = "extend_duration" in actions
+
+    if target_action == "extend_duration":
+        if has_extend:
+            raise HTTPException(
+                status_code=409,
+                detail="Esta cita ya fue extendida y Logística no puede extenderla de nuevo.",
+            )
+        if appt.status != AppointmentStatus.sin_revision:
+            raise HTTPException(
+                status_code=409,
+                detail="Solo se puede extender la duración mientras la cita está sin revisión.",
+            )
+        if len(status_actions) >= 2:
+            raise HTTPException(
+                status_code=409,
+                detail="Esta cita ya tuvo los cambios de estado permitidos en Logística.",
+            )
+        return
+
+    status_change_count = len(status_actions)
+    if status_change_count >= 3:
         raise HTTPException(
             status_code=409,
-            detail="Esta cita ya tuvo los cambios permitidos en Logística.",
+            detail="Esta cita ya tuvo los cambios de estado permitidos en Logística.",
         )
-    if len(actions) == 0:
+    if appt.status == AppointmentStatus.revisado:
         return
-    first_action = actions[0]
-    if appt.status == AppointmentStatus.revisado and first_action == "update_status":
-        if target_action == "update_status":
+    if appt.status == AppointmentStatus.sin_revision:
+        if status_change_count <= 1:
             return
         raise HTTPException(
             status_code=409,
-            detail="Cuando la cita está revisada, solo puedes hacer la confirmación de estado.",
+            detail="Esta cita ya tuvo los cambios de estado permitidos en Logística.",
         )
-    raise HTTPException(
-        status_code=409,
-        detail="Esta cita ya fue modificada y no permite más cambios desde Logística.",
-    )
 
 
 @router.post("", response_model=AppointmentOut)
@@ -157,19 +183,24 @@ def create_appointment(
             status_code=400,
             detail="Ya tienes una cita agendada para ese día. Solo se permite una cita por día.",
         )
-    date_windows = list_date_windows_ordered(db, day_local)
-    if not date_windows:
+    get_active_warehouse_or_raise(db, payload.warehouse_id)
+    date_windows = list_date_windows_ordered(db, day_local, payload.warehouse_id)
+    weekly_windows = list_windows_ordered(db, payload.warehouse_id)
+    if not date_windows and not weekly_windows:
         raise HTTPException(
             status_code=400,
-            detail="Este día no tiene franjas habilitadas para citas. Solo puedes agendar en fechas que la empresa abrió en el calendario de franjas.",
+            detail="Este día no tiene turnos habilitados en la bodega seleccionada.",
         )
     enforce_minimum_notice(payload.start_time, minimum_hours=settings.appointment_minimum_notice_hours)
-    assert_start_within_windows(db, payload.start_time)
-    reserve_slot_fifo_or_raise(db, payload.start_time, payload.duration_minutes)
+    assert_appointment_slot(db, payload.start_time, payload.duration_minutes, payload.warehouse_id)
+    reserve_slot_fifo_or_raise(
+        db, payload.start_time, payload.duration_minutes, payload.warehouse_id
+    )
 
     body = f"{payload.title.strip()}\n\n{payload.material_description.strip()}"
     appointment = Appointment(
         provider_id=provider_id,
+        warehouse_id=payload.warehouse_id,
         material_description=body,
         start_time=payload.start_time,
         duration_minutes=payload.duration_minutes,
@@ -177,9 +208,13 @@ def create_appointment(
     )
     db.add(appointment)
     db.commit()
-    db.refresh(appointment)
     notify_staff_review_needed(db, appointment)
     db.commit()
+    appointment = db.execute(
+        select(Appointment)
+        .options(joinedload(Appointment.provider), joinedload(Appointment.warehouse))
+        .where(Appointment.id == appointment.id)
+    ).unique().scalar_one()
     return _serialize(appointment)
 
 
@@ -191,6 +226,7 @@ def list_appointments(
     year: int | None = Query(default=None, ge=2000, le=2100),
     status: list[str] | None = Query(default=None, description="Filtrar por uno o más estados de cita"),
     provider_id: int | None = Query(default=None, description="Filtrar por NIT proveedor (solo staff)"),
+    warehouse_id: int | None = Query(default=None, ge=1, description="Filtrar por bodega (solo staff)"),
     date_from: date | None = None,
     date_to: date | None = None,
     sort_by: str = Query(default="start_time", pattern="^(start_time|id)$"),
@@ -203,11 +239,17 @@ def list_appointments(
     ),
 ):
     finalize_elapsed_appointments(db)
-    stmt = select(Appointment).options(joinedload(Appointment.provider))
+    stmt = select(Appointment).options(
+        joinedload(Appointment.provider),
+        joinedload(Appointment.warehouse),
+    )
     if principal.role_name == UserRole.proveedor:
         stmt = stmt.where(Appointment.provider_id == int(principal.subject))
     elif provider_id is not None:
         stmt = stmt.where(Appointment.provider_id == provider_id)
+    if principal.role_name != UserRole.proveedor and warehouse_id is not None:
+        get_active_warehouse_or_raise(db, warehouse_id)
+        stmt = stmt.where(Appointment.warehouse_id == warehouse_id)
 
     if status:
         status_enums = []
@@ -275,122 +317,143 @@ def list_appointments(
 @router.get("/conflict-check")
 def check_slot_conflict(
     start_time: datetime = Query(...),
-    duration_minutes: int = Query(default=90, ge=15, le=480),
+    duration_minutes: int = Query(default=60, ge=15, le=480),
+    warehouse_id: int = Query(..., ge=1),
     exclude_appointment_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(
         require_roles(UserRole.admin, UserRole.logistica, UserRole.proveedor)
     ),
 ):
-    """Indica si fecha/hora/duración colisionarían con otra cita."""
-    conflict = slot_conflict_check(db, start_time, duration_minutes, exclude_appointment_id)
+    """Indica si fecha/hora/duración colisionarían con otra cita en la misma bodega."""
+    get_active_warehouse_or_raise(db, warehouse_id)
+    conflict = slot_conflict_check(
+        db, start_time, duration_minutes, warehouse_id, exclude_appointment_id
+    )
     return ok_response({"conflict": conflict}, "Verificación de conflicto")
 
 
 @router.get("/available-slots")
 def list_available_slots_for_provider_day(
     day: date = Query(...),
+    warehouse_id: int = Query(..., ge=1),
     exclude_appointment_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    principal: SecurityPrincipal = Depends(require_roles(UserRole.proveedor)),
+    principal: SecurityPrincipal = Depends(
+        require_roles(UserRole.proveedor, UserRole.admin, UserRole.logistica)
+    ),
 ):
     tz = ZoneInfo(settings.business_timezone)
+    is_staff = principal.role_name in {UserRole.admin, UserRole.logistica}
     minimum_hours = settings.appointment_minimum_notice_hours
-    minimum_start_utc = datetime.now(timezone.utc) + timedelta(hours=minimum_hours)
-    windows = list_date_windows_ordered(db, day)
-    source = "date_override"
+    minimum_start_utc = (
+        datetime.min.replace(tzinfo=timezone.utc)
+        if is_staff
+        else datetime.now(timezone.utc) + timedelta(hours=minimum_hours)
+    )
+    get_active_warehouse_or_raise(db, warehouse_id)
+    date_windows = list_date_windows_ordered(db, day, warehouse_id)
+    weekly_windows = list_windows_ordered(db, warehouse_id)
+    windows = date_windows or weekly_windows
+    source = "date_override" if date_windows else ("weekly" if weekly_windows else "none")
     if not windows:
         return ok_response(
             {
                 "day": str(day),
-                "slot_minutes": SLOT_MINUTES,
+                "warehouse_id": warehouse_id,
                 "source": "none",
+                "available_slots": [],
                 "available_times": [],
                 "minimum_notice_hours": minimum_hours,
                 "unavailable_reason": "no_windows",
-                "unavailable_message": "Este día no tiene franjas habilitadas para citas.",
+                "unavailable_message": "Este día no tiene turnos habilitados en esta bodega.",
             },
             "Disponibilidad obtenida",
         )
     start_utc, end_utc = _local_day_utc_bounds(day)
-    provider_id = int(principal.subject)
-    same_day_stmt = (
-        select(Appointment.id)
-        .where(
-            Appointment.provider_id == provider_id,
-            Appointment.status != AppointmentStatus.cancelado,
-            Appointment.start_time >= start_utc,
-            Appointment.start_time < end_utc,
+    if not is_staff:
+        provider_id = int(principal.subject)
+        same_day_stmt = (
+            select(Appointment.id)
+            .where(
+                Appointment.provider_id == provider_id,
+                Appointment.status != AppointmentStatus.cancelado,
+                Appointment.start_time >= start_utc,
+                Appointment.start_time < end_utc,
+            )
+            .limit(1)
         )
-        .limit(1)
-    )
-    if exclude_appointment_id is not None:
-        same_day_stmt = same_day_stmt.where(Appointment.id != exclude_appointment_id)
-    if db.execute(same_day_stmt).scalar_one_or_none() is not None:
-        return ok_response(
-            {
-                "day": str(day),
-                "slot_minutes": SLOT_MINUTES,
-                "source": source,
-                "available_times": [],
-                "minimum_notice_hours": minimum_hours,
-                "unavailable_reason": "provider_has_appointment",
-                "unavailable_message": "Ya tienes una cita agendada para este día. Solo se permite una cita por día.",
-            },
-            "Disponibilidad obtenida",
-        )
+        if exclude_appointment_id is not None:
+            same_day_stmt = same_day_stmt.where(Appointment.id != exclude_appointment_id)
+        if db.execute(same_day_stmt).scalar_one_or_none() is not None:
+            return ok_response(
+                {
+                    "day": str(day),
+                    "warehouse_id": warehouse_id,
+                    "source": source,
+                    "available_slots": [],
+                    "available_times": [],
+                    "minimum_notice_hours": minimum_hours,
+                    "unavailable_reason": "provider_has_appointment",
+                    "unavailable_message": "Ya tienes una cita agendada para este día. Solo se permite una cita por día.",
+                },
+                "Disponibilidad obtenida",
+            )
     appointments = (
         db.execute(
             select(Appointment).where(
                 Appointment.start_time >= start_utc,
                 Appointment.start_time < end_utc,
+                Appointment.warehouse_id == warehouse_id,
                 Appointment.status != AppointmentStatus.cancelado,
             )
         )
         .scalars()
         .all()
     )
-    available_times: list[str] = []
+    available_slots: list[dict] = []
     slots_in_window = 0
     slots_after_notice = 0
-    for w in windows:
-        start_minutes = w.start_local.hour * 60 + w.start_local.minute
-        end_minutes = w.end_local.hour * 60 + w.end_local.minute
-        t = start_minutes
-        while t <= end_minutes:
-            hh = t // 60
-            mm = t % 60
-            local_dt = datetime(day.year, day.month, day.day, hh, mm, tzinfo=tz)
-            cand_start_utc = local_dt.astimezone(timezone.utc)
-            cand_end_utc = cand_start_utc + timedelta(minutes=90)
-            slots_in_window += 1
-            if cand_start_utc < minimum_start_utc:
-                t += SLOT_MINUTES
+    for slot_start, slot_end, duration in iter_bookable_slots(windows):
+        hh = slot_start.hour
+        mm = slot_start.minute
+        local_dt = datetime(day.year, day.month, day.day, hh, mm, tzinfo=tz)
+        cand_start_utc = local_dt.astimezone(timezone.utc)
+        cand_end_utc = cand_start_utc + timedelta(minutes=duration)
+        slots_in_window += 1
+        if cand_start_utc < minimum_start_utc:
+            continue
+        slots_after_notice += 1
+        overlap = False
+        for appt in appointments:
+            if exclude_appointment_id is not None and appt.id == exclude_appointment_id:
                 continue
-            slots_after_notice += 1
-            overlap = False
-            for appt in appointments:
-                if exclude_appointment_id is not None and appt.id == exclude_appointment_id:
-                    continue
-                appt_end = appt.start_time + timedelta(minutes=appt.duration_minutes)
-                if cand_start_utc < appt_end and cand_end_utc > appt.start_time:
-                    overlap = True
-                    break
-            if not overlap:
-                available_times.append(f"{hh:02d}:{mm:02d}")
-            t += SLOT_MINUTES
+            appt_end = appt.start_time + timedelta(minutes=appt.duration_minutes)
+            if cand_start_utc < appt_end and cand_end_utc > appt.start_time:
+                overlap = True
+                break
+        if not overlap:
+            available_slots.append(
+                {
+                    "start_local": f"{hh:02d}:{mm:02d}",
+                    "end_local": slot_end.strftime("%H:%M"),
+                    "duration_minutes": duration,
+                }
+            )
+    available_times = sorted({s["start_local"] for s in available_slots})
     payload = {
         "day": str(day),
-        "slot_minutes": SLOT_MINUTES,
+        "warehouse_id": warehouse_id,
         "source": source,
-        "available_times": sorted(set(available_times)),
+        "available_slots": available_slots,
+        "available_times": available_times,
         "minimum_notice_hours": minimum_hours,
     }
     if not payload["available_times"]:
         earliest_local = minimum_start_utc.astimezone(tz)
         if slots_in_window == 0:
             payload["unavailable_reason"] = "no_valid_slots"
-            payload["unavailable_message"] = "No hay horarios válidos en la franja habilitada para este día."
+            payload["unavailable_message"] = "No hay turnos válidos configurados para este día en la bodega."
         elif slots_after_notice == 0:
             payload["unavailable_reason"] = "minimum_notice"
             payload["unavailable_message"] = (
@@ -402,7 +465,7 @@ def list_available_slots_for_provider_day(
         else:
             payload["unavailable_reason"] = "fully_booked"
             payload["unavailable_message"] = (
-                "Disponibilidad llena: todos los horarios de esta franja ya fueron tomados por otras citas."
+                "Disponibilidad llena: todos los turnos de este día en la bodega ya fueron tomados."
             )
     return ok_response(payload, "Disponibilidad obtenida")
 
@@ -533,18 +596,20 @@ def provider_reschedule_appointment(
             status_code=400,
             detail="Ya tienes una cita agendada para ese día. Solo se permite una cita por día.",
         )
-    date_windows = list_date_windows_ordered(db, day_local)
-    if not date_windows:
+    date_windows = list_date_windows_ordered(db, day_local, appt.warehouse_id)
+    weekly_windows = list_windows_ordered(db, appt.warehouse_id)
+    if not date_windows and not weekly_windows:
         raise HTTPException(
             status_code=400,
-            detail="Este día no tiene franjas habilitadas para citas. Solo puedes agendar en fechas que la empresa abrió en el calendario de franjas.",
+            detail="Este día no tiene turnos habilitados en la bodega de la cita.",
         )
     enforce_minimum_notice(payload.start_time, minimum_hours=settings.appointment_minimum_notice_hours)
-    assert_start_within_windows(db, payload.start_time)
+    assert_appointment_slot(db, payload.start_time, appt.duration_minutes, appt.warehouse_id)
     reserve_slot_fifo_or_raise(
         db,
         payload.start_time,
         appt.duration_minutes,
+        appt.warehouse_id,
         exclude_appointment_id=appointment_id,
     )
 

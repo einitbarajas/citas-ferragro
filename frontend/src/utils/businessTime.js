@@ -35,6 +35,41 @@ export function formatTimeInputInTimeZone(isoString, timeZone = DEFAULT_BUSINESS
   return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
 }
 
+/** Rango horario legible para una cita (inicio–fin según duración en minutos). */
+export function getAppointmentSchedule(
+  startIso,
+  durationMinutes,
+  timeZone = DEFAULT_BUSINESS_TZ
+) {
+  const start = new Date(startIso);
+  const mins = Number(durationMinutes) || 0;
+  if (Number.isNaN(start.getTime()) || mins <= 0) {
+    return {
+      dateLine: "—",
+      rangeLine: "—",
+      endLine: "—",
+      durationLabel: mins > 0 ? `${mins} min` : "—",
+    };
+  }
+  const end = new Date(start.getTime() + mins * 60 * 1000);
+  const timeOpts = { timeZone, hour: "2-digit", minute: "2-digit" };
+  const dateOpts = {
+    timeZone,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  };
+  const startTime = start.toLocaleTimeString("es-CO", timeOpts);
+  const endTime = end.toLocaleTimeString("es-CO", timeOpts);
+  return {
+    dateLine: start.toLocaleDateString("es-CO", dateOpts),
+    rangeLine: `${startTime} – ${endTime}`,
+    endLine: endTime,
+    durationLabel: `${mins} min`,
+  };
+}
+
 export function buildDateTimeIsoInTimeZone(dateValue, timeValue, timeZone = DEFAULT_BUSINESS_TZ) {
   const [year, month, day] = dateValue.split("-").map(Number);
   const [hour, minute] = timeValue.split(":").map(Number);

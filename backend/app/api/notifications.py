@@ -43,6 +43,7 @@ def _recipient_filter(stmt, principal: SecurityPrincipal):
 @router.get("")
 def list_notifications(
     unread_only: bool = Query(default=False),
+    read_only: bool = Query(default=False),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -50,10 +51,14 @@ def list_notifications(
         require_roles(UserRole.admin, UserRole.logistica, UserRole.proveedor)
     ),
 ):
+    if unread_only and read_only:
+        raise HTTPException(status_code=400, detail="No se puede filtrar por leídas y no leídas a la vez")
     stmt = select(UserNotification).order_by(UserNotification.created_at.desc(), UserNotification.id.desc())
     stmt = _recipient_filter(stmt, principal)
     if unread_only:
         stmt = stmt.where(UserNotification.read_at.is_(None))
+    elif read_only:
+        stmt = stmt.where(UserNotification.read_at.isnot(None))
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     unread_stmt = _recipient_filter(select(func.count()).select_from(UserNotification), principal).where(
         UserNotification.read_at.is_(None)
@@ -71,6 +76,22 @@ def list_notifications(
         },
         "Notificaciones obtenidas",
     )
+
+
+@router.delete("/all")
+def delete_all_notifications(
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(
+        require_roles(UserRole.admin, UserRole.logistica, UserRole.proveedor)
+    ),
+):
+    stmt = _recipient_filter(select(UserNotification), principal)
+    rows = db.execute(stmt).scalars().all()
+    for row in rows:
+        db.delete(row)
+    if rows:
+        db.commit()
+    return ok_response({"deleted": len(rows)}, "Notificaciones eliminadas")
 
 
 @router.patch("/read-all")

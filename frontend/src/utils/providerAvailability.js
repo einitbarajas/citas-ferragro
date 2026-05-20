@@ -21,6 +21,7 @@ export function unwrapProviderDayAvailability(response) {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
     if (
       Array.isArray(candidate.available_times) ||
+      Array.isArray(candidate.available_slots) ||
       typeof candidate.unavailable_reason === "string" ||
       candidate.slot_minutes != null
     ) {

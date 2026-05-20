@@ -14,10 +14,11 @@ from app.core.responses import ok_response
 from app.core.security import get_password_hash, verify_password
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.admin_event import AdminEvent
-from app.models.audit_log import ChangeLog
+from app.models.audit_log import AuditLog, ChangeLog
 from app.models.appointment_date_window import AppointmentDateWindow
 from app.models.credential import Credential
 from app.models.provider import Provider
+from app.models.warehouse import Warehouse
 from app.models.profile_photo import ProfilePhoto
 from app.models.reminder_run import ReminderExecution
 from app.models.role import Role
@@ -57,16 +58,25 @@ from app.schemas.crud import (
     UserCrudOut,
     UserIn,
     UserUpdate,
+    WarehouseIn,
+    WarehouseOut,
+    WarehouseUpdate,
 )
 from app.services.cloudinary_service import upload_profile_photo
 from app.services.appointment_windows import (
+    MIN_SLOT_MINUTES,
+    MAX_SLOT_MINUTES,
+    appointment_matches_slot,
+    assert_appointment_slot,
     clear_date_windows,
-    assert_start_within_windows,
     format_schedule_hint,
+    get_active_warehouse_or_raise,
+    iter_bookable_slots,
     list_date_windows_ordered,
     replace_date_windows,
     list_windows_ordered,
     replace_windows,
+    slot_duration_minutes,
 )
 from app.services.appointment_service import finalize_elapsed_appointments, reserve_slot_fifo_or_raise
 from app.services.range_bounds import business_local_range_bounds
@@ -81,26 +91,48 @@ def _local_day_utc_bounds(target_day: date) -> tuple[datetime, datetime]:
     return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
 
 
-def _appointments_count_on_local_day(db: Session, target_day: date) -> int:
+def _appointments_count_on_local_day(
+    db: Session, target_day: date, warehouse_id: int | None = None
+) -> int:
     start_utc, end_utc = _local_day_utc_bounds(target_day)
-    return int(
-        db.execute(
-            select(func.count())
-            .select_from(Appointment)
-            .where(
-                Appointment.start_time >= start_utc,
-                Appointment.start_time < end_utc,
-                Appointment.status.not_in(
-                    (
-                        AppointmentStatus.cancelado,
-                        AppointmentStatus.finalizada,
-                        AppointmentStatus.no_presentada,
-                    )
-                ),
-            )
-        ).scalar_one()
-        or 0
+    stmt = (
+        select(func.count())
+        .select_from(Appointment)
+        .where(
+            Appointment.start_time >= start_utc,
+            Appointment.start_time < end_utc,
+            Appointment.status.not_in(
+                (
+                    AppointmentStatus.cancelado,
+                    AppointmentStatus.finalizada,
+                    AppointmentStatus.no_presentada,
+                )
+            ),
+        )
     )
+    if warehouse_id is not None:
+        stmt = stmt.where(Appointment.warehouse_id == warehouse_id)
+    return int(db.execute(stmt).scalar_one() or 0)
+
+
+def _window_to_out(window) -> dict:
+    return AppointmentWindowOut(
+        id=window.id,
+        start_local=window.start_local.strftime("%H:%M"),
+        end_local=window.end_local.strftime("%H:%M"),
+        duration_minutes=slot_duration_minutes(window.start_local, window.end_local),
+        sort_order=window.sort_order,
+    ).model_dump()
+
+
+def _warehouse_to_out(warehouse: Warehouse) -> dict:
+    return WarehouseOut(
+        id=warehouse.id,
+        name=warehouse.name,
+        address=warehouse.address,
+        active=warehouse.active,
+        sort_order=warehouse.sort_order,
+    ).model_dump()
 
 
 def _assert_non_overlapping_windows(parsed: list[tuple], error_prefix: str = "Franja inválida") -> None:
@@ -124,33 +156,41 @@ def _parse_and_validate_windows(items: list, error_prefix: str) -> list[tuple]:
     for w in items:
         hi = datetime.strptime(w.start_local, "%H:%M").time()
         hf = datetime.strptime(w.end_local, "%H:%M").time()
+        minutes = slot_duration_minutes(hi, hf)
+        if minutes < MIN_SLOT_MINUTES or minutes > MAX_SLOT_MINUTES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{error_prefix}: cada turno debe durar entre {MIN_SLOT_MINUTES} "
+                    f"y {MAX_SLOT_MINUTES} minutos."
+                ),
+            )
         parsed.append((hi, hf))
     parsed.sort(key=lambda x: (x[0].hour, x[0].minute))
     _assert_non_overlapping_windows(parsed, error_prefix)
     return parsed
 
 
-def _time_allowed_in_windows(local_time, windows: list[tuple]) -> bool:
-    local_minutes = local_time.hour * 60 + local_time.minute
+def _time_allowed_in_windows(local_time, duration_minutes: int, windows: list[tuple]) -> bool:
     for start_local, end_local in windows:
-        if not (start_local <= local_time <= end_local):
-            continue
-        window_start_minutes = start_local.hour * 60 + start_local.minute
-        if (local_minutes - window_start_minutes) % 90 == 0:
+        if appointment_matches_slot(local_time, duration_minutes, start_local, end_local):
             return True
     return False
 
 
-def _assert_weekly_windows_do_not_break_existing_appointments(db: Session, weekly_windows: list[tuple]) -> None:
+def _assert_weekly_windows_do_not_break_existing_appointments(
+    db: Session, weekly_windows: list[tuple], warehouse_id: int
+) -> None:
     tz = ZoneInfo(settings.business_timezone)
     local_today = datetime.now(tz).date()
     start_utc, _ = _local_day_utc_bounds(local_today)
     appointments = (
         db.execute(
-            select(Appointment.start_time)
+            select(Appointment.start_time, Appointment.duration_minutes)
             .where(
                 Appointment.status != AppointmentStatus.cancelado,
                 Appointment.start_time >= start_utc,
+                Appointment.warehouse_id == warehouse_id,
             )
             .order_by(Appointment.start_time.asc())
         )
@@ -163,7 +203,10 @@ def _assert_weekly_windows_do_not_break_existing_appointments(db: Session, weekl
     override_days = set(
         db.execute(
             select(AppointmentDateWindow.day)
-            .where(AppointmentDateWindow.day >= local_today)
+            .where(
+                AppointmentDateWindow.day >= local_today,
+                AppointmentDateWindow.warehouse_id == warehouse_id,
+            )
             .group_by(AppointmentDateWindow.day)
         )
         .scalars()
@@ -171,12 +214,13 @@ def _assert_weekly_windows_do_not_break_existing_appointments(db: Session, weekl
     )
 
     conflicts: list[str] = []
-    for start_time in appointments:
+    for row in appointments:
+        start_time, duration_minutes = row[0], row[1]
         aware_start = start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
         local_dt = aware_start.astimezone(tz)
         if local_dt.date() in override_days:
             continue
-        if not _time_allowed_in_windows(local_dt.time(), weekly_windows):
+        if not _time_allowed_in_windows(local_dt.time(), int(duration_minutes), weekly_windows):
             conflicts.append(local_dt.strftime("%Y-%m-%d %H:%M"))
 
     if conflicts:
@@ -191,16 +235,35 @@ def _assert_weekly_windows_do_not_break_existing_appointments(db: Session, weekl
         )
 
 
-def _appointment_to_crud_out(appt: Appointment) -> dict:
+def _appointment_ids_with_logistics_extend(db: Session, appointment_ids: list[int]) -> set[int]:
+    if not appointment_ids:
+        return set()
+    return set(
+        db.execute(
+            select(AuditLog.appointment_id)
+            .where(
+                AuditLog.appointment_id.in_(appointment_ids),
+                AuditLog.action == "extend_duration",
+            )
+            .distinct()
+        ).scalars()
+    )
+
+
+def _appointment_to_crud_out(appt: Appointment, *, logistics_extend_used: bool = False) -> dict:
     pname = appt.provider.company_name if appt.provider else ""
+    wname = appt.warehouse.name if appt.warehouse else ""
     return AppointmentCrudOut(
         id=appt.id,
         provider_id=int(appt.provider_id),
         provider_name=pname,
+        warehouse_id=appt.warehouse_id,
+        warehouse_name=wname,
         material_description=appt.material_description,
         start_time=appt.start_time,
         duration_minutes=appt.duration_minutes,
         status=appt.status,
+        logistics_extend_used=logistics_extend_used,
     ).model_dump()
 
 
@@ -773,14 +836,20 @@ def _staff_appointments_select(
     year: int | None,
     status_list: list[str] | None,
     provider_id: int | None,
+    warehouse_id: int | None,
     date_from: date | None,
     date_to: date | None,
     sort_by: str,
     sort_dir: str,
 ):
-    stmt = select(Appointment).options(joinedload(Appointment.provider))
+    stmt = select(Appointment).options(
+        joinedload(Appointment.provider),
+        joinedload(Appointment.warehouse),
+    )
     if provider_id is not None:
         stmt = stmt.where(Appointment.provider_id == provider_id)
+    if warehouse_id is not None:
+        stmt = stmt.where(Appointment.warehouse_id == warehouse_id)
 
     if status_list:
         enums = []
@@ -836,6 +905,7 @@ def list_appointments(
     year: int | None = Query(default=None, ge=2000, le=2100),
     status: list[str] | None = Query(default=None),
     provider_id: int | None = Query(default=None),
+    warehouse_id: int | None = Query(default=None, ge=1),
     date_from: date | None = None,
     date_to: date | None = None,
     sort_by: str = Query(default="start_time", pattern="^(start_time|id)$"),
@@ -844,6 +914,8 @@ def list_appointments(
     page_size: int = Query(default=50, ge=1, le=200),
 ):
     finalize_elapsed_appointments(db)
+    if warehouse_id is not None:
+        get_active_warehouse_or_raise(db, warehouse_id)
     stmt = _staff_appointments_select(
         mode=mode,
         day=day,
@@ -851,6 +923,7 @@ def list_appointments(
         year=year,
         status_list=status,
         provider_id=provider_id,
+        warehouse_id=warehouse_id,
         date_from=date_from,
         date_to=date_to,
         sort_by=sort_by,
@@ -864,7 +937,10 @@ def list_appointments(
     )
     offset = (page - 1) * page_size
     appointments = db.execute(stmt.offset(offset).limit(page_size)).unique().scalars().all()
-    data = [_appointment_to_crud_out(a) for a in appointments]
+    extended_ids = _appointment_ids_with_logistics_extend(db, [a.id for a in appointments])
+    data = [
+        _appointment_to_crud_out(a, logistics_extend_used=a.id in extended_ids) for a in appointments
+    ]
     return ok_response(
         {"items": data, "total": total, "page": page, "page_size": page_size},
         "Citas consultadas correctamente",
@@ -880,12 +956,15 @@ def export_appointments_xlsx(
     year: int | None = Query(default=None, ge=2000, le=2100),
     status: list[str] | None = Query(default=None),
     provider_id: int | None = Query(default=None),
+    warehouse_id: int | None = Query(default=None, ge=1),
     date_from: date | None = None,
     date_to: date | None = None,
     sort_by: str = Query(default="start_time", pattern="^(start_time|id)$"),
     sort_dir: str = Query(default="asc", pattern="^(asc|desc)$"),
 ):
     finalize_elapsed_appointments(db)
+    if warehouse_id is not None:
+        get_active_warehouse_or_raise(db, warehouse_id)
     stmt = _staff_appointments_select(
         mode=mode,
         day=day,
@@ -893,6 +972,7 @@ def export_appointments_xlsx(
         year=year,
         status_list=status,
         provider_id=provider_id,
+        warehouse_id=warehouse_id,
         date_from=date_from,
         date_to=date_to,
         sort_by=sort_by,
@@ -903,15 +983,26 @@ def export_appointments_xlsx(
     ws = wb.active
     ws.title = "Citas"
     ws.append(
-        ["id", "proveedor_nit", "proveedor_nombre", "inicio_utc", "duracion_min", "estado", "descripcion_material"]
+        [
+            "id",
+            "proveedor_nit",
+            "proveedor_nombre",
+            "bodega",
+            "inicio_utc",
+            "duracion_min",
+            "estado",
+            "descripcion_material",
+        ]
     )
     for a in appointments:
         pname = a.provider.company_name if a.provider else ""
+        wname = a.warehouse.name if a.warehouse else ""
         ws.append(
             [
                 int(a.id),
                 int(a.provider_id),
                 pname,
+                wname,
                 a.start_time.isoformat(),
                 int(a.duration_minutes),
                 a.status.value if hasattr(a.status, "value") else str(a.status),
@@ -932,11 +1023,17 @@ def export_appointments_xlsx(
 def get_appointment(appointment_id: int, db: Session = Depends(get_db)):
     finalize_elapsed_appointments(db)
     appointment = db.execute(
-        select(Appointment).options(joinedload(Appointment.provider)).where(Appointment.id == appointment_id)
+        select(Appointment)
+        .options(joinedload(Appointment.provider), joinedload(Appointment.warehouse))
+        .where(Appointment.id == appointment_id)
     ).unique().scalar_one_or_none()
     if not appointment:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
-    return ok_response(_appointment_to_crud_out(appointment), "Cita consultada correctamente")
+    extended_ids = _appointment_ids_with_logistics_extend(db, [appointment.id])
+    return ok_response(
+        _appointment_to_crud_out(appointment, logistics_extend_used=appointment.id in extended_ids),
+        "Cita consultada correctamente",
+    )
 
 
 @router.post("/appointments", dependencies=[Depends(require_roles("Admin"))])
@@ -946,8 +1043,11 @@ def create_appointment(
 ):
     if not db.get(Provider, payload.provider_id):
         raise HTTPException(status_code=400, detail="El proveedor no existe")
-    assert_start_within_windows(db, payload.start_time)
-    reserve_slot_fifo_or_raise(db, payload.start_time, payload.duration_minutes)
+    get_active_warehouse_or_raise(db, payload.warehouse_id)
+    assert_appointment_slot(db, payload.start_time, payload.duration_minutes, payload.warehouse_id)
+    reserve_slot_fifo_or_raise(
+        db, payload.start_time, payload.duration_minutes, payload.warehouse_id
+    )
     appointment = Appointment(**payload.model_dump())
     db.add(appointment)
     db.commit()
@@ -955,7 +1055,9 @@ def create_appointment(
     notify_staff_review_needed(db, appointment)
     db.commit()
     appointment = db.execute(
-        select(Appointment).options(joinedload(Appointment.provider)).where(Appointment.id == appointment.id)
+        select(Appointment)
+        .options(joinedload(Appointment.provider), joinedload(Appointment.warehouse))
+        .where(Appointment.id == appointment.id)
     ).unique().scalar_one()
     return ok_response(_appointment_to_crud_out(appointment), "Cita creada correctamente")
 
@@ -973,19 +1075,23 @@ def update_appointment(
     updates = payload.model_dump(exclude_unset=True)
     if "provider_id" in updates and not db.get(Provider, updates["provider_id"]):
         raise HTTPException(status_code=400, detail="El proveedor no existe")
+    if "warehouse_id" in updates:
+        get_active_warehouse_or_raise(db, updates["warehouse_id"])
     next_start = updates.get("start_time", appointment.start_time)
     next_duration = updates.get("duration_minutes", appointment.duration_minutes)
-    if "start_time" in updates:
-        assert_start_within_windows(db, next_start)
-    if "start_time" in updates or "duration_minutes" in updates:
+    next_warehouse = updates.get("warehouse_id", appointment.warehouse_id)
+    if "start_time" in updates or "duration_minutes" in updates or "warehouse_id" in updates:
+        assert_appointment_slot(db, next_start, next_duration, next_warehouse)
+    if "start_time" in updates or "duration_minutes" in updates or "warehouse_id" in updates:
         reserve_slot_fifo_or_raise(
             db,
             start_time=next_start,
             duration_minutes=next_duration,
+            warehouse_id=next_warehouse,
             exclude_appointment_id=appointment.id,
         )
     actor_id = principal.document_id
-    critical_keys = {"status", "start_time", "duration_minutes", "material_description"}
+    critical_keys = {"status", "start_time", "duration_minutes", "material_description", "warehouse_id"}
     snapshots: dict[str, object] = {}
     for key in updates:
         if key in critical_keys:
@@ -999,6 +1105,7 @@ def update_appointment(
         "start_time": "fecha y hora",
         "duration_minutes": "duración",
         "material_description": "descripción",
+        "warehouse_id": "bodega",
     }
     for key, old_val in snapshots.items():
         new_val = getattr(appointment, key)
@@ -1025,9 +1132,82 @@ def update_appointment(
         )
     db.commit()
     appointment = db.execute(
-        select(Appointment).options(joinedload(Appointment.provider)).where(Appointment.id == appointment_id)
+        select(Appointment)
+        .options(joinedload(Appointment.provider), joinedload(Appointment.warehouse))
+        .where(Appointment.id == appointment_id)
     ).unique().scalar_one()
     return ok_response(_appointment_to_crud_out(appointment), "Cita actualizada correctamente")
+
+
+@router.get("/warehouses", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+def list_warehouses(
+    active_only: bool = Query(default=True),
+    db: Session = Depends(get_db),
+):
+    stmt = select(Warehouse).order_by(Warehouse.sort_order, Warehouse.id)
+    if active_only:
+        stmt = stmt.where(Warehouse.active.is_(True))
+    rows = db.execute(stmt).scalars().all()
+    return ok_response(
+        [_warehouse_to_out(w) for w in rows],
+        "Bodegas consultadas correctamente",
+    )
+
+
+@router.post("/warehouses", dependencies=[Depends(require_roles("Admin"))])
+def create_warehouse(payload: WarehouseIn, db: Session = Depends(get_db)):
+    existing = db.execute(select(Warehouse.id).where(Warehouse.name == payload.name.strip())).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Ya existe una bodega con ese nombre.")
+    warehouse = Warehouse(
+        name=payload.name.strip(),
+        address=(payload.address or "").strip() or None,
+        active=payload.active,
+        sort_order=payload.sort_order,
+    )
+    db.add(warehouse)
+    db.commit()
+    db.refresh(warehouse)
+    return ok_response(_warehouse_to_out(warehouse), "Bodega creada correctamente")
+
+
+@router.put("/warehouses/{warehouse_id}", dependencies=[Depends(require_roles("Admin"))])
+def update_warehouse(
+    warehouse_id: int,
+    payload: WarehouseUpdate,
+    db: Session = Depends(get_db),
+):
+    warehouse = db.get(Warehouse, warehouse_id)
+    if not warehouse:
+        raise HTTPException(status_code=404, detail="Bodega no encontrada")
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates and updates["name"]:
+        updates["name"] = updates["name"].strip()
+        dup = db.execute(
+            select(Warehouse.id).where(Warehouse.name == updates["name"], Warehouse.id != warehouse_id)
+        ).scalar_one_or_none()
+        if dup is not None:
+            raise HTTPException(status_code=409, detail="Ya existe otra bodega con ese nombre.")
+    if "address" in updates:
+        updates["address"] = (updates["address"] or "").strip() or None
+    for key, value in updates.items():
+        setattr(warehouse, key, value)
+    db.commit()
+    db.refresh(warehouse)
+    return ok_response(_warehouse_to_out(warehouse), "Bodega actualizada correctamente")
+
+
+@router.delete("/warehouses/{warehouse_id}", dependencies=[Depends(require_roles("Admin"))])
+def deactivate_warehouse(warehouse_id: int, db: Session = Depends(get_db)):
+    warehouse = db.get(Warehouse, warehouse_id)
+    if not warehouse:
+        raise HTTPException(status_code=404, detail="Bodega no encontrada")
+    active_count = db.scalar(select(func.count()).select_from(Warehouse).where(Warehouse.active.is_(True))) or 0
+    if warehouse.active and active_count <= 1:
+        raise HTTPException(status_code=400, detail="Debe permanecer al menos una bodega activa.")
+    warehouse.active = False
+    db.commit()
+    return ok_response(_warehouse_to_out(warehouse), "Bodega desactivada correctamente")
 
 
 @router.delete("/appointments/{appointment_id}", dependencies=[Depends(require_roles("Admin"))])
@@ -1041,22 +1221,18 @@ def delete_appointment(appointment_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/appointment-franjas", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
-def list_appointment_franjas(db: Session = Depends(get_db)):
-    wins = list_windows_ordered(db)
-    data = [
-        AppointmentWindowOut(
-            id=w.id,
-            start_local=w.start_local.strftime("%H:%M"),
-            end_local=w.end_local.strftime("%H:%M"),
-            sort_order=w.sort_order,
-        ).model_dump()
-        for w in wins
-    ]
+def list_appointment_franjas(
+    warehouse_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    get_active_warehouse_or_raise(db, warehouse_id)
+    wins = list_windows_ordered(db, warehouse_id)
+    data = [_window_to_out(w) for w in wins]
     return ok_response(
         {
+            "warehouse_id": warehouse_id,
             "franjas": data,
             "hint": format_schedule_hint(wins),
-            "slot_minutes": 90,
             "timezone": settings.business_timezone,
         },
         "Franjas consultadas correctamente",
@@ -1064,29 +1240,26 @@ def list_appointment_franjas(db: Session = Depends(get_db)):
 
 
 @router.get("/appointment-franjas/resolved", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
-def get_resolved_appointment_franjas(day: date = Query(...), db: Session = Depends(get_db)):
-    date_windows = list_date_windows_ordered(db, day)
+def get_resolved_appointment_franjas(
+    day: date = Query(...),
+    warehouse_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    get_active_warehouse_or_raise(db, warehouse_id)
+    date_windows = list_date_windows_ordered(db, day, warehouse_id)
     if date_windows:
         windows = date_windows
         source = "date_override"
     else:
-        windows = list_windows_ordered(db)
+        windows = list_windows_ordered(db, warehouse_id)
         source = "weekly"
-    data = [
-        AppointmentWindowOut(
-            id=w.id,
-            start_local=w.start_local.strftime("%H:%M"),
-            end_local=w.end_local.strftime("%H:%M"),
-            sort_order=w.sort_order,
-        ).model_dump()
-        for w in windows
-    ]
+    data = [_window_to_out(w) for w in windows]
     return ok_response(
         {
             "day": str(day),
+            "warehouse_id": warehouse_id,
             "source": source,
             "franjas": data,
-            "slot_minutes": 90,
             "timezone": settings.business_timezone,
         },
         "Franjas resueltas correctamente",
@@ -1095,23 +1268,16 @@ def get_resolved_appointment_franjas(day: date = Query(...), db: Session = Depen
 
 @router.put("/appointment-franjas", dependencies=[Depends(require_roles("Admin"))])
 def replace_appointment_franjas(payload: AppointmentWindowsReplace, db: Session = Depends(get_db)):
+    get_active_warehouse_or_raise(db, payload.warehouse_id)
     parsed = _parse_and_validate_windows(payload.franjas, "Franjas semanales inválidas")
-    _assert_weekly_windows_do_not_break_existing_appointments(db, parsed)
-    wins = replace_windows(db, parsed)
-    data = [
-        AppointmentWindowOut(
-            id=x.id,
-            start_local=x.start_local.strftime("%H:%M"),
-            end_local=x.end_local.strftime("%H:%M"),
-            sort_order=x.sort_order,
-        ).model_dump()
-        for x in wins
-    ]
+    _assert_weekly_windows_do_not_break_existing_appointments(db, parsed, payload.warehouse_id)
+    wins = replace_windows(db, payload.warehouse_id, parsed)
+    data = [_window_to_out(x) for x in wins]
     return ok_response(
         {
+            "warehouse_id": payload.warehouse_id,
             "franjas": data,
             "hint": format_schedule_hint(wins),
-            "slot_minutes": 90,
             "timezone": settings.business_timezone,
         },
         "Franjas actualizadas correctamente",
@@ -1119,24 +1285,22 @@ def replace_appointment_franjas(payload: AppointmentWindowsReplace, db: Session 
 
 
 @router.get("/appointment-franjas/fecha", dependencies=[Depends(require_roles("Admin"))])
-def list_appointment_franjas_for_date(day: date = Query(...), db: Session = Depends(get_db)):
+def list_appointment_franjas_for_date(
+    day: date = Query(...),
+    warehouse_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    get_active_warehouse_or_raise(db, warehouse_id)
     tz = ZoneInfo(settings.business_timezone)
     local_today = datetime.now(tz).date()
-    appointments_count = _appointments_count_on_local_day(db, day)
+    appointments_count = _appointments_count_on_local_day(db, day, warehouse_id)
     can_edit = day >= local_today and appointments_count == 0
-    wins = list_date_windows_ordered(db, day)
-    data = [
-        AppointmentWindowOut(
-            id=x.id,
-            start_local=x.start_local.strftime("%H:%M"),
-            end_local=x.end_local.strftime("%H:%M"),
-            sort_order=x.sort_order,
-        ).model_dump()
-        for x in wins
-    ]
+    wins = list_date_windows_ordered(db, day, warehouse_id)
+    data = [_window_to_out(x) for x in wins]
     return ok_response(
         {
             "day": str(day),
+            "warehouse_id": warehouse_id,
             "franjas": data,
             "appointments_count": appointments_count,
             "is_past": day < local_today,
@@ -1150,8 +1314,10 @@ def list_appointment_franjas_for_date(day: date = Query(...), db: Session = Depe
 def list_appointment_franjas_date_summary(
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
+    warehouse_id: int = Query(..., ge=1),
     db: Session = Depends(get_db),
 ):
+    get_active_warehouse_or_raise(db, warehouse_id)
     start_day = date(year, month, 1)
     if month == 12:
         end_day = date(year + 1, 1, 1)
@@ -1160,7 +1326,11 @@ def list_appointment_franjas_date_summary(
     rows = (
         db.execute(
             select(AppointmentDateWindow.day)
-            .where(AppointmentDateWindow.day >= start_day, AppointmentDateWindow.day < end_day)
+            .where(
+                AppointmentDateWindow.day >= start_day,
+                AppointmentDateWindow.day < end_day,
+                AppointmentDateWindow.warehouse_id == warehouse_id,
+            )
             .group_by(AppointmentDateWindow.day)
             .order_by(AppointmentDateWindow.day.asc())
         )
@@ -1168,7 +1338,7 @@ def list_appointment_franjas_date_summary(
         .all()
     )
     return ok_response(
-        {"override_days": [str(d) for d in rows]},
+        {"warehouse_id": warehouse_id, "override_days": [str(d) for d in rows]},
         "Resumen de franjas por fecha consultado correctamente",
     )
 
@@ -1176,40 +1346,51 @@ def list_appointment_franjas_date_summary(
 @router.put("/appointment-franjas/fecha", dependencies=[Depends(require_roles("Admin"))])
 def replace_appointment_franjas_for_date(payload: AppointmentDateWindowReplace, db: Session = Depends(get_db)):
     day = datetime.strptime(payload.day, "%Y-%m-%d").date()
+    get_active_warehouse_or_raise(db, payload.warehouse_id)
     tz = ZoneInfo(settings.business_timezone)
     local_today = datetime.now(tz).date()
     if day < local_today:
         raise HTTPException(status_code=400, detail="No se pueden editar franjas de días pasados.")
-    if _appointments_count_on_local_day(db, day) > 0:
-        raise HTTPException(status_code=409, detail="No se puede editar esta fecha porque ya tiene citas agendadas.")
+    if _appointments_count_on_local_day(db, day, payload.warehouse_id) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede editar esta fecha porque ya tiene citas en esta bodega.",
+        )
     parsed = _parse_and_validate_windows(payload.franjas, "Franjas por fecha inválidas")
-    wins = replace_date_windows(db, day, parsed)
-    data = [
-        AppointmentWindowOut(
-            id=x.id,
-            start_local=x.start_local.strftime("%H:%M"),
-            end_local=x.end_local.strftime("%H:%M"),
-            sort_order=x.sort_order,
-        ).model_dump()
-        for x in wins
-    ]
-    return ok_response({"day": str(day), "franjas": data}, "Franjas por fecha actualizadas correctamente")
+    wins = replace_date_windows(db, day, payload.warehouse_id, parsed)
+    data = [_window_to_out(x) for x in wins]
+    return ok_response(
+        {"day": str(day), "warehouse_id": payload.warehouse_id, "franjas": data},
+        "Franjas por fecha actualizadas correctamente",
+    )
 
 
 @router.delete("/appointment-franjas/fecha", dependencies=[Depends(require_roles("Admin"))])
-def delete_appointment_franjas_for_date(day: date = Query(...), db: Session = Depends(get_db)):
+def delete_appointment_franjas_for_date(
+    day: date = Query(...),
+    warehouse_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    get_active_warehouse_or_raise(db, warehouse_id)
     tz = ZoneInfo(settings.business_timezone)
     local_today = datetime.now(tz).date()
     if day < local_today:
         raise HTTPException(status_code=400, detail="No se pueden modificar franjas de días pasados.")
-    if _appointments_count_on_local_day(db, day) > 0:
-        raise HTTPException(status_code=409, detail="No se puede quitar la excepción porque esa fecha ya tiene citas.")
-    clear_date_windows(db, day)
-    return ok_response({"day": str(day)}, "Franjas por fecha eliminadas correctamente")
+    if _appointments_count_on_local_day(db, day, warehouse_id) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede quitar la excepción porque esa fecha ya tiene citas en esta bodega.",
+        )
+    clear_date_windows(db, day, warehouse_id)
+    return ok_response(
+        {"day": str(day), "warehouse_id": warehouse_id},
+        "Franjas por fecha eliminadas correctamente",
+    )
 
 
 @router.put("/appointment-franjas/fecha/lote", dependencies=[Depends(require_roles("Admin"))])
 def replace_appointment_franjas_for_date_bulk(payload: AppointmentDateWindowBulkReplace, db: Session = Depends(get_db)):
+    get_active_warehouse_or_raise(db, payload.warehouse_id)
     start_day = datetime.strptime(payload.start_day, "%Y-%m-%d").date()
     end_day = datetime.strptime(payload.end_day, "%Y-%m-%d").date()
     if end_day < start_day:
@@ -1235,11 +1416,11 @@ def replace_appointment_franjas_for_date_bulk(payload: AppointmentDateWindowBulk
             skipped_days.append({"day": str(cursor), "reason": "past_day"})
             cursor += timedelta(days=1)
             continue
-        if _appointments_count_on_local_day(db, cursor) > 0:
+        if _appointments_count_on_local_day(db, cursor, payload.warehouse_id) > 0:
             skipped_days.append({"day": str(cursor), "reason": "has_appointments"})
             cursor += timedelta(days=1)
             continue
-        replace_date_windows(db, cursor, parsed)
+        replace_date_windows(db, cursor, payload.warehouse_id, parsed)
         applied_days.append(str(cursor))
         cursor += timedelta(days=1)
     return ok_response(
@@ -1248,12 +1429,25 @@ def replace_appointment_franjas_for_date_bulk(payload: AppointmentDateWindowBulk
     )
 
 
+def _appointment_scope(warehouse_id: int | None):
+    def apply(stmt):
+        if warehouse_id is not None:
+            return stmt.where(Appointment.warehouse_id == warehouse_id)
+        return stmt
+
+    return apply
+
+
 @router.get("/analytics/summary", dependencies=[Depends(require_roles("Admin"))])
 def analytics_summary(
     range_mode: str = Query(default="today", alias="range", pattern="^(today|week|biweekly|month)$"),
+    warehouse_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
     finalize_elapsed_appointments(db)
+    if warehouse_id is not None:
+        get_active_warehouse_or_raise(db, warehouse_id)
+    scope = _appointment_scope(warehouse_id)
     tz = ZoneInfo(settings.business_timezone)
     local_now = datetime.now(tz)
     local_today_start = datetime(local_now.year, local_now.month, local_now.day, tzinfo=tz)
@@ -1265,12 +1459,12 @@ def analytics_summary(
     # Totales por estado para el rango seleccionado (filtro de analítica).
     rows_status = (
         db.execute(
-            select(Appointment.status, func.count())
-            .where(
-                Appointment.start_time >= range_start_utc,
-                Appointment.start_time < range_end_utc,
-            )
-            .group_by(Appointment.status)
+            scope(
+                select(Appointment.status, func.count()).where(
+                    Appointment.start_time >= range_start_utc,
+                    Appointment.start_time < range_end_utc,
+                )
+            ).group_by(Appointment.status)
         )
         .all()
     )
@@ -1282,12 +1476,12 @@ def analytics_summary(
     # Totales por estado del día actual (sección de barras diarias).
     rows_status_today = (
         db.execute(
-            select(Appointment.status, func.count())
-            .where(
-                Appointment.start_time >= local_today_start.astimezone(timezone.utc),
-                Appointment.start_time < local_today_end.astimezone(timezone.utc),
-            )
-            .group_by(Appointment.status)
+            scope(
+                select(Appointment.status, func.count()).where(
+                    Appointment.start_time >= local_today_start.astimezone(timezone.utc),
+                    Appointment.start_time < local_today_end.astimezone(timezone.utc),
+                )
+            ).group_by(Appointment.status)
         )
         .all()
     )
@@ -1300,8 +1494,7 @@ def analytics_summary(
     day_col = cast(Appointment.start_time, Date)
     day_rows = (
         db.execute(
-            select(day_col.label("d"), func.count())
-            .where(Appointment.start_time >= cutoff)
+            scope(select(day_col.label("d"), func.count()).where(Appointment.start_time >= cutoff))
             .group_by(day_col)
             .order_by(day_col.asc())
         )
@@ -1313,8 +1506,12 @@ def analytics_summary(
     week_end = week_end_local.astimezone(timezone.utc)
     weekday_rows = (
         db.execute(
-            select(day_col.label("d"), func.count())
-            .where(Appointment.start_time >= week_start, Appointment.start_time < week_end)
+            scope(
+                select(day_col.label("d"), func.count()).where(
+                    Appointment.start_time >= week_start,
+                    Appointment.start_time < week_end,
+                )
+            )
             .group_by(day_col)
             .order_by(day_col.asc())
         )
@@ -1344,9 +1541,14 @@ def analytics_summary(
 
     top_rows = (
         db.execute(
-            select(Appointment.provider_id, Provider.company_name, func.count())
-            .join(Provider, Appointment.provider_id == Provider.nit)
-            .where(Appointment.start_time >= month_start_utc, Appointment.start_time < month_end_utc)
+            scope(
+                select(Appointment.provider_id, Provider.company_name, func.count())
+                .join(Provider, Appointment.provider_id == Provider.nit)
+                .where(
+                    Appointment.start_time >= month_start_utc,
+                    Appointment.start_time < month_end_utc,
+                )
+            )
             .group_by(Appointment.provider_id, Provider.company_name)
             .order_by(func.count().desc())
             .limit(10)
@@ -1358,9 +1560,14 @@ def analytics_summary(
     ]
     total = int(
         db.execute(
-            select(func.count())
-            .select_from(Appointment)
-            .where(Appointment.start_time >= range_start_utc, Appointment.start_time < range_end_utc)
+            scope(
+                select(func.count())
+                .select_from(Appointment)
+                .where(
+                    Appointment.start_time >= range_start_utc,
+                    Appointment.start_time < range_end_utc,
+                )
+            )
         ).scalar_one()
         or 0
     )

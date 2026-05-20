@@ -17,7 +17,8 @@
     10) init/011_auth_sessions_login_audit.sql — sesiones refresh y auditoría de login
     11) init/012_db_roles_template.sql — plantilla de roles de BD (opcional)
     12) init/013_provider_account_status.sql — estado suspendido y purga programada de proveedores
-    13) run-database-crud.ps1 — funciones PL/pgSQL en database-crud/
+    13) init/014_bodegas_franjas_flexibles.sql — bodegas y turnos explícitos por bodega
+    14) run-database-crud.ps1 — funciones PL/pgSQL en database-crud/
     11) seeds/003_seed_data.sql — solo con -Seed (TRUNCATE + datos de ejemplo; solo desarrollo)
 
 .PARAMETER DatabaseUrl
@@ -72,7 +73,8 @@ $initSteps = @(
   @{ Label = "010_drop_dias_permitidos_cita"; Rel = "init\010_drop_dias_permitidos_cita.sql" },
   @{ Label = "011_auth_sessions_login_audit"; Rel = "init\011_auth_sessions_login_audit.sql" },
   @{ Label = "012_db_roles_template"; Rel = "init\012_db_roles_template.sql" },
-  @{ Label = "013_provider_account_status"; Rel = "init\013_provider_account_status.sql" }
+  @{ Label = "013_provider_account_status"; Rel = "init\013_provider_account_status.sql" },
+  @{ Label = "014_bodegas_franjas_flexibles"; Rel = "init\014_bodegas_franjas_flexibles.sql" }
 )
 
 $totalSteps = $initSteps.Count + 1

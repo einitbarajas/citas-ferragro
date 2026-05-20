@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ConfirmDialog from "./ConfirmDialog";
 import AppointmentReschedulePanel from "./AppointmentReschedulePanel";
+import { getAppointmentSchedule } from "../utils/businessTime";
 
 const field =
   "rounded-lg border border-slate-400 bg-white px-2 py-1.5 text-sm text-[#121212] focus:border-[#35783C] focus:outline-none focus:ring-2 focus:ring-[#35783C]/30";
@@ -24,6 +25,9 @@ export default function AppointmentList({
   onFilterMonthChange,
   filterYear,
   onFilterYearChange,
+  warehouses = [],
+  warehouseFilter = "",
+  onWarehouseFilterChange,
   emptyMessage = "No hay citas para este filtro.",
 }) {
   const showStaffActions = role === "Logistica" || role === "Admin";
@@ -31,6 +35,13 @@ export default function AppointmentList({
   const [nitFilter, setNitFilter] = useState("");
   const [confirmCancelId, setConfirmCancelId] = useState(null);
   const [editAppointment, setEditAppointment] = useState(null);
+  const editAppointmentId = editAppointment?.id ?? null;
+
+  useEffect(() => {
+    if (editAppointmentId == null) return;
+    const fresh = appointments.find((a) => Number(a.id) === Number(editAppointmentId));
+    if (fresh) setEditAppointment(fresh);
+  }, [appointments, editAppointmentId]);
 
   const filteredAppointments = useMemo(() => {
     const companyNeedle = companyFilter.trim().toLowerCase();
@@ -40,9 +51,10 @@ export default function AppointmentList({
       const providerNit = String(a.provider_id || "").replace(/\D/g, "");
       if (companyNeedle && !providerName.includes(companyNeedle)) return false;
       if (nitNeedle && !providerNit.includes(nitNeedle)) return false;
+      if (warehouseFilter && Number(a.warehouse_id) !== Number(warehouseFilter)) return false;
       return true;
     });
-  }, [appointments, companyFilter, nitFilter]);
+  }, [appointments, companyFilter, nitFilter, warehouseFilter]);
 
   const statusLabel = (status) => {
     if (status === "sin_revision") return "Sin revision";
@@ -72,6 +84,10 @@ export default function AppointmentList({
 
   const canRescheduleAppointment = (appointment) =>
     appointment.status === "sin_revision" || appointment.status === "revisado";
+
+  const canExtendDuration = (appointment) =>
+    appointment.status === "sin_revision" &&
+    !(role === "Logistica" && appointment.logistics_extend_used);
 
   const renderStaffActions = (appointment) => {
     if (!canManageAppointment(appointment)) return null;
@@ -145,7 +161,7 @@ export default function AppointmentList({
             </button>
           </>
         )}
-        {!reviewMode && !(role === "Logistica" && a.status === "revisado") && (
+        {!reviewMode && canExtendDuration(a) && !(role === "Logistica" && a.status === "revisado") && (
           <button
             className={`${actionButtonClass} border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100`}
             onClick={() => onExtend(a.id, 30)}
@@ -155,7 +171,7 @@ export default function AppointmentList({
             Extender +30 min
           </button>
         )}
-        {reviewMode && !(role === "Logistica" && a.status === "revisado") && (
+        {reviewMode && canExtendDuration(a) && !(role === "Logistica" && a.status === "revisado") && (
           <>
             <button
               className={`${actionButtonClass} border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100`}
@@ -184,19 +200,42 @@ export default function AppointmentList({
     );
   };
 
-  const renderAppointmentDetails = (appointment) => (
-    <>
-      <p className="text-sm text-slate-600">{appointment.material_description}</p>
-      <p className="mt-2 text-sm text-slate-700">
-        Proveedor: <span className="font-medium">{appointment.provider_name || "—"}</span> (NIT {appointment.provider_id})
-      </p>
-      <p className="text-sm text-slate-700">Inicio: {new Date(appointment.start_time).toLocaleString()}</p>
-      <p className="text-sm text-slate-700">Duración: {appointment.duration_minutes} min</p>
-      <p className={`text-sm ${statusMeta(appointment.status).className}`}>
-        Estado: {`${statusMeta(appointment.status).icon} ${statusMeta(appointment.status).label}`}
-      </p>
-    </>
-  );
+  const renderAppointmentDetails = (appointment) => {
+    const schedule = getAppointmentSchedule(appointment.start_time, appointment.duration_minutes);
+    return (
+      <>
+        <p className="text-sm text-slate-600">{appointment.material_description}</p>
+        <p className="mt-2 text-sm text-slate-700">
+          Proveedor: <span className="font-medium">{appointment.provider_name || "—"}</span> (NIT{" "}
+          {appointment.provider_id})
+        </p>
+        {appointment.warehouse_name && (
+          <p className="text-sm text-slate-700">
+            Bodega: <span className="font-medium">{appointment.warehouse_name}</span>
+          </p>
+        )}
+        <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">Horario de la cita</p>
+          <p className="mt-1 text-sm capitalize text-slate-800">{schedule.dateLine}</p>
+          <p className="text-sm font-medium text-slate-900">
+            {schedule.rangeLine}{" "}
+            <span className="font-normal text-slate-600">({schedule.durationLabel})</span>
+          </p>
+          <p className="text-sm text-slate-700">
+            Termina a las <span className="font-medium">{schedule.endLine}</span>
+          </p>
+          {appointment.logistics_extend_used && (
+            <p className="mt-1 text-xs text-amber-800">
+              La duración ya fue extendida por Logística; el horario de arriba incluye ese tiempo adicional.
+            </p>
+          )}
+        </div>
+        <p className={`mt-2 text-sm ${statusMeta(appointment.status).className}`}>
+          Estado: {`${statusMeta(appointment.status).icon} ${statusMeta(appointment.status).label}`}
+        </p>
+      </>
+    );
+  };
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
@@ -215,47 +254,51 @@ export default function AppointmentList({
       </ConfirmDialog>
       <h2 className="mb-3 text-lg font-semibold text-slate-900">{title}</h2>
 
-      {(role === "Logistica" || role === "Admin") && !reviewMode && (
+      {(role === "Logistica" || role === "Admin") && (
         <div className="mb-4 grid gap-3 border-b border-slate-100 pb-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="sm:col-span-1">
-            <label className="mb-1 block text-xs font-medium text-slate-600">Vista</label>
-            <select className={field} value={viewMode} onChange={(e) => onViewModeChange(e.target.value)}>
-              <option value="list">Lista (todas)</option>
-              <option value="day">Por día</option>
-              <option value="week">Por semana</option>
-              <option value="biweekly">Por quincena</option>
-              <option value="month">Por mes</option>
-            </select>
-          </div>
-          {viewMode === "day" && (
-            <div className="sm:col-span-1">
-              <label className="mb-1 block text-xs font-medium text-slate-600">Día</label>
-              <input type="date" className={field + " w-full"} value={filterDay} onChange={(e) => onFilterDayChange(e.target.value)} />
-            </div>
-          )}
-          {viewMode === "month" && (
+          {!reviewMode && (
             <>
               <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-slate-600">Mes</label>
-                <select className={field} value={filterMonth} onChange={(e) => onFilterMonthChange(Number(e.target.value))}>
-                  {Array.from({ length: 12 }, (_, i) => (
-                    <option key={i + 1} value={i + 1}>
-                      {new Date(2000, i, 1).toLocaleString("es", { month: "long" })}
-                    </option>
-                  ))}
+                <label className="mb-1 block text-xs font-medium text-slate-600">Vista</label>
+                <select className={field} value={viewMode} onChange={(e) => onViewModeChange(e.target.value)}>
+                  <option value="list">Lista (todas)</option>
+                  <option value="day">Por día</option>
+                  <option value="week">Por semana</option>
+                  <option value="biweekly">Por quincena</option>
+                  <option value="month">Por mes</option>
                 </select>
               </div>
-              <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-slate-600">Año</label>
-                <input
-                  type="number"
-                  min={2000}
-                  max={2100}
-                  className={field + " w-full"}
-                  value={filterYear}
-                  onChange={(e) => onFilterYearChange(Number(e.target.value))}
-                />
-              </div>
+              {viewMode === "day" && (
+                <div className="sm:col-span-1">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">Día</label>
+                  <input type="date" className={field + " w-full"} value={filterDay} onChange={(e) => onFilterDayChange(e.target.value)} />
+                </div>
+              )}
+              {viewMode === "month" && (
+                <>
+                  <div className="sm:col-span-1">
+                    <label className="mb-1 block text-xs font-medium text-slate-600">Mes</label>
+                    <select className={field} value={filterMonth} onChange={(e) => onFilterMonthChange(Number(e.target.value))}>
+                      {Array.from({ length: 12 }, (_, i) => (
+                        <option key={i + 1} value={i + 1}>
+                          {new Date(2000, i, 1).toLocaleString("es", { month: "long" })}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-1">
+                    <label className="mb-1 block text-xs font-medium text-slate-600">Año</label>
+                    <input
+                      type="number"
+                      min={2000}
+                      max={2100}
+                      className={field + " w-full"}
+                      value={filterYear}
+                      onChange={(e) => onFilterYearChange(Number(e.target.value))}
+                    />
+                  </div>
+                </>
+              )}
             </>
           )}
           <div className="sm:col-span-1">
@@ -282,19 +325,41 @@ export default function AppointmentList({
               onChange={(e) => setNitFilter(e.target.value.replace(/\D/g, "").slice(0, 10))}
             />
           </div>
+          {!reviewMode && onWarehouseFilterChange && warehouses.length > 0 && (
+            <div className="sm:col-span-1">
+              <label className="mb-1 block text-xs font-medium text-slate-600">Bodega</label>
+              <select
+                className={field + " w-full"}
+                value={warehouseFilter}
+                onChange={(e) => onWarehouseFilterChange(e.target.value)}
+              >
+                <option value="">Todas las bodegas</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={String(w.id)}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
 
       <div className="space-y-3">
         {filteredAppointments.length === 0 && <p className="text-sm text-slate-500">{emptyMessage}</p>}
-        {filteredAppointments.map((a) => (
+        {filteredAppointments.map((a) => {
+          const schedule = getAppointmentSchedule(a.start_time, a.duration_minutes);
+          return (
           <div key={a.id} className="rounded-lg border border-slate-100 bg-slate-50/80 p-3">
             {showStaffActions ? (
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-slate-900">Cita #{a.id}</p>
                   <p className="truncate text-sm text-slate-600">{a.provider_name || "—"}</p>
-                  <p className="text-sm text-slate-700">{new Date(a.start_time).toLocaleString()}</p>
+                  <p className="text-sm font-medium text-slate-800">{schedule.rangeLine}</p>
+                  <p className="text-xs text-slate-600">
+                    Termina {schedule.endLine} · {schedule.durationLabel}
+                  </p>
                   <p className={`text-sm ${statusMeta(a.status).className}`}>
                     {`${statusMeta(a.status).icon} ${statusMeta(a.status).label}`}
                   </p>
@@ -315,7 +380,8 @@ export default function AppointmentList({
               </>
             )}
           </div>
-        ))}
+        );
+        })}
       </div>
 
       {editAppointment && (

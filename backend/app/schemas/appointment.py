@@ -8,8 +8,9 @@ from app.models.appointment import AppointmentStatus
 class AppointmentCreate(BaseModel):
     title: str = Field(min_length=3, max_length=120)
     material_description: str = Field(min_length=5)
+    warehouse_id: int = Field(ge=1)
     start_time: datetime
-    duration_minutes: int = Field(default=60, ge=30, le=240)
+    duration_minutes: int = Field(default=60, ge=15, le=480)
 
 
 class AppointmentUpdateStatus(BaseModel):
@@ -32,6 +33,8 @@ class AppointmentOut(BaseModel):
     id: int
     provider_id: str
     provider_name: str
+    warehouse_id: int
+    warehouse_name: str = ""
     title: str
     material_description: str
     start_time: datetime

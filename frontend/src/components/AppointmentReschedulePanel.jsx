@@ -1,23 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import api, { API_PREFIX, parseApiResponse } from "../api/client";
 import { describeProviderSlotAvailability } from "../utils/providerAvailability";
+import { formatSlotLabel, normalizeAvailableSlots, parseSlotKey, slotKey } from "../utils/appointmentSlots";
 import {
   DEFAULT_BUSINESS_TZ,
   buildDateTimeIsoInTimeZone,
   formatDateInputInTimeZone,
   formatTimeInputInTimeZone,
 } from "../utils/businessTime";
-
-function toMinutes(hhmm) {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
-}
-
-function toHHMM(totalMinutes) {
-  const h = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-  const m = String(totalMinutes % 60).padStart(2, "0");
-  return `${h}:${m}`;
-}
 
 function toDateInputValue(isoString, timeZone = DEFAULT_BUSINESS_TZ) {
   return formatDateInputInTimeZone(isoString, timeZone);
@@ -40,7 +30,11 @@ export default function AppointmentReschedulePanel({
   loadProviderDayAvailability,
 }) {
   const [dateValue, setDateValue] = useState(() => toDateInputValue(appointment.start_time));
-  const [timeValue, setTimeValue] = useState(() => toTimeInputValue(appointment.start_time));
+  const [timeValue, setTimeValue] = useState(() => {
+    const tz = DEFAULT_BUSINESS_TZ;
+    const start = toTimeInputValue(appointment.start_time, tz);
+    return `${start}|${appointment.duration_minutes || 60}`;
+  });
   const [slots, setSlots] = useState([]);
   const [slotReason, setSlotReason] = useState("");
   const [slotMessage, setSlotMessage] = useState("");
@@ -51,67 +45,49 @@ export default function AppointmentReschedulePanel({
   const [formError, setFormError] = useState("");
   const [businessTz, setBusinessTz] = useState(DEFAULT_BUSINESS_TZ);
   const usesSlotPicker = variant === "provider" || variant === "staff";
+  const warehouseId = appointment.warehouse_id;
 
   useEffect(() => {
     setDateValue(toDateInputValue(appointment.start_time, businessTz));
-    setTimeValue(toTimeInputValue(appointment.start_time, businessTz));
+    const start = toTimeInputValue(appointment.start_time, businessTz);
+    setTimeValue(`${start}|${appointment.duration_minutes || 60}`);
     setFormError("");
-  }, [appointment.id, appointment.start_time, businessTz]);
+  }, [appointment.id, appointment.start_time, appointment.duration_minutes, businessTz]);
 
   useEffect(() => {
-    if (variant !== "staff" || !dateValue) return;
+    if (variant !== "staff" || !dateValue || !warehouseId) return;
     let cancelled = false;
     const run = async () => {
       setLoadingSlots(true);
       setSlotError("");
       try {
-        const response = await api.get(`${API_PREFIX}/crud/appointment-franjas/resolved?day=${dateValue}`);
+        const params = new URLSearchParams({
+          day: dateValue,
+          warehouse_id: String(warehouseId),
+          exclude_appointment_id: String(appointment.id),
+        });
+        const response = await api.get(`${API_PREFIX}/appointments/available-slots?${params.toString()}`);
         const payload = parseApiResponse(response);
         if (cancelled) return;
         if (!payload.success) {
           setSlots([]);
-          setSlotError("No se pudieron cargar las franjas del día.");
+          setSlotError(payload.message || "No se pudieron cargar los turnos del día.");
           return;
         }
-        const slotMinutes = Number(payload.data?.slot_minutes || 90);
         const resolvedTz = String(payload.data?.timezone || DEFAULT_BUSINESS_TZ);
         setBusinessTz(resolvedTz);
-        const franjas = Array.isArray(payload.data?.franjas) ? payload.data.franjas : [];
-        const built = [];
-        franjas.forEach((window) => {
-          const start = toMinutes(String(window.start_local || ""));
-          const end = toMinutes(String(window.end_local || ""));
-          if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
-          for (let t = start; t <= end; t += slotMinutes) {
-            built.push(toHHMM(t));
-          }
-        });
-        const candidateTimes = [...new Set(built)].sort();
-        const availableTimes = [];
-        for (const slot of candidateTimes) {
-          const iso = buildDateTimeIsoInTimeZone(dateValue, slot, resolvedTz);
-          const conflictResponse = await api.get(`${API_PREFIX}/appointments/conflict-check`, {
-            params: {
-              start_time: iso,
-              duration_minutes: appointment.duration_minutes || 90,
-              exclude_appointment_id: appointment.id,
-            },
-          });
-          const conflictPayload = parseApiResponse(conflictResponse);
-          if (conflictPayload.success && !conflictPayload.data?.conflict) {
-            availableTimes.push(slot);
-          }
-        }
+        const availableSlots = normalizeAvailableSlots(payload.data);
         if (cancelled) return;
-        const times = availableTimes;
-        setSlots(times);
-        setTimeValue((prev) => (times.includes(prev) ? prev : times[0] || ""));
-        if (times.length === 0) {
+        setSlots(availableSlots);
+        const keys = availableSlots.map((s) => slotKey(s));
+        setTimeValue((prev) => (keys.includes(prev) ? prev : keys[0] || ""));
+        if (availableSlots.length === 0) {
           setSlotError(
-            candidateTimes.length === 0
-              ? "Este día no tiene franjas habilitadas o no hay horarios válidos en la cuadrícula de turnos."
-              : "Los horarios de la franja ya están ocupados por otras citas."
+            payload.data?.unavailable_message ||
+              "Este día no tiene turnos disponibles en la bodega de la cita."
           );
+        } else {
+          setSlotError("");
         }
       } catch (err) {
         if (cancelled) return;
@@ -125,7 +101,7 @@ export default function AppointmentReschedulePanel({
     return () => {
       cancelled = true;
     };
-  }, [variant, dateValue, appointment.id, appointment.duration_minutes]);
+  }, [variant, dateValue, appointment.id, appointment.duration_minutes, warehouseId]);
 
   useEffect(() => {
     if (variant !== "provider" || !dateValue || !loadProviderDayAvailability) return;
@@ -136,12 +112,16 @@ export default function AppointmentReschedulePanel({
       try {
         const result = await loadProviderDayAvailability(dateValue, appointment.id);
         if (cancelled) return;
-        const times = Array.isArray(result?.times) ? result.times : [];
-        setSlots(times);
+        const normalized = normalizeAvailableSlots({
+          available_slots: result?.slots,
+          available_times: result?.times,
+        });
+        setSlots(normalized);
         setMinimumNoticeHours(Number(result?.minimumNoticeHours || 24));
-        setSlotReason(times.length === 0 ? String(result?.reason || "").trim() : "");
-        setSlotMessage(times.length === 0 ? String(result?.message || "").trim() : "");
-        setTimeValue((prev) => (times.includes(prev) ? prev : times[0] || ""));
+        setSlotReason(normalized.length === 0 ? String(result?.reason || "").trim() : "");
+        setSlotMessage(normalized.length === 0 ? String(result?.message || "").trim() : "");
+        const keys = normalized.map((s) => slotKey(s));
+        setTimeValue((prev) => (keys.includes(prev) ? prev : keys[0] || ""));
       } catch (err) {
         if (cancelled) return;
         setSlots([]);
@@ -157,6 +137,8 @@ export default function AppointmentReschedulePanel({
       cancelled = true;
     };
   }, [variant, dateValue, appointment.id, loadProviderDayAvailability]);
+
+  const slotKeys = useMemo(() => slots.map((s) => slotKey(s)), [slots]);
 
   const availabilityCopy = useMemo(
     () =>
@@ -180,11 +162,30 @@ export default function AppointmentReschedulePanel({
       return;
     }
     if (!timeValue) {
-      setFormError(usesSlotPicker ? "Selecciona un horario disponible." : "Selecciona una hora.");
+      setFormError(usesSlotPicker ? "Selecciona un turno disponible." : "Selecciona una hora.");
       return;
     }
-    if (usesSlotPicker && !slots.includes(timeValue)) {
-      setFormError("El horario elegido ya no está disponible.");
+    if (usesSlotPicker) {
+      if (!slotKeys.includes(timeValue)) {
+        setFormError("El turno elegido ya no está disponible.");
+        return;
+      }
+      const chosen = parseSlotKey(timeValue);
+      if (!chosen) {
+        setFormError("Turno inválido.");
+        return;
+      }
+      try {
+        setSubmitting(true);
+        await onReschedule({
+          appointmentId: appointment.id,
+          startTime: buildLocalDateTimeIso(dateValue, chosen.start_local, businessTz),
+        });
+      } catch (err) {
+        setFormError(err?.message || "No se pudo reprogramar la cita.");
+      } finally {
+        setSubmitting(false);
+      }
       return;
     }
     try {
@@ -205,9 +206,12 @@ export default function AppointmentReschedulePanel({
       <p className="text-xs font-medium uppercase text-slate-500">Reprogramar cita</p>
       <p className="mt-1 text-xs text-slate-600">
         {variant === "provider"
-          ? "Elige otro día y hora dentro de las franjas abiertas. Aplica la misma anticipación mínima que al agendar."
-          : "Elige la nueva fecha y un horario de la franja habilitada (turnos cada 90 minutos)."}
+          ? "Elige otro día y turno dentro de los horarios abiertos en la bodega de tu cita."
+          : "Elige la nueva fecha y un turno habilitado en la bodega de la cita."}
       </p>
+      {appointment.warehouse_name && (
+        <p className="mt-1 text-xs text-slate-500">Bodega: {appointment.warehouse_name}</p>
+      )}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Nueva fecha</label>
@@ -220,7 +224,7 @@ export default function AppointmentReschedulePanel({
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Nueva hora</label>
+          <label className="mb-1 block text-xs font-medium text-slate-600">Nuevo turno</label>
           {usesSlotPicker ? (
             <select
               className={inputClass}
@@ -230,12 +234,12 @@ export default function AppointmentReschedulePanel({
             >
               {slots.length === 0 ? (
                 <option value="">
-                  {variant === "provider" ? availabilityCopy.optionLabel : "Sin horarios disponibles"}
+                  {variant === "provider" ? availabilityCopy.optionLabel : "Sin turnos disponibles"}
                 </option>
               ) : (
                 slots.map((slot) => (
-                  <option key={slot} value={slot}>
-                    {slot}
+                  <option key={slotKey(slot)} value={slotKey(slot)}>
+                    {formatSlotLabel(slot)}
                   </option>
                 ))
               )}
@@ -254,9 +258,7 @@ export default function AppointmentReschedulePanel({
       {variant === "provider" && availabilityCopy.detail && (
         <p className="mt-2 text-xs text-amber-800">{availabilityCopy.detail}</p>
       )}
-      {variant === "staff" && slotError && (
-        <p className="mt-2 text-xs text-amber-800">{slotError}</p>
-      )}
+      {variant === "staff" && slotError && <p className="mt-2 text-xs text-amber-800">{slotError}</p>}
       {formError && <p className="mt-2 text-xs text-rose-700">{formError}</p>}
       <button type="submit" className={buttonClass + " mt-3"} disabled={submitting || loadingSlots}>
         {submitting ? "Guardando..." : "Guardar nueva fecha"}

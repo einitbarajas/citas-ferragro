@@ -4,6 +4,12 @@ import { useAuth } from "../context/AuthContext";
 
 const POLL_MS = 60_000;
 
+const FILTER_OPTIONS = [
+  { value: "all", label: "Todas" },
+  { value: "unread", label: "No leídas" },
+  { value: "read", label: "Leídas" },
+];
+
 function formatWhen(iso) {
   if (!iso) return "";
   const date = new Date(iso);
@@ -23,6 +29,8 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
   const [unreadTotal, setUnreadTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
   const panelRef = useRef(null);
 
   const closePanel = useCallback(() => setOpen(false), []);
@@ -31,9 +39,10 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
     if (!authReady || !getAccessToken()) return;
     setLoading(true);
     try {
-      const response = await api.get(`${API_PREFIX}/notifications`, {
-        params: { page: 1, page_size: 20 },
-      });
+      const params = { page: 1, page_size: 20 };
+      if (filter === "unread") params.unread_only = true;
+      if (filter === "read") params.read_only = true;
+      const response = await api.get(`${API_PREFIX}/notifications`, { params });
       const payload = parseApiResponse(response);
       if (!payload.success) {
         setError(payload.message || "No se pudieron cargar las notificaciones.");
@@ -48,7 +57,7 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
     } finally {
       setLoading(false);
     }
-  }, [authReady]);
+  }, [authReady, filter]);
 
   useEffect(() => {
     if (!authReady) return undefined;
@@ -102,6 +111,29 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
       /* ignore */
     }
   };
+
+  const clearAll = async () => {
+    if (items.length === 0) return;
+    const confirmed = window.confirm("¿Vaciar todas las notificaciones? Esta acción no se puede deshacer.");
+    if (!confirmed) return;
+    try {
+      await api.delete(`${API_PREFIX}/notifications/all`);
+      setItems([]);
+      setUnreadTotal(0);
+      setError("");
+    } catch (err) {
+      setError(parseApiError(err));
+    }
+  };
+
+  const searchNorm = search.trim().toLowerCase();
+  const visibleItems = searchNorm
+    ? items.filter(
+        (item) =>
+          String(item.title || "").toLowerCase().includes(searchNorm) ||
+          String(item.message || "").toLowerCase().includes(searchNorm)
+      )
+    : items;
 
   const onItemClick = async (item) => {
     if (!item.read) await markRead(item.id);
@@ -159,14 +191,49 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
           >
             <div className="relative shrink-0 border-b border-slate-100 px-3 py-3 pr-12 sm:px-4">
               <p className="text-sm font-semibold text-slate-900">Notificaciones</p>
-              <button
-                type="button"
-                onClick={markAllRead}
-                disabled={unreadTotal === 0}
-                className="mt-2 rounded-lg px-2 py-1.5 text-[11px] font-medium text-emerald-700 transition hover:bg-emerald-50 hover:text-emerald-900 disabled:cursor-not-allowed disabled:opacity-40 sm:text-xs"
-              >
-                Marcar todas leídas
-              </button>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <button
+                  type="button"
+                  onClick={markAllRead}
+                  disabled={unreadTotal === 0}
+                  className="rounded-lg px-2 py-1.5 text-[11px] font-medium text-emerald-700 transition hover:bg-emerald-50 hover:text-emerald-900 disabled:cursor-not-allowed disabled:opacity-40 sm:text-xs"
+                >
+                  Marcar todas leídas
+                </button>
+                <button
+                  type="button"
+                  onClick={clearAll}
+                  disabled={items.length === 0}
+                  className="rounded-lg px-2 py-1.5 text-[11px] font-medium text-red-600 transition hover:bg-red-50 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-40 sm:text-xs"
+                >
+                  Vaciar
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <label htmlFor="notification-filter" className="sr-only">
+                  Filtrar notificaciones
+                </label>
+                <select
+                  id="notification-filter"
+                  value={filter}
+                  onChange={(event) => setFilter(event.target.value)}
+                  className="min-h-8 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
+                >
+                  {FILTER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar…"
+                  aria-label="Buscar en notificaciones"
+                  className="min-h-8 min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40"
+                />
+              </div>
               <button
                 type="button"
                 onClick={closePanel}
@@ -187,7 +254,10 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
               {!loading && !error && items.length === 0 ? (
                 <p className="px-4 py-6 text-center text-sm text-slate-500">No tienes notificaciones.</p>
               ) : null}
-              {items.map((item) => (
+              {!loading && !error && items.length > 0 && visibleItems.length === 0 ? (
+                <p className="px-4 py-6 text-center text-sm text-slate-500">Ninguna coincide con el filtro.</p>
+              ) : null}
+              {visibleItems.map((item) => (
                 <button
                   key={item.id}
                   type="button"

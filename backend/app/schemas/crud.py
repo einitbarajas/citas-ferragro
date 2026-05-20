@@ -82,17 +82,19 @@ class ProviderSuspendIn(BaseModel):
 
 class AppointmentIn(BaseModel):
     provider_id: int = Field(ge=1000000000, le=9999999999)
+    warehouse_id: int = Field(ge=1)
     material_description: str = Field(min_length=5)
     start_time: datetime
-    duration_minutes: int = Field(default=90, ge=30, le=360)
+    duration_minutes: int = Field(default=60, ge=15, le=480)
     status: AppointmentStatus = AppointmentStatus.sin_revision
 
 
 class AppointmentUpdate(BaseModel):
     provider_id: int | None = Field(default=None, ge=1000000000, le=9999999999)
+    warehouse_id: int | None = Field(default=None, ge=1)
     material_description: str | None = Field(default=None, min_length=5)
     start_time: datetime | None = None
-    duration_minutes: int | None = Field(default=None, ge=30, le=360)
+    duration_minutes: int | None = Field(default=None, ge=15, le=480)
     status: AppointmentStatus | None = None
 
 
@@ -100,10 +102,35 @@ class AppointmentCrudOut(BaseModel):
     id: int
     provider_id: int
     provider_name: str = ""
+    warehouse_id: int
+    warehouse_name: str = ""
     material_description: str
     start_time: datetime
     duration_minutes: int
     status: AppointmentStatus
+    logistics_extend_used: bool = False
+
+
+class WarehouseIn(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    address: str | None = Field(default=None, max_length=255)
+    active: bool = True
+    sort_order: int = Field(default=0, ge=0, le=9999)
+
+
+class WarehouseUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    address: str | None = Field(default=None, max_length=255)
+    active: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0, le=9999)
+
+
+class WarehouseOut(BaseModel):
+    id: int
+    name: str
+    address: str | None = None
+    active: bool
+    sort_order: int
 
 
 class ChangeLogIn(BaseModel):
@@ -142,26 +169,30 @@ class AppointmentWindowItem(BaseModel):
 
 
 class AppointmentWindowsReplace(BaseModel):
-    franjas: list[AppointmentWindowItem] = Field(min_length=1, max_length=16)
+    warehouse_id: int = Field(ge=1)
+    franjas: list[AppointmentWindowItem] = Field(min_length=1, max_length=32)
 
 
 class AppointmentWindowOut(BaseModel):
     id: int
     start_local: str
     end_local: str
+    duration_minutes: int
     sort_order: int
 
 
 class AppointmentDateWindowReplace(BaseModel):
     day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="Fecha local YYYY-MM-DD")
-    franjas: list[AppointmentWindowItem] = Field(min_length=1, max_length=16)
+    warehouse_id: int = Field(ge=1)
+    franjas: list[AppointmentWindowItem] = Field(min_length=1, max_length=32)
 
 
 class AppointmentDateWindowBulkReplace(BaseModel):
+    warehouse_id: int = Field(ge=1)
     start_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="Fecha inicial YYYY-MM-DD")
     end_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="Fecha final YYYY-MM-DD")
     iso_weekdays: list[int] = Field(min_length=1, max_length=7, description="Dias ISO a aplicar: 1..7")
-    franjas: list[AppointmentWindowItem] = Field(min_length=1, max_length=16)
+    franjas: list[AppointmentWindowItem] = Field(min_length=1, max_length=32)
 
 
 class AnalyticsSummaryOut(BaseModel):

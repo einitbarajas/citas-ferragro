@@ -34,6 +34,8 @@ INIT_FILES=(
   "init/010_drop_dias_permitidos_cita.sql"
   "init/011_auth_sessions_login_audit.sql"
   "init/012_db_roles_template.sql"
+  "init/013_provider_account_status.sql"
+  "init/014_bodegas_franjas_flexibles.sql"
 )
 
 echo "=== Ferragro: despliegue de base de datos (init + CRUD) ==="

@@ -24,6 +24,14 @@ import {
   unwrapProviderDayAvailability,
 } from "../utils/providerAvailability";
 import { formatReportRangeLabel, getReportRangeBounds } from "../utils/reportRange";
+import {
+  buildSlotsFromFranjas,
+  formatSlotLabel,
+  normalizeAvailableSlots,
+  parseSlotKey,
+  slotDurationMinutes,
+  slotKey,
+} from "../utils/appointmentSlots";
 
 function todayISO() {
   const d = new Date();
@@ -72,6 +80,7 @@ const ADMIN_NAV = [
   { type: "label", text: "Informes" },
   { type: "item", id: "analitica", label: "Analítica" },
   { type: "label", text: "Operación" },
+  { type: "item", id: "bodegas", label: "Bodegas" },
   { type: "item", id: "horarios", label: "Franjas horarias" },
   { type: "label", text: "Administración" },
   { type: "item", id: "equipo", label: "Equipo (Admin / Logística)" },
@@ -141,14 +150,19 @@ function formatLongEsDateFromISO(isoDate) {
 
 function formatTodayWindowsHint(dayIso, resolvedData, availability = null) {
   const franjas = Array.isArray(resolvedData?.franjas) ? resolvedData.franjas : [];
-  const slot = Number(resolvedData?.slot_minutes || availability?.slotMinutes || 90);
 
   if (franjas.length === 0) {
-    return `Hoy (${dayIso}) no tiene franjas configuradas para agendar.`;
+    return `Hoy (${dayIso}) no tiene turnos configurados para agendar.`;
   }
 
-  const ranges = franjas.map((w) => `${w.start_local}-${w.end_local}`).join(", ");
-  const franjaLine = `Hoy (${dayIso}) la franja habilitada es ${ranges} (turnos cada ${slot} minutos).`;
+  const ranges = franjas
+    .map((w) => {
+      const duration =
+        Number(w.duration_minutes) || slotDurationMinutes(w.start_local, w.end_local);
+      return `${w.start_local}–${w.end_local} (${duration} min)`;
+    })
+    .join(", ");
+  const franjaLine = `Hoy (${dayIso}) los turnos habilitados son: ${ranges}.`;
 
   if (!availability) {
     return franjaLine;
@@ -218,6 +232,11 @@ function getPasswordStrengthError(password) {
   return "";
 }
 
+function matchesWarehouseFilter(appointment, filterWarehouseId) {
+  if (!filterWarehouseId) return true;
+  return Number(appointment?.warehouse_id) === Number(filterWarehouseId);
+}
+
 function getFranjaValidationError(rows, context = "franja") {
   if (!Array.isArray(rows) || rows.length === 0) return `No hay ${context}s para guardar.`;
   const ordered = rows
@@ -233,6 +252,13 @@ function getFranjaValidationError(rows, context = "franja") {
     }
     if (row.end_local <= row.start_local) {
       return `La ${context} #${i + 1} tiene hora fin menor o igual a la de inicio.`;
+    }
+    const duration = slotDurationMinutes(row.start_local, row.end_local);
+    if (duration < 15) {
+      return `La ${context} #${i + 1} debe durar al menos 15 minutos.`;
+    }
+    if (duration > 480) {
+      return `La ${context} #${i + 1} no puede durar más de 480 minutos.`;
     }
     if (i > 0 && row.start_local <= ordered[i - 1].end_local) {
       return `La ${context} #${i + 1} se cruza con la anterior (debe iniciar después de ${ordered[i - 1].end_local}).`;
@@ -301,7 +327,12 @@ export default function DashboardPage() {
   const [providerMinimumNoticeHours, setProviderMinimumNoticeHours] = useState(24);
   const [providerDayAvailabilityLoading, setProviderDayAvailabilityLoading] = useState(false);
   const [providerDayAvailabilityError, setProviderDayAvailabilityError] = useState("");
-  const [providerSelectedSlotMinutes, setProviderSelectedSlotMinutes] = useState(90);
+  const [warehouses, setWarehouses] = useState([]);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState(null);
+  const [filterWarehouseId, setFilterWarehouseId] = useState("");
+  const [providerListWarehouseFilter, setProviderListWarehouseFilter] = useState("");
+  const [newWarehouseName, setNewWarehouseName] = useState("");
+  const [newWarehouseAddress, setNewWarehouseAddress] = useState("");
   const [providerTimeChoice, setProviderTimeChoice] = useState("");
   const [providerMaterialDescription, setProviderMaterialDescription] = useState("");
   const [providerAppointments, setProviderAppointments] = useState([]);
@@ -519,14 +550,20 @@ export default function DashboardPage() {
       (isAdmin && adminTab === "revision_citas") || (isLogistica && logisticaTab === "revision_citas");
     const requestMode = isRevisionTabActive ? "list" : viewMode;
     const buildParams = (mode) => {
+      const effectiveMode = mode === "list" && !isRevisionTabActive ? "week" : mode;
       const params = new URLSearchParams();
-      params.set("mode", mode);
-      if (mode === "day" && filterDay) {
+      params.set("mode", effectiveMode);
+      params.set("page", "1");
+      params.set("page_size", "100");
+      if (effectiveMode === "day" && filterDay) {
         params.set("day", filterDay);
       }
-      if (mode === "month") {
+      if (effectiveMode === "month") {
         params.set("month", String(filterMonth));
         params.set("year", String(filterYear));
+      }
+      if (filterWarehouseId) {
+        params.set("warehouse_id", String(filterWarehouseId));
       }
       return params;
     };
@@ -555,7 +592,19 @@ export default function DashboardPage() {
       const inner = payload.data;
       setAppointments(Array.isArray(inner) ? inner : inner?.items ?? []);
     }
-  }, [session, authReady, viewMode, filterDay, filterMonth, filterYear, isAdmin, isLogistica, adminTab, logisticaTab]);
+  }, [
+    session,
+    authReady,
+    viewMode,
+    filterDay,
+    filterMonth,
+    filterYear,
+    filterWarehouseId,
+    isAdmin,
+    isLogistica,
+    adminTab,
+    logisticaTab,
+  ]);
 
   const loadLogs = useCallback(async () => {
     if (!session || (!isAdmin && !isLogistica)) return;
@@ -618,9 +667,26 @@ export default function DashboardPage() {
     setProviders(items);
   }, [session, authReady, isAdmin]);
 
-  const loadWindows = useCallback(async () => {
+  const loadWarehouses = useCallback(async () => {
     if (!session) return;
-    const response = await api.get(`${API_PREFIX}/crud/appointment-franjas`);
+    const response = await api.get(`${API_PREFIX}/crud/warehouses`);
+    const payload = parseApiResponse(response);
+    if (!payload.success) {
+      throw new Error(payload.message);
+    }
+    const items = Array.isArray(payload.data) ? payload.data : [];
+    setWarehouses(items);
+    setSelectedWarehouseId((prev) => {
+      if (prev && items.some((w) => w.id === prev)) return prev;
+      return items[0]?.id ?? null;
+    });
+  }, [session]);
+
+  const loadWindows = useCallback(async () => {
+    if (!session || !selectedWarehouseId) return;
+    const response = await api.get(
+      `${API_PREFIX}/crud/appointment-franjas?warehouse_id=${selectedWarehouseId}`
+    );
     const payload = parseApiResponse(response);
     if (!payload.success) {
       throw new Error(payload.message);
@@ -631,19 +697,24 @@ export default function DashboardPage() {
       setFranjaRows(f.map((w) => ({ start_local: w.start_local, end_local: w.end_local })));
     }
     const today = todayISO();
-    const resolvedResponse = await api.get(`${API_PREFIX}/crud/appointment-franjas/resolved?day=${today}`);
+    const resolvedResponse = await api.get(
+      `${API_PREFIX}/crud/appointment-franjas/resolved?day=${today}&warehouse_id=${selectedWarehouseId}`
+    );
     const resolvedPayload = parseApiResponse(resolvedResponse);
     let availability = null;
     if (isProveedor) {
       try {
-        const availabilityResponse = await api.get(`${API_PREFIX}/appointments/available-slots?day=${today}`);
+        const availabilityResponse = await api.get(
+          `${API_PREFIX}/appointments/available-slots?day=${today}&warehouse_id=${selectedWarehouseId}`
+        );
         const sourceData = unwrapProviderDayAvailability(availabilityResponse);
+        const slots = normalizeAvailableSlots(sourceData);
         availability = {
-          times: Array.isArray(sourceData?.available_times) ? sourceData.available_times : [],
+          slots,
+          times: slots.map((s) => slotKey(s)),
           reason: String(sourceData?.unavailable_reason || "").trim(),
           message: String(sourceData?.unavailable_message || "").trim(),
           minimumNoticeHours: Number(sourceData?.minimum_notice_hours || 24),
-          slotMinutes: Number(sourceData?.slot_minutes || 90),
         };
       } catch {
         availability = null;
@@ -654,12 +725,14 @@ export default function DashboardPage() {
     } else {
       setTodayWindowsHint("");
     }
-  }, [session, isProveedor]);
+  }, [session, isProveedor, selectedWarehouseId]);
 
   const loadSpecialDayWindows = useCallback(
     async (day) => {
-      if (!session || !isAdmin || !day) return;
-      const response = await api.get(`${API_PREFIX}/crud/appointment-franjas/fecha?day=${day}`);
+      if (!session || !isAdmin || !day || !selectedWarehouseId) return;
+      const response = await api.get(
+        `${API_PREFIX}/crud/appointment-franjas/fecha?day=${day}&warehouse_id=${selectedWarehouseId}`
+      );
       const payload = parseApiResponse(response);
       if (!payload.success) {
         throw new Error(payload.message);
@@ -673,7 +746,7 @@ export default function DashboardPage() {
         setSpecialFranjaRows([]);
       }
     },
-    [session, isAdmin]
+    [session, isAdmin, selectedWarehouseId]
   );
 
   const loadProviderAppointments = useCallback(async () => {
@@ -701,25 +774,26 @@ export default function DashboardPage() {
 
   const fetchProviderDayAvailability = useCallback(
     async (dayIso, excludeAppointmentId = null) => {
-      if (!session || !isProveedor || !dayIso) {
-        return { times: [], reason: "", message: "", minimumNoticeHours: 24, slotMinutes: 90 };
+      if (!session || !isProveedor || !dayIso || !selectedWarehouseId) {
+        return { slots: [], times: [], reason: "", message: "", minimumNoticeHours: 24 };
       }
-      let url = `${API_PREFIX}/appointments/available-slots?day=${dayIso}`;
+      let url = `${API_PREFIX}/appointments/available-slots?day=${dayIso}&warehouse_id=${selectedWarehouseId}`;
       if (excludeAppointmentId != null) {
         url += `&exclude_appointment_id=${excludeAppointmentId}`;
       }
       const response = await api.get(url);
       const sourceData = unwrapProviderDayAvailability(response);
-      const times = Array.isArray(sourceData?.available_times) ? sourceData.available_times : [];
+      const slots = normalizeAvailableSlots(sourceData);
+      const times = slots.map((s) => slotKey(s));
       return {
-        times: Array.from(new Set(times)).sort(),
+        slots,
+        times,
         reason: String(sourceData?.unavailable_reason || "").trim(),
         message: String(sourceData?.unavailable_message || "").trim(),
         minimumNoticeHours: Number(sourceData?.minimum_notice_hours || 24),
-        slotMinutes: Number(sourceData?.slot_minutes || 90),
       };
     },
-    [session, isProveedor]
+    [session, isProveedor, selectedWarehouseId]
   );
 
   const loadProviderDayAvailability = useCallback(
@@ -731,12 +805,13 @@ export default function DashboardPage() {
       setProviderSlotUnavailableReason("");
       try {
         const availability = await fetchProviderDayAvailability(dayIso);
-        setProviderSelectedSlots(availability.times);
-        setProviderSelectedSlotMinutes(availability.slotMinutes);
+        setProviderSelectedSlots(availability.slots);
         setProviderMinimumNoticeHours(availability.minimumNoticeHours);
         setProviderSlotUnavailableReason(availability.times.length === 0 ? availability.reason : "");
         setProviderSlotUnavailableMessage(availability.times.length === 0 ? availability.message : "");
-        setProviderTimeChoice((prev) => (availability.times.includes(prev) ? prev : availability.times[0] || ""));
+        setProviderTimeChoice((prev) =>
+          availability.times.includes(prev) ? prev : availability.times[0] || ""
+        );
         setError("");
       } catch (err) {
         setProviderSelectedSlots([]);
@@ -752,10 +827,12 @@ export default function DashboardPage() {
 
   const loadProviderMonthAvailability = useCallback(
     async (targetDate) => {
-      if (!session || !isProveedor || !targetDate) return;
+      if (!session || !isProveedor || !targetDate || !selectedWarehouseId) return;
       const year = targetDate.getFullYear();
       const month = targetDate.getMonth() + 1;
-      const response = await api.get(`${API_PREFIX}/crud/appointment-franjas/fecha/resumen?year=${year}&month=${month}`);
+      const response = await api.get(
+        `${API_PREFIX}/crud/appointment-franjas/fecha/resumen?year=${year}&month=${month}&warehouse_id=${selectedWarehouseId}`
+      );
       const payload = parseApiResponse(response);
       if (!payload.success) {
         throw new Error(payload.message);
@@ -764,33 +841,39 @@ export default function DashboardPage() {
       const overrideDays = Array.isArray(payload.data?.override_days) ? payload.data.override_days : [];
       setProviderAvailableDays(overrideDays.filter((d) => String(d) >= today));
     },
-    [session, isProveedor]
+    [session, isProveedor, selectedWarehouseId]
   );
 
   const loadCalendarOverrideSummary = useCallback(
     async (targetDate) => {
-      if (!session || !isAdmin || !targetDate) return;
+      if (!session || !isAdmin || !targetDate || !selectedWarehouseId) return;
       const year = targetDate.getFullYear();
       const month = targetDate.getMonth() + 1;
-      const response = await api.get(`${API_PREFIX}/crud/appointment-franjas/fecha/resumen?year=${year}&month=${month}`);
+      const response = await api.get(
+        `${API_PREFIX}/crud/appointment-franjas/fecha/resumen?year=${year}&month=${month}&warehouse_id=${selectedWarehouseId}`
+      );
       const payload = parseApiResponse(response);
       if (!payload.success) {
         throw new Error(payload.message);
       }
       setCalendarOverrideDays(Array.isArray(payload.data?.override_days) ? payload.data.override_days : []);
     },
-    [session, isAdmin]
+    [session, isAdmin, selectedWarehouseId]
   );
 
   const loadAnalytics = useCallback(async () => {
     if (!session || !isAdmin) return;
-    const response = await api.get(`${API_PREFIX}/crud/analytics/summary?range=${analyticsRange}`);
+    const params = new URLSearchParams({ range: analyticsRange });
+    if (filterWarehouseId) {
+      params.set("warehouse_id", String(filterWarehouseId));
+    }
+    const response = await api.get(`${API_PREFIX}/crud/analytics/summary?${params.toString()}`);
     const payload = parseApiResponse(response);
     if (!payload.success) {
       throw new Error(payload.message);
     }
     setAnalytics(payload.data || null);
-  }, [session, isAdmin, analyticsRange]);
+  }, [session, isAdmin, analyticsRange, filterWarehouseId]);
 
   const loadProfile = useCallback(async () => {
     if (!session) return;
@@ -829,6 +912,9 @@ export default function DashboardPage() {
       params.set("month", String(filterMonth));
       params.set("year", String(filterYear));
     }
+    if (filterWarehouseId) {
+      params.set("warehouse_id", String(filterWarehouseId));
+    }
     try {
       const res = await api.get(`${API_PREFIX}/crud/appointments/export.xlsx?${params.toString()}`, {
         responseType: "blob",
@@ -846,7 +932,7 @@ export default function DashboardPage() {
     } catch (err) {
       pushToast(parseApiError(err), "error");
     }
-  }, [viewMode, filterDay, filterMonth, filterYear, pushToast]);
+  }, [viewMode, filterDay, filterMonth, filterYear, filterWarehouseId, pushToast]);
 
   useEffect(() => {
     if (!error) return;
@@ -872,14 +958,13 @@ export default function DashboardPage() {
       try {
         const tasks = [];
         if (isStaff) tasks.push(loadAppointments());
-        if (isStaff && !isAdmin) tasks.push(loadLogs());
         if (isStaff) tasks.push(loadReminders());
         if (isAdmin) {
           tasks.push(loadRoles());
           tasks.push(loadInternalUsers());
           tasks.push(loadProviders());
         }
-        if (isStaff || isProveedor) tasks.push(loadWindows());
+        if (isStaff || isProveedor) tasks.push(loadWarehouses());
         if (isProveedor) tasks.push(loadProviderAppointments());
         tasks.push(loadProfile());
         await Promise.all(tasks);
@@ -897,7 +982,7 @@ export default function DashboardPage() {
     loadRoles,
     loadInternalUsers,
     loadProviders,
-    loadWindows,
+    loadWarehouses,
     loadProfile,
     loadProviderAppointments,
     isStaff,
@@ -910,8 +995,49 @@ export default function DashboardPage() {
   ]);
 
   useEffect(() => {
+    if (!session || !authReady || !selectedWarehouseId) return;
+    const run = async () => {
+      try {
+        await loadWindows();
+        if (isProveedor) {
+          const now = new Date();
+          const provCal = new Date(now.getFullYear(), now.getMonth() + providerCalendarMonthOffset, 1);
+          await loadProviderMonthAvailability(provCal);
+          if (providerSelectedDay) await loadProviderDayAvailability(providerSelectedDay);
+        }
+        if (isAdmin && adminTab === "horarios") {
+          await loadSpecialDayWindows(specialDay);
+          const now = new Date();
+          const adminCal = new Date(now.getFullYear(), now.getMonth() + calendarMonthOffset, 1);
+          await loadCalendarOverrideSummary(adminCal);
+        }
+      } catch (err) {
+        setError(parseApiError(err));
+      }
+    };
+    run();
+  }, [
+    session,
+    authReady,
+    selectedWarehouseId,
+    loadWindows,
+    isProveedor,
+    isAdmin,
+    adminTab,
+    loadProviderMonthAvailability,
+    loadProviderDayAvailability,
+    loadSpecialDayWindows,
+    loadCalendarOverrideSummary,
+    providerCalendarMonthOffset,
+    calendarMonthOffset,
+    providerSelectedDay,
+    specialDay,
+  ]);
+
+  useEffect(() => {
     if (!session || !authReady) return;
     const refreshData = async () => {
+      if (document.visibilityState !== "visible") return;
       try {
         if (isStaff) {
           await loadAppointments();
@@ -927,7 +1053,7 @@ export default function DashboardPage() {
         // Evita ruido visual; los errores de refresco automático no deben bloquear la sesión.
       }
     };
-    const intervalId = window.setInterval(refreshData, 15000);
+    const intervalId = window.setInterval(refreshData, 45000);
     const onVisibility = () => {
       if (document.visibilityState === "visible") {
         refreshData();
@@ -962,7 +1088,7 @@ export default function DashboardPage() {
       }
     };
     run();
-  }, [isAdmin, adminTab, loadAnalytics, analyticsRange]);
+  }, [isAdmin, adminTab, loadAnalytics, analyticsRange, filterWarehouseId]);
 
   useEffect(() => {
     if (!session || !authReady || !isStaff) return;
@@ -976,7 +1102,19 @@ export default function DashboardPage() {
       }
     };
     run();
-  }, [session, authReady, isStaff, loadAppointments, viewMode, filterDay, filterMonth, filterYear, adminTab, logisticaTab]);
+  }, [
+    session,
+    authReady,
+    isStaff,
+    loadAppointments,
+    viewMode,
+    filterDay,
+    filterMonth,
+    filterYear,
+    filterWarehouseId,
+    adminTab,
+    logisticaTab,
+  ]);
 
   useEffect(() => {
     if (!isAdmin || adminTab !== "horarios") return;
@@ -1102,10 +1240,11 @@ export default function DashboardPage() {
   const citasInRange = useMemo(() => {
     const { start, end } = getReportRangeBounds(citasRange);
     return appointments.filter((a) => {
+      if (!matchesWarehouseFilter(a, filterWarehouseId)) return false;
       const dt = new Date(a.start_time);
       return dt >= start && dt < end;
     });
-  }, [appointments, citasRange]);
+  }, [appointments, citasRange, filterWarehouseId]);
   const citasRangeCount = useMemo(() => citasInRange.length, [citasInRange]);
   const sinRevisionRangeCount = useMemo(
     () => citasInRange.filter((a) => a.status === "sin_revision").length,
@@ -1201,11 +1340,17 @@ export default function DashboardPage() {
   const reviewAppointments = useMemo(() => {
     const { start, end } = getReportRangeBounds(reviewRange);
     return appointments.filter((a) => {
+      if (!matchesWarehouseFilter(a, filterWarehouseId)) return false;
       if (a.status !== "sin_revision" && a.status !== "revisado") return false;
       const dt = new Date(a.start_time);
       return dt >= start && dt < end;
     });
-  }, [appointments, reviewRange]);
+  }, [appointments, reviewRange, filterWarehouseId]);
+
+  const providerAppointmentsFiltered = useMemo(
+    () => providerAppointments.filter((a) => matchesWarehouseFilter(a, providerListWarehouseFilter)),
+    [providerAppointments, providerListWarehouseFilter]
+  );
 
   const onCreate = async (payload) => {
     try {
@@ -1520,7 +1665,10 @@ export default function DashboardPage() {
     try {
       setError("");
       setSuccess("");
-      const response = await api.put(`${API_PREFIX}/crud/appointment-franjas`, { franjas: franjaRows });
+      const response = await api.put(`${API_PREFIX}/crud/appointment-franjas`, {
+        warehouse_id: selectedWarehouseId,
+        franjas: franjaRows,
+      });
       const payload = parseApiResponse(response);
       if (!payload.success) {
         throw new Error(payload.message);
@@ -1552,6 +1700,7 @@ export default function DashboardPage() {
       const sortedRows = [...specialFranjaRows].sort((a, b) => String(a.start_local).localeCompare(String(b.start_local)));
       const response = await api.put(`${API_PREFIX}/crud/appointment-franjas/fecha`, {
         day: specialDay,
+        warehouse_id: selectedWarehouseId,
         franjas: sortedRows,
       });
       const payload = parseApiResponse(response);
@@ -1591,6 +1740,7 @@ export default function DashboardPage() {
         }
       }
       const response = await api.put(`${API_PREFIX}/crud/appointment-franjas/fecha/lote`, {
+        warehouse_id: selectedWarehouseId,
         start_day: bulkStartDay,
         end_day: bulkEndDay,
         iso_weekdays: BULK_ALL_WEEKDAYS,
@@ -1636,6 +1786,51 @@ export default function DashboardPage() {
     }
   };
 
+  const onCreateWarehouse = async (e) => {
+    e.preventDefault();
+    try {
+      setError("");
+      setSuccess("");
+      const name = newWarehouseName.trim();
+      if (name.length < 2) {
+        setError("El nombre de la bodega debe tener al menos 2 caracteres.");
+        return;
+      }
+      const response = await api.post(`${API_PREFIX}/crud/warehouses`, {
+        name,
+        address: newWarehouseAddress.trim() || null,
+        active: true,
+        sort_order: warehouses.length,
+      });
+      const payload = parseApiResponse(response);
+      if (!payload.success) {
+        throw new Error(payload.message);
+      }
+      setNewWarehouseName("");
+      setNewWarehouseAddress("");
+      await loadWarehouses();
+      setSuccess("Bodega creada correctamente.");
+    } catch (err) {
+      setError(parseApiError(err));
+    }
+  };
+
+  const onDeactivateWarehouse = async (warehouseId) => {
+    try {
+      setError("");
+      setSuccess("");
+      const response = await api.delete(`${API_PREFIX}/crud/warehouses/${warehouseId}`);
+      const payload = parseApiResponse(response);
+      if (!payload.success) {
+        throw new Error(payload.message);
+      }
+      await loadWarehouses();
+      setSuccess("Bodega desactivada.");
+    } catch (err) {
+      setError(parseApiError(err));
+    }
+  };
+
   const onClearSpecialDayFranjas = async () => {
     try {
       setError("");
@@ -1645,7 +1840,9 @@ export default function DashboardPage() {
         setError("No puedes editar esta fecha: ya pasó o ya tiene citas.");
         return;
       }
-      const response = await api.delete(`${API_PREFIX}/crud/appointment-franjas/fecha?day=${specialDay}`);
+      const response = await api.delete(
+        `${API_PREFIX}/crud/appointment-franjas/fecha?day=${specialDay}&warehouse_id=${selectedWarehouseId}`
+      );
       const payload = parseApiResponse(response);
       if (!payload.success) {
         throw new Error(payload.message);
@@ -1855,18 +2052,28 @@ export default function DashboardPage() {
     });
     return set;
   }, [providerAppointments, windowsPack?.timezone]);
+  const providerAvailableSlotKeys = useMemo(
+    () => (Array.isArray(providerSelectedSlots) ? providerSelectedSlots : []).map((s) => slotKey(s)),
+    [providerSelectedSlots]
+  );
+  const providerChosenSlot = useMemo(
+    () => parseSlotKey(providerTimeChoice),
+    [providerTimeChoice]
+  );
   const providerCannotScheduleSlot = useMemo(() => {
+    if (!selectedWarehouseId) return true;
     if (!providerSelectedDay) return true;
     if (providerDayAvailabilityLoading) return true;
     if (providerBookedDays.has(providerSelectedDay)) return true;
-    if (providerSelectedSlots.length === 0) return true;
-    if (!providerTimeChoice || !providerSelectedSlots.includes(providerTimeChoice)) return true;
+    if (providerAvailableSlotKeys.length === 0) return true;
+    if (!providerTimeChoice || !providerAvailableSlotKeys.includes(providerTimeChoice)) return true;
     return false;
   }, [
+    selectedWarehouseId,
     providerSelectedDay,
     providerDayAvailabilityLoading,
     providerBookedDays,
-    providerSelectedSlots,
+    providerAvailableSlotKeys,
     providerTimeChoice,
   ]);
   const providerSlotAvailabilityCopy = useMemo(
@@ -1930,12 +2137,9 @@ export default function DashboardPage() {
         setError("Ya tienes una cita agendada para este día.");
         return;
       }
-      if (
-        providerSelectedSlots.length === 0 ||
-        !providerTimeChoice ||
-        !providerSelectedSlots.includes(providerTimeChoice)
-      ) {
-        setError("No hay una franja horaria disponible para agendar en esta fecha.");
+      const chosen = parseSlotKey(providerTimeChoice);
+      if (!chosen || providerAvailableSlotKeys.length === 0 || !providerAvailableSlotKeys.includes(providerTimeChoice)) {
+        setError("No hay un turno disponible para agendar en esta fecha.");
         return;
       }
       const desc = providerMaterialDescription.trim();
@@ -1944,13 +2148,14 @@ export default function DashboardPage() {
         return;
       }
       const [y, m, d] = providerSelectedDay.split("-").map(Number);
-      const [hh, mm] = providerTimeChoice.split(":").map(Number);
+      const [hh, mm] = chosen.start_local.split(":").map(Number);
       const localDate = new Date(y, m - 1, d, hh, mm, 0);
       await api.post(`${API_PREFIX}/appointments`, {
         title: "Entrega de material",
         material_description: desc,
+        warehouse_id: selectedWarehouseId,
         start_time: localDate.toISOString(),
-        duration_minutes: 90,
+        duration_minutes: chosen.duration_minutes,
       });
       setProviderMaterialDescription("");
       await loadProviderAppointments();
@@ -1963,10 +2168,11 @@ export default function DashboardPage() {
   }, [
     providerSelectedDay,
     providerAppointments,
-    providerSelectedSlots,
+    providerAvailableSlotKeys,
     providerTimeChoice,
     providerMaterialDescription,
     providerCalendarBase,
+    selectedWarehouseId,
     windowsPack?.timezone,
     loadProviderAppointments,
     loadProviderMonthAvailability,
@@ -1974,8 +2180,11 @@ export default function DashboardPage() {
   ]);
 
   const providerAppointmentsSorted = useMemo(
-    () => [...providerAppointments].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()),
-    [providerAppointments]
+    () =>
+      [...providerAppointmentsFiltered].sort(
+        (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
+      ),
+    [providerAppointmentsFiltered]
   );
   const providerHistoryAppointments = useMemo(
     () =>
@@ -2176,26 +2385,73 @@ export default function DashboardPage() {
 
   const citasRangeLabel = formatReportRangeLabel(citasRange);
 
+  const warehouseFilterControl = (selectId, label = "Bodega") => (
+    <div>
+      <label htmlFor={selectId} className="mb-1 block text-xs font-medium text-slate-600">
+        {label}
+      </label>
+      <select
+        id={selectId}
+        className={`${input} w-full sm:max-w-xs`}
+        value={filterWarehouseId}
+        onChange={(e) => setFilterWarehouseId(e.target.value)}
+      >
+        <option value="">Todas las bodegas</option>
+        {warehouses.map((w) => (
+          <option key={w.id} value={String(w.id)}>
+            {w.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+
+  const providerWarehouseFilterControl = (
+    <div className="mb-3">
+      <label htmlFor="provider-list-warehouse" className="mb-1 block text-xs font-medium text-slate-600">
+        Filtrar por bodega
+      </label>
+      <select
+        id="provider-list-warehouse"
+        className={input + " w-full sm:max-w-xs"}
+        value={providerListWarehouseFilter}
+        onChange={(e) => setProviderListWarehouseFilter(e.target.value)}
+      >
+        <option value="">Todas las bodegas</option>
+        {warehouses.map((w) => (
+          <option key={w.id} value={String(w.id)}>
+            {w.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+
   const quickActions =
     isAdmin &&
     adminTab === "citas" && (
       <div className="mb-6 space-y-3">
         <div className={`${card} p-4`}>
-          <label htmlFor="admin-citas-range" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Filtro de citas
-          </label>
-          <select
-            id="admin-citas-range"
-            name="admin-citas-range"
-            className={`${input} w-full sm:max-w-xs`}
-            value={citasRange}
-            onChange={(e) => setCitasRange(e.target.value)}
-          >
-            <option value="today">Día</option>
-            <option value="week">Semana</option>
-            <option value="biweekly">Quincena</option>
-            <option value="month">Mes</option>
-          </select>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="admin-citas-range" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Filtro de citas
+              </label>
+              <select
+                id="admin-citas-range"
+                name="admin-citas-range"
+                className={`${input} w-full sm:max-w-xs`}
+                value={citasRange}
+                onChange={(e) => setCitasRange(e.target.value)}
+              >
+                <option value="today">Día</option>
+                <option value="week">Semana</option>
+                <option value="biweekly">Quincena</option>
+                <option value="month">Mes</option>
+              </select>
+            </div>
+            {warehouseFilterControl("admin-citas-warehouse", "Bodega")}
+          </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <div className={card}>
@@ -2404,12 +2660,27 @@ export default function DashboardPage() {
               </p>
             </header>
             <div className={card}>
-              <p className="text-xs font-medium uppercase text-slate-500">Franja vigente</p>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Bodega de entrega</label>
+              <select
+                className={input}
+                value={selectedWarehouseId ?? ""}
+                onChange={(e) => setSelectedWarehouseId(Number(e.target.value) || null)}
+              >
+                {warehouses.length === 0 && <option value="">Sin bodegas activas</option>}
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className={card}>
+              <p className="text-xs font-medium uppercase text-slate-500">Turnos vigentes hoy</p>
               <p className="mt-2 text-sm text-slate-700">{todayWindowsHint || windowsPack?.hint || "Sin detalle disponible por ahora."}</p>
             </div>
             <div className={card}>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="min-w-0 text-xs font-medium uppercase text-slate-500">Días con franja abierta (empresa)</p>
+                <p className="min-w-0 text-xs font-medium uppercase text-slate-500">Días con turnos abiertos (empresa)</p>
                 <div className="flex shrink-0 items-center gap-2">
                   <button type="button" className={btnGhost + " px-2 py-1 text-xs"} onClick={() => setProviderCalendarMonthOffset((v) => v - 1)} aria-label="Ir al mes anterior del calendario">
                     ◀
@@ -2478,29 +2749,32 @@ export default function DashboardPage() {
                 </div>
               )}
               <div className="mt-3 grid gap-2 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-600">Hora disponible</label>
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">Turno disponible</label>
                   <select
                     className={input}
                     value={providerTimeChoice}
                     onChange={(e) => setProviderTimeChoice(e.target.value)}
                     disabled={providerCannotScheduleSlot}
                   >
-                    {providerSelectedSlots.length === 0 ? (
+                    {providerAvailableSlotKeys.length === 0 ? (
                       <option value="">{providerSlotAvailabilityCopy.optionLabel}</option>
                     ) : (
-                      providerSelectedSlots.map((h) => (
-                        <option key={h} value={h}>
-                          {h}
+                      providerSelectedSlots.map((slot) => (
+                        <option key={slotKey(slot)} value={slotKey(slot)}>
+                          {formatSlotLabel(slot)}
                         </option>
                       ))
                     )}
                   </select>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-600">Intervalo</label>
-                  <div className={input + " bg-slate-50"}>{providerSelectedSlotMinutes} minutos</div>
-                </div>
+                {providerChosenSlot && (
+                  <div className="md:col-span-2">
+                    <p className="text-xs text-slate-600">
+                      Duración del turno seleccionado: <strong>{providerChosenSlot.duration_minutes} minutos</strong>
+                    </p>
+                  </div>
+                )}
               </div>
               <div className="mt-2">
                 <label className="mb-1 block text-xs font-medium text-slate-600">Descripción de lo que vas a entregar</label>
@@ -2535,11 +2809,15 @@ export default function DashboardPage() {
             </header>
             <div className={card}>
               <p className="text-xs font-medium uppercase text-slate-500">Mis citas</p>
+              {providerWarehouseFilterControl}
               <div className="mt-2 space-y-2">
                 {providerAppointmentsSorted.length === 0 && <p className="text-sm text-slate-500">Aún no tienes citas agendadas.</p>}
                 {providerAppointmentsSorted.map((a) => (
                   <div key={a.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                     <p className="break-words text-sm font-medium text-slate-800">Cita #{a.id} - {new Date(a.start_time).toLocaleString()}</p>
+                    {a.warehouse_name && (
+                      <p className="text-xs text-slate-600">Bodega: {a.warehouse_name}</p>
+                    )}
                     <p className="text-xs text-slate-600">Estado: {providerStatusLabel(a.status)}</p>
                     <p className="text-xs text-slate-600">Descripción: {a.material_description}</p>
                     {a.status !== "cancelado" && a.status !== "finalizada" && a.status !== "no_presentada" && (
@@ -2598,11 +2876,15 @@ export default function DashboardPage() {
             </header>
             <div className={card}>
               <p className="text-xs font-medium uppercase text-slate-500">Historial de citas</p>
+              {providerWarehouseFilterControl}
               <div className="mt-2 space-y-2">
                 {providerHistoryAppointments.length === 0 && <p className="text-sm text-slate-500">No tienes historial todavía.</p>}
                 {providerHistoryAppointments.map((a) => (
                   <div key={a.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                     <p className="break-words text-sm font-medium text-slate-800">Cita #{a.id} - {new Date(a.start_time).toLocaleString()}</p>
+                    {a.warehouse_name && (
+                      <p className="text-xs text-slate-600">Bodega: {a.warehouse_name}</p>
+                    )}
                     <p className="text-xs text-slate-600">Estado: {providerStatusLabel(a.status)}</p>
                     <p className="text-xs text-slate-600">Descripción: {a.material_description}</p>
                   </div>
@@ -2615,22 +2897,25 @@ export default function DashboardPage() {
         {isAdmin && adminTab === "analitica" && (
           <div className={card}>
             <h2 className="mb-4 text-lg font-semibold text-slate-900">Analítica</h2>
-            <div className="mb-4 w-full sm:max-w-xs">
-              <label htmlFor="analytics-range-filter" className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-600">
-                Filtro
-              </label>
-              <select
-                id="analytics-range-filter"
-                name="analytics-range-filter"
-                className={`${input} w-full`}
-                value={analyticsRange}
-                onChange={(e) => setAnalyticsRange(e.target.value)}
-              >
-                <option value="today">Por día</option>
-                <option value="week">Por semana</option>
+            <div className="mb-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="analytics-range-filter" className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-600">
+                  Rango
+                </label>
+                <select
+                  id="analytics-range-filter"
+                  name="analytics-range-filter"
+                  className={`${input} w-full`}
+                  value={analyticsRange}
+                  onChange={(e) => setAnalyticsRange(e.target.value)}
+                >
+                  <option value="today">Por día</option>
+                  <option value="week">Por semana</option>
                 <option value="biweekly">Por quincena</option>
                 <option value="month">Por mes</option>
               </select>
+              </div>
+              {warehouseFilterControl("analytics-warehouse", "Bodega")}
             </div>
             {!analytics && <p className="text-sm text-slate-500">Cargando…</p>}
             {analytics && (
@@ -2723,15 +3008,75 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {isAdmin && adminTab === "bodegas" && (
+          <div className={card}>
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">Bodegas de entrega</h2>
+            <p className="mb-4 text-xs text-slate-600">
+              Cada bodega tiene su propio calendario de turnos. Los proveedores eligen bodega al agendar.
+            </p>
+            <form className="mb-6 grid gap-2 md:grid-cols-2" onSubmit={onCreateWarehouse}>
+              <input
+                className={input}
+                placeholder="Nombre de la bodega"
+                value={newWarehouseName}
+                onChange={(e) => setNewWarehouseName(e.target.value)}
+                required
+              />
+              <input
+                className={input}
+                placeholder="Dirección (opcional)"
+                value={newWarehouseAddress}
+                onChange={(e) => setNewWarehouseAddress(e.target.value)}
+              />
+              <button type="submit" className={btnPrimary + " md:col-span-2"}>
+                Agregar bodega
+              </button>
+            </form>
+            <ul className="space-y-2">
+              {warehouses.map((w) => (
+                <li
+                  key={w.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                >
+                  <div>
+                    <p className="font-medium text-slate-800">{w.name}</p>
+                    {w.address && <p className="text-xs text-slate-500">{w.address}</p>}
+                  </div>
+                  <button
+                    type="button"
+                    className="text-xs text-rose-700 underline hover:text-rose-800 disabled:opacity-40"
+                    disabled={warehouses.filter((x) => x.active).length <= 1}
+                    onClick={() => void onDeactivateWarehouse(w.id)}
+                  >
+                    Desactivar
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {isAdmin && adminTab === "horarios" && (
           <div className={card}>
-            <h2 className="mb-2 text-lg font-semibold text-slate-900">Franjas horarias permitidas</h2>
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">Turnos por bodega y fecha</h2>
             <p className="mb-4 text-xs text-slate-600">
-              Solo el administrador define en qué horas locales (zona {windowsPack?.timezone || "America/Bogota"}) se puede{" "}
-              <strong className="text-slate-800">iniciar</strong> una cita. Los turnos se habilitan cada{" "}
-              <strong className="text-slate-800">1 hora y 30 minutos</strong> desde el inicio de cada franja (ej.: 08:00,
-              09:30, 11:00).
+              Define turnos explícitos por bodega (ej. 13:00–14:00 de 60 min, 14:00–14:30 de 30 min). Zona horaria:{" "}
+              {windowsPack?.timezone || "America/Bogota"}.
             </p>
+            <div className="mb-4">
+              <label className="mb-1 block text-xs font-medium text-slate-600">Bodega a configurar</label>
+              <select
+                className={input}
+                value={selectedWarehouseId ?? ""}
+                onChange={(e) => setSelectedWarehouseId(Number(e.target.value) || null)}
+              >
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <form className="space-y-3" onSubmit={onSaveFranjas}>
               <div>
                 <p className="mt-2 text-xs text-slate-500">Hoy es {formatLongEsDate(new Date())}.</p>
@@ -2834,6 +3179,7 @@ export default function DashboardPage() {
                 )}
                 {specialFranjaRows.map((row, idx) => (
                   <div key={`selected-${idx}`} className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-slate-600">Turno</span>
                     <span className="text-sm text-slate-600">De</span>
                     <input
                       type="time"
@@ -3499,21 +3845,26 @@ export default function DashboardPage() {
         {isLogistica && logisticaTab === "citas" && (
           <div className="mb-6 space-y-3" data-tour="section-citas">
             <div className={`${card} p-4`}>
-              <label htmlFor="logistica-citas-range" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Filtro de citas
-              </label>
-              <select
-                id="logistica-citas-range"
-                name="logistica-citas-range"
-                className={`${input} w-full sm:max-w-xs`}
-                value={citasRange}
-                onChange={(e) => setCitasRange(e.target.value)}
-              >
-                <option value="today">Día</option>
-                <option value="week">Semana</option>
-                <option value="biweekly">Quincena</option>
-                <option value="month">Mes</option>
-              </select>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="logistica-citas-range" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Filtro de citas
+                  </label>
+                  <select
+                    id="logistica-citas-range"
+                    name="logistica-citas-range"
+                    className={`${input} w-full sm:max-w-xs`}
+                    value={citasRange}
+                    onChange={(e) => setCitasRange(e.target.value)}
+                  >
+                    <option value="today">Día</option>
+                    <option value="week">Semana</option>
+                    <option value="biweekly">Quincena</option>
+                    <option value="month">Mes</option>
+                  </select>
+                </div>
+                {warehouseFilterControl("logistica-citas-warehouse", "Bodega")}
+              </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               <div className={card}>
@@ -3553,7 +3904,14 @@ export default function DashboardPage() {
         {showCitasSection && isAdmin && (
           <section className="space-y-5" aria-labelledby="admin-citas-title" data-tour="section-citas">
             <h2 id="admin-citas-title" className="sr-only">Gestión de citas</h2>
-            <AppointmentForm onSubmit={onCreate} windowsHint={windowsPack?.hint || ""} windowsPack={windowsPack} />
+            <AppointmentForm
+              onSubmit={onCreate}
+              windowsHint={windowsPack?.hint || ""}
+              windowsPack={windowsPack}
+              warehouses={warehouses}
+              warehouseId={selectedWarehouseId}
+              onWarehouseChange={setSelectedWarehouseId}
+            />
           </section>
         )}
 
@@ -3584,6 +3942,9 @@ export default function DashboardPage() {
               onChangeStatus={onChangeStatus}
               onExtend={onExtend}
               onReschedule={onStaffRescheduleAppointment}
+              warehouses={warehouses}
+              warehouseFilter={filterWarehouseId}
+              onWarehouseFilterChange={setFilterWarehouseId}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
               filterDay={filterDay}
@@ -3600,21 +3961,26 @@ export default function DashboardPage() {
           <section className="space-y-3" aria-labelledby="revision-citas-title">
             <h2 id="revision-citas-title" className="sr-only">Revisión de citas</h2>
             <div className={`${card} p-4`}>
-              <label htmlFor="review-range-filter" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Filtro de revisión
-              </label>
-              <select
-                id="review-range-filter"
-                name="review-range-filter"
-                className={`${input} w-full sm:max-w-xs`}
-                value={reviewRange}
-                onChange={(e) => setReviewRange(e.target.value)}
-              >
-                <option value="today">Por día</option>
-                <option value="week">Por semana</option>
-                <option value="biweekly">Por quincena</option>
-                <option value="month">Por mes</option>
-              </select>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="review-range-filter" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Filtro de revisión
+                  </label>
+                  <select
+                    id="review-range-filter"
+                    name="review-range-filter"
+                    className={`${input} w-full sm:max-w-xs`}
+                    value={reviewRange}
+                    onChange={(e) => setReviewRange(e.target.value)}
+                  >
+                    <option value="today">Por día</option>
+                    <option value="week">Por semana</option>
+                    <option value="biweekly">Por quincena</option>
+                    <option value="month">Por mes</option>
+                  </select>
+                </div>
+                {warehouseFilterControl("revision-citas-warehouse", "Bodega")}
+              </div>
             </div>
             <AppointmentList
               appointments={reviewAppointments}
@@ -3623,6 +3989,9 @@ export default function DashboardPage() {
               onChangeStatus={onChangeStatus}
               onExtend={onExtend}
               onReschedule={onStaffRescheduleAppointment}
+              warehouses={warehouses}
+              warehouseFilter={filterWarehouseId}
+              onWarehouseFilterChange={setFilterWarehouseId}
               reviewMode
               title="Revision de citas"
               emptyMessage="No hay citas para revisar."
