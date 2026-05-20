@@ -24,6 +24,14 @@ from app.models.role import Role
 from app.models.user import User
 from app.services.credential_cleanup import delete_credential_fully, release_email_for_reuse
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
+from app.services.provider_account import (
+    build_provider_out_dict,
+    delete_provider_immediate,
+    format_provider_update_detail,
+    notify_provider_and_admins,
+    reactivate_provider,
+    suspend_provider,
+)
 from app.services.notification_service import notify_provider_appointment_updated, notify_staff_review_needed
 from app.schemas.crud import (
     AppointmentDateWindowReplace,
@@ -39,6 +47,7 @@ from app.schemas.crud import (
     ChangeLogUpdate,
     ProviderIn,
     ProviderOut,
+    ProviderSuspendIn,
     ProviderUpdate,
     ProfileMeOut,
     ProfileMeUpdate,
@@ -572,8 +581,11 @@ def clear_my_profile_photo(
 @router.get("/providers", dependencies=[Depends(require_roles("Admin", "Logistica"))])
 def list_providers(db: Session = Depends(get_db)):
     providers = db.execute(select(Provider).order_by(Provider.company_name.asc())).scalars().all()
-    data = [ProviderOut.model_validate(provider).model_dump() for provider in providers]
-    return ok_response(data, "Proveedores consultados correctamente")
+    data = [build_provider_out_dict(db, provider) for provider in providers]
+    return ok_response(
+        {"items": data, "total": len(data)},
+        "Proveedores consultados correctamente",
+    )
 
 
 @router.get("/providers/{nit}", dependencies=[Depends(require_roles("Admin", "Logistica"))])
@@ -581,7 +593,7 @@ def get_provider(nit: int, db: Session = Depends(get_db)):
     provider = db.get(Provider, nit)
     if not provider:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
-    return ok_response(ProviderOut.model_validate(provider).model_dump(), "Proveedor consultado correctamente")
+    return ok_response(build_provider_out_dict(db, provider), "Proveedor consultado correctamente")
 
 
 @router.post("/providers", dependencies=[Depends(require_roles("Admin", "Logistica"))])
@@ -621,10 +633,10 @@ def create_provider(
     db.commit()
     db.refresh(provider)
     dispatch_welcome_provider(str(payload.company_email), payload.company_name)
-    return ok_response(ProviderOut.model_validate(provider).model_dump(), "Proveedor creado correctamente")
+    return ok_response(build_provider_out_dict(db, provider), "Proveedor creado correctamente")
 
 
-@router.put("/providers/{nit}", dependencies=[Depends(require_roles("Admin", "Logistica"))])
+@router.put("/providers/{nit}", dependencies=[Depends(require_roles("Admin"))])
 def update_provider(
     nit: int,
     payload: ProviderUpdate,
@@ -639,9 +651,19 @@ def update_provider(
     if not cred:
         raise HTTPException(status_code=500, detail="Proveedor sin credenciales asociadas")
 
+    before = {
+        "company_name": provider.company_name,
+        "company_email": provider.company_email,
+        "contact_name": provider.contact_name,
+        "contact_document": provider.contact_document,
+        "verification_digit": provider.verification_digit,
+        "password_changed": False,
+    }
+
     updates = payload.model_dump(exclude_unset=True)
     if "password" in updates:
         cred.password_hash = get_password_hash(updates.pop("password"))
+        before["password_changed"] = True
     if "company_email" in updates:
         new_email = str(updates.pop("company_email"))
         other = db.execute(
@@ -654,16 +676,79 @@ def update_provider(
 
     for key, value in updates.items():
         setattr(provider, key, value)
+
+    after = {
+        "company_name": provider.company_name,
+        "company_email": provider.company_email,
+        "contact_name": provider.contact_name,
+        "contact_document": provider.contact_document,
+        "verification_digit": provider.verification_digit,
+        "password_changed": before["password_changed"],
+    }
+    change_detail = format_provider_update_detail(before, after)
+
     _log_admin_event(
         db=db,
         actor_id=principal.document_id,
         action="provider_update",
-        description=f"Actualizó proveedor {provider.company_name} (NIT {nit})",
+        description=f"Actualizó proveedor {provider.company_name} (NIT {nit}): {change_detail}",
         target_document_id=str(nit),
     )
     db.commit()
     db.refresh(provider)
-    return ok_response(ProviderOut.model_validate(provider).model_dump(), "Proveedor actualizado correctamente")
+    notify_provider_and_admins(
+        db,
+        provider=provider,
+        action="updated",
+        detail=change_detail,
+        actor_label=f"Admin {principal.document_id}",
+    )
+    return ok_response(build_provider_out_dict(db, provider), "Proveedor actualizado correctamente")
+
+
+@router.post("/providers/{nit}/suspend", dependencies=[Depends(require_roles("Admin"))])
+def suspend_provider_account(
+    nit: int,
+    payload: ProviderSuspendIn,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
+):
+    provider = db.get(Provider, nit)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    suspend_provider(db, provider, reason=payload.reason, actor_id=principal.document_id)
+    _log_admin_event(
+        db=db,
+        actor_id=principal.document_id,
+        action="provider_suspend",
+        description=f"Suspendió proveedor {provider.company_name} (NIT {nit}): {payload.reason.strip()}",
+        target_document_id=str(nit),
+    )
+    db.commit()
+    db.refresh(provider)
+    return ok_response(build_provider_out_dict(db, provider), "Proveedor suspendido correctamente")
+
+
+@router.post("/providers/{nit}/reactivate", dependencies=[Depends(require_roles("Admin"))])
+def reactivate_provider_account(
+    nit: int,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
+):
+    provider = db.get(Provider, nit)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    reactivate_provider(db, provider, actor_id=principal.document_id)
+    _log_admin_event(
+        db=db,
+        actor_id=principal.document_id,
+        action="provider_reactivate",
+        description=f"Reactivó proveedor {provider.company_name} (NIT {nit})",
+        target_document_id=str(nit),
+    )
+    db.commit()
+    db.refresh(provider)
+    return ok_response(build_provider_out_dict(db, provider), "Proveedor reactivado correctamente")
 
 
 @router.delete("/providers/{nit}", dependencies=[Depends(require_roles("Admin"))])
@@ -675,18 +760,7 @@ def delete_provider(
     provider = db.get(Provider, nit)
     if not provider:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
-    cid = provider.credential_id
-    deleted_name = provider.company_name
-    db.delete(provider)
-    db.flush()
-    _log_admin_event(
-        db=db,
-        actor_id=principal.document_id,
-        action="provider_delete",
-        description=f"Eliminó proveedor {deleted_name} (NIT {nit})",
-        target_document_id=str(nit),
-    )
-    delete_credential_fully(db, cid)
+    delete_provider_immediate(db, provider, actor_id=principal.document_id)
     db.commit()
     return ok_response(None, "Proveedor eliminado correctamente")
 

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.provider import Provider
+from app.models.provider import Provider, ProviderAccountStatus
 from app.models.user import User
 from app.services.auth_sessions import credential_id_for_subject, get_active_refresh_session
 
@@ -89,7 +89,7 @@ def get_security_principal(
         except ValueError:
             raise credentials_exception
         provider = db.get(Provider, nit)
-        if not provider:
+        if not provider or provider.status == ProviderAccountStatus.suspendido:
             raise credentials_exception
         return SecurityPrincipal(subject=str(nit), role_name=role_name, provider=provider)
 

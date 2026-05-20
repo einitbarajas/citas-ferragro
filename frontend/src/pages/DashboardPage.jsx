@@ -75,6 +75,7 @@ const ADMIN_NAV = [
   { type: "item", id: "horarios", label: "Franjas horarias" },
   { type: "label", text: "Administración" },
   { type: "item", id: "equipo", label: "Equipo (Admin / Logística)" },
+  { type: "item", id: "proveedores", label: "Proveedores" },
   { type: "item", id: "auditoria", label: "Auditoría" },
   { type: "item", id: "configuraciones", label: "Configuraciones" },
 ];
@@ -271,6 +272,20 @@ export default function DashboardPage() {
   const [editUserEmail, setEditUserEmail] = useState("");
   const [editUserRoleId, setEditUserRoleId] = useState("");
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState("");
+  const [providers, setProviders] = useState([]);
+  const [providerFilter, setProviderFilter] = useState("");
+  const [providerStatusFilter, setProviderStatusFilter] = useState("");
+  const [providersMessage, setProvidersMessage] = useState("");
+  const [editingProviderNit, setEditingProviderNit] = useState(null);
+  const [editProviderCompany, setEditProviderCompany] = useState("");
+  const [editProviderEmail, setEditProviderEmail] = useState("");
+  const [editProviderContact, setEditProviderContact] = useState("");
+  const [editProviderContactDoc, setEditProviderContactDoc] = useState("");
+  const [editProviderDigit, setEditProviderDigit] = useState("");
+  const [editProviderPassword, setEditProviderPassword] = useState("");
+  const [confirmDeleteProviderNit, setConfirmDeleteProviderNit] = useState(null);
+  const [confirmSuspendProvider, setConfirmSuspendProvider] = useState(null);
+  const [suspendReason, setSuspendReason] = useState("");
 
   const [adminTab, setAdminTab] = useState("citas");
   const [logisticaTab, setLogisticaTab] = useState("citas");
@@ -379,6 +394,28 @@ export default function DashboardPage() {
 
   const internalRolesOnly = roles.filter((r) => r.name === "Admin" || r.name === "Logistica");
   const staffUsersOnly = internalUsers.filter((u) => u.role_name === "Admin" || u.role_name === "Logistica");
+  const filteredProviders = useMemo(() => {
+    const q = providerFilter.trim().toLowerCase();
+    const nitQ = providerFilter.replace(/\D/g, "");
+    return providers.filter((p) => {
+      const matchesStatus = providerStatusFilter.length === 0 || p.status === providerStatusFilter;
+      const matchesText =
+        q.length === 0 ||
+        (p.company_name || "").toLowerCase().includes(q) ||
+        (p.company_email || "").toLowerCase().includes(q) ||
+        (p.contact_name || "").toLowerCase().includes(q) ||
+        (nitQ.length > 0 && String(p.nit || "").includes(nitQ));
+      return matchesStatus && matchesText;
+    });
+  }, [providers, providerFilter, providerStatusFilter]);
+
+  const providerStats = useMemo(() => {
+    const total = providers.length;
+    const activos = providers.filter((p) => p.status === "activo").length;
+    const suspendidos = providers.filter((p) => p.status === "suspendido").length;
+    return { total, activos, suspendidos };
+  }, [providers]);
+
   const filteredStaffUsers = useMemo(() => {
     const nameQ = staffNameFilter.trim().toLowerCase();
     const docQ = staffNameFilter.replace(/\D/g, "");
@@ -567,6 +604,18 @@ export default function DashboardPage() {
       throw new Error(payload.message);
     }
     setInternalUsers(payload.data || []);
+  }, [session, authReady, isAdmin]);
+
+  const loadProviders = useCallback(async () => {
+    if (!session || !authReady || !isAdmin) return;
+    const response = await api.get(`${API_PREFIX}/crud/providers`);
+    const payload = parseApiResponse(response);
+    if (!payload.success) {
+      throw new Error(payload.message);
+    }
+    const raw = payload.data;
+    const items = Array.isArray(raw?.items) ? raw.items : Array.isArray(raw) ? raw : [];
+    setProviders(items);
   }, [session, authReady, isAdmin]);
 
   const loadWindows = useCallback(async () => {
@@ -828,6 +877,7 @@ export default function DashboardPage() {
         if (isAdmin) {
           tasks.push(loadRoles());
           tasks.push(loadInternalUsers());
+          tasks.push(loadProviders());
         }
         if (isStaff || isProveedor) tasks.push(loadWindows());
         if (isProveedor) tasks.push(loadProviderAppointments());
@@ -846,6 +896,7 @@ export default function DashboardPage() {
     loadReminders,
     loadRoles,
     loadInternalUsers,
+    loadProviders,
     loadWindows,
     loadProfile,
     loadProviderAppointments,
@@ -1021,6 +1072,18 @@ export default function DashboardPage() {
       setNuRoleId(String(internalRolesOnly[0].id));
     }
   }, [internalRolesOnly, nuRoleId]);
+
+  useEffect(() => {
+    if (!isAdmin || adminTab !== "proveedores") return;
+    const run = async () => {
+      try {
+        await loadProviders();
+      } catch (err) {
+        setError(parseApiError(err));
+      }
+    };
+    run();
+  }, [isAdmin, adminTab, loadProviders]);
 
   useEffect(() => {
     // Evita que el navegador/autofill deje valores viejos al entrar al formulario.
@@ -1345,6 +1408,110 @@ export default function DashboardPage() {
       setSuccess("Usuario eliminado exitosamente.");
     } catch (err) {
       setError(parseApiError(err));
+    }
+  };
+
+  const onStartEditProvider = (p) => {
+    setProvidersMessage("");
+    setEditingProviderNit(p.nit);
+    setEditProviderCompany(p.company_name || "");
+    setEditProviderEmail(p.company_email || "");
+    setEditProviderContact(p.contact_name || "");
+    setEditProviderContactDoc(p.contact_document || "");
+    setEditProviderDigit(p.verification_digit || "");
+    setEditProviderPassword("");
+  };
+
+  const onCancelEditProvider = () => {
+    setEditingProviderNit(null);
+    setEditProviderCompany("");
+    setEditProviderEmail("");
+    setEditProviderContact("");
+    setEditProviderContactDoc("");
+    setEditProviderDigit("");
+    setEditProviderPassword("");
+  };
+
+  const onSaveEditProvider = async (nit) => {
+    try {
+      setError("");
+      setSuccess("");
+      setProvidersMessage("");
+      const body = {
+        company_name: editProviderCompany.trim(),
+        company_email: editProviderEmail.trim(),
+        contact_name: editProviderContact.trim(),
+        contact_document: editProviderContactDoc.trim(),
+        verification_digit: editProviderDigit.trim(),
+      };
+      if (editProviderPassword.trim().length >= 6) {
+        body.password = editProviderPassword;
+      }
+      await api.put(`${API_PREFIX}/crud/providers/${nit}`, body);
+      await loadProviders();
+      onCancelEditProvider();
+      setProvidersMessage("Proveedor actualizado. Se envió aviso por correo al proveedor y a los administradores.");
+      setSuccess("Proveedor actualizado correctamente.");
+    } catch (err) {
+      setError(parseApiError(err));
+    }
+  };
+
+  const onSuspendProvider = async (nit, reason) => {
+    try {
+      setError("");
+      setSuccess("");
+      setProvidersMessage("");
+      await api.post(`${API_PREFIX}/crud/providers/${nit}/suspend`, { reason: reason.trim() });
+      await loadProviders();
+      if (editingProviderNit === nit) onCancelEditProvider();
+      setProvidersMessage(
+        "Proveedor suspendido. No podrá iniciar sesión; en 6 meses se purgarán sus datos (se conserva auditoría)."
+      );
+      setSuccess("Proveedor suspendido correctamente.");
+    } catch (err) {
+      setError(parseApiError(err));
+    }
+  };
+
+  const onReactivateProvider = async (nit) => {
+    try {
+      setError("");
+      setSuccess("");
+      setProvidersMessage("");
+      await api.post(`${API_PREFIX}/crud/providers/${nit}/reactivate`);
+      await loadProviders();
+      setProvidersMessage("Proveedor reactivado. Se notificó por correo.");
+      setSuccess("Proveedor reactivado correctamente.");
+    } catch (err) {
+      setError(parseApiError(err));
+    }
+  };
+
+  const onDeleteProvider = async (nit) => {
+    try {
+      setError("");
+      setSuccess("");
+      setProvidersMessage("");
+      await api.delete(`${API_PREFIX}/crud/providers/${nit}`);
+      await loadProviders();
+      if (editingProviderNit === nit) onCancelEditProvider();
+      setProvidersMessage("Proveedor eliminado. Solo permanece el registro en auditoría.");
+      setSuccess("Proveedor eliminado correctamente.");
+    } catch (err) {
+      setError(parseApiError(err));
+    }
+  };
+
+  const formatProviderDate = (iso) => {
+    if (!iso) return "—";
+    try {
+      return new Date(iso).toLocaleString("es-CO", {
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+    } catch {
+      return "—";
     }
   };
 
@@ -2000,7 +2167,7 @@ export default function DashboardPage() {
       <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">{saludoHorario()}</h1>
       <p className="mt-2 max-w-2xl text-sm text-slate-600">
         {isAdmin &&
-          "Gestiona citas de entrega, franjas horarias, equipo interno y auditoría desde un solo panel."}
+          "Gestiona citas de entrega, franjas horarias, equipo interno, proveedores y auditoría desde un solo panel."}
         {isLogistica && "Coordina citas con proveedores y revisa el historial de cambios."}
         {isProveedor && "Consulta información de tu cuenta. Para nuevas citas, contacta a logística o usa los canales acordados."}
       </p>
@@ -2105,6 +2272,52 @@ export default function DashboardPage() {
         }}
       >
         ¿Seguro que deseas eliminar este usuario? Esta acción no se puede deshacer.
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={confirmDeleteProviderNit != null}
+        title="Eliminar proveedor"
+        danger
+        confirmLabel="Sí, eliminar"
+        onCancel={() => setConfirmDeleteProviderNit(null)}
+        onConfirm={() => {
+          if (confirmDeleteProviderNit != null) onDeleteProvider(confirmDeleteProviderNit);
+          setConfirmDeleteProviderNit(null);
+        }}
+      >
+        Solo elimina si no tiene citas. Se borran credenciales y datos; permanece la auditoría del sistema.
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={confirmSuspendProvider != null}
+        title="Suspender proveedor"
+        danger
+        confirmLabel="Suspender"
+        onCancel={() => {
+          setConfirmSuspendProvider(null);
+          setSuspendReason("");
+        }}
+        onConfirm={() => {
+          if (confirmSuspendProvider != null && suspendReason.trim().length >= 3) {
+            onSuspendProvider(confirmSuspendProvider, suspendReason);
+          } else {
+            setError("Indica un motivo de suspensión (mínimo 3 caracteres).");
+          }
+          setConfirmSuspendProvider(null);
+          setSuspendReason("");
+        }}
+      >
+        <p className="mb-3 text-sm text-slate-600">
+          El proveedor no podrá iniciar sesión. Tras 6 meses suspendido se eliminarán credenciales, citas y demás datos;
+          solo quedará auditoría.
+        </p>
+        <label className="mb-1 block text-xs font-medium text-slate-600">Motivo</label>
+        <textarea
+          className={input + " min-h-[80px]"}
+          value={suspendReason}
+          onChange={(e) => setSuspendReason(e.target.value)}
+          placeholder="Ej. Empresa inactiva / registro no válido"
+          required
+          minLength={3}
+        />
       </ConfirmDialog>
       {panelGuidedOpen ? (
         <Suspense fallback={null}>
@@ -2910,6 +3123,168 @@ export default function DashboardPage() {
                 {filteredStaffUsers.length === 0 && (
                   <li className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-500">
                     No hay usuarios que coincidan con los filtros.
+                  </li>
+                )}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {isAdmin && adminTab === "proveedores" && (
+          <div className="grid gap-4">
+            <div className={card}>
+              <h2 className="mb-1 text-lg font-semibold text-slate-900">Proveedores registrados</h2>
+              <p className="mb-4 text-xs text-slate-500">
+                Total: {providerStats.total} · Activos: {providerStats.activos} · Suspendidos:{" "}
+                {providerStats.suspendidos}. Suspende si tiene citas o dudas; elimina solo sin citas. Los suspendidos
+                se purgan a los 6 meses (solo queda auditoría).
+              </p>
+              <div className="mb-4 grid gap-2 md:grid-cols-2">
+                <input
+                  className={input}
+                  placeholder="Filtrar por empresa, correo, contacto o NIT"
+                  value={providerFilter}
+                  onChange={(e) => setProviderFilter(e.target.value)}
+                />
+                <select
+                  className={input}
+                  value={providerStatusFilter}
+                  onChange={(e) => setProviderStatusFilter(e.target.value)}
+                >
+                  <option value="">Todos los estados</option>
+                  <option value="activo">Activos</option>
+                  <option value="suspendido">Suspendidos</option>
+                </select>
+              </div>
+              {providersMessage && <p className="mb-3 text-xs font-medium text-emerald-700">{providersMessage}</p>}
+              <ul className="space-y-2 text-sm text-slate-600 max-lg:min-h-[16rem] max-lg:max-h-[40rem] overflow-y-auto">
+                {filteredProviders.map((p) => (
+                  <li key={p.nit} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
+                    {editingProviderNit === p.nit ? (
+                      <div className="space-y-2">
+                        <input
+                          className={input}
+                          value={editProviderCompany}
+                          onChange={(e) => setEditProviderCompany(e.target.value)}
+                          placeholder="Nombre empresa"
+                        />
+                        <input
+                          className={input}
+                          type="email"
+                          value={editProviderEmail}
+                          onChange={(e) => setEditProviderEmail(e.target.value)}
+                          placeholder="Correo empresa"
+                        />
+                        <input
+                          className={input}
+                          value={editProviderContact}
+                          onChange={(e) => setEditProviderContact(e.target.value)}
+                          placeholder="Persona responsable"
+                        />
+                        <input
+                          className={input}
+                          value={editProviderContactDoc}
+                          onChange={(e) => setEditProviderContactDoc(e.target.value.replace(/\D/g, ""))}
+                          placeholder="Documento responsable"
+                          inputMode="numeric"
+                        />
+                        <input
+                          className={input}
+                          value={editProviderDigit}
+                          onChange={(e) => setEditProviderDigit(e.target.value.replace(/\D/g, "").slice(0, 1))}
+                          placeholder="Dígito verificación"
+                          maxLength={1}
+                        />
+                        <input
+                          className={input}
+                          type="password"
+                          value={editProviderPassword}
+                          onChange={(e) => setEditProviderPassword(e.target.value)}
+                          placeholder="Nueva contraseña (opcional, mín. 6)"
+                          autoComplete="new-password"
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" className={btnPrimary} onClick={() => onSaveEditProvider(p.nit)}>
+                            Guardar cambios
+                          </button>
+                          <button type="button" className={btnGhost} onClick={onCancelEditProvider}>
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <p className="font-semibold text-slate-900">
+                            {p.company_name}{" "}
+                            <span
+                              className={
+                                p.status === "suspendido"
+                                  ? "ml-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                                  : "ml-1 rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
+                              }
+                            >
+                              {p.status === "suspendido" ? "Suspendido" : "Activo"}
+                            </span>
+                          </p>
+                          <p>
+                            NIT {p.nit}-{p.verification_digit} · {p.company_email}
+                          </p>
+                          <p>
+                            Responsable: {p.contact_name} (doc. {p.contact_document})
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Citas: {p.appointments_count ?? 0} · Último acceso: {formatProviderDate(p.last_login_at)}
+                            {p.status === "suspendido" && p.purge_scheduled_at
+                              ? ` · Purga programada: ${formatProviderDate(p.purge_scheduled_at)}`
+                              : ""}
+                          </p>
+                          {p.status === "suspendido" && p.suspension_reason && (
+                            <p className="text-xs text-amber-800">Motivo: {p.suspension_reason}</p>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          <button type="button" className={btnGhost} onClick={() => onStartEditProvider(p)}>
+                            Editar
+                          </button>
+                          {p.status === "suspendido" ? (
+                            <button
+                              type="button"
+                              className={btnPrimary}
+                              onClick={() => onReactivateProvider(p.nit)}
+                            >
+                              Reactivar
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100"
+                              onClick={() => setConfirmSuspendProvider(p.nit)}
+                            >
+                              Suspender
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                            disabled={(p.appointments_count ?? 0) > 0}
+                            title={
+                              (p.appointments_count ?? 0) > 0
+                                ? "Tiene citas: usa Suspender en lugar de eliminar"
+                                : "Eliminar registro sin citas"
+                            }
+                            onClick={() => setConfirmDeleteProviderNit(p.nit)}
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+                {filteredProviders.length === 0 && (
+                  <li className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-500">
+                    No hay proveedores que coincidan con los filtros.
                   </li>
                 )}
               </ul>

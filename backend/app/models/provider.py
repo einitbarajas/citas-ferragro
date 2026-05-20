@@ -1,7 +1,14 @@
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String
+from datetime import datetime
+
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+
+class ProviderAccountStatus:
+    activo = "activo"
+    suspendido = "suspendido"
 
 
 class Provider(Base):
@@ -15,6 +22,10 @@ class Provider(Base):
             "\"DigitoVerificacion\" ~ '^[0-9]{1}$'",
             name="ChkProveedoresDigitoVerificacion",
         ),
+        CheckConstraint(
+            "\"Estado\" IN ('activo', 'suspendido')",
+            name="ChkProveedoresEstado",
+        ),
     )
 
     nit: Mapped[int] = mapped_column("IdNit", Numeric(10, 0), primary_key=True, index=True)
@@ -26,6 +37,11 @@ class Provider(Base):
     )
     contact_name: Mapped[str] = mapped_column("NombrePersonaResponsable", String(160), nullable=False)
     contact_document: Mapped[str] = mapped_column("DocumentoPersonaResponsable", String(30), nullable=False)
+    status: Mapped[str] = mapped_column("Estado", String(20), nullable=False, default=ProviderAccountStatus.activo)
+    suspended_at: Mapped[datetime | None] = mapped_column("SuspendidoEn", DateTime(timezone=True), nullable=True)
+    suspension_reason: Mapped[str | None] = mapped_column("MotivoSuspension", Text, nullable=True)
+    suspended_by: Mapped[str | None] = mapped_column("SuspendidoPor", String(30), nullable=True)
+    purge_scheduled_at: Mapped[datetime | None] = mapped_column("PurgaProgramadaEn", DateTime(timezone=True), nullable=True)
 
     credential = relationship("Credential", back_populates="provider", uselist=False)
     appointments = relationship("Appointment", back_populates="provider")

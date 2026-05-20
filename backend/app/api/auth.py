@@ -263,6 +263,23 @@ def login(
 
     provider = db.execute(select(Provider).where(Provider.credential_id == cred.id)).scalar_one_or_none()
     if provider:
+        from app.models.provider import ProviderAccountStatus
+
+        if provider.status == ProviderAccountStatus.suspendido:
+            _audit_login(
+                db,
+                credential_id=cred.id,
+                email=email,
+                success=False,
+                ip=ip,
+                user_agent=ua,
+                failure_reason="cuenta_suspendida",
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=403,
+                detail="Tu cuenta de proveedor está suspendida. Contacta a soporte Ferragro.",
+            )
         role_name = "Proveedor"
         subject = str(int(provider.nit))
         _audit_login(db, credential_id=cred.id, email=email, success=True, ip=ip, user_agent=ua)
@@ -298,6 +315,19 @@ def refresh_access_token(request: Request, response: Response, db: Session = Dep
     session_row = get_active_refresh_session(db, cred_id, jti)
     if not session_row:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesión revocada o expirada")
+
+    if role_name == "Proveedor":
+        from app.models.provider import Provider, ProviderAccountStatus
+
+        try:
+            provider = db.get(Provider, int(subject))
+        except ValueError:
+            provider = None
+        if not provider or provider.status == ProviderAccountStatus.suspendido:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tu cuenta de proveedor está suspendida. Contacta a soporte Ferragro.",
+            )
 
     revoke_refresh_jti(db, jti)
     new_refresh_str, new_jti = create_refresh_token(subject=subject, role=role_name)

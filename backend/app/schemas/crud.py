@@ -68,6 +68,16 @@ class ProviderOut(BaseModel):
     company_email: EmailStr
     contact_name: str
     contact_document: str
+    status: str = "activo"
+    suspended_at: datetime | None = None
+    suspension_reason: str | None = None
+    purge_scheduled_at: datetime | None = None
+    appointments_count: int = 0
+    last_login_at: datetime | None = None
+
+
+class ProviderSuspendIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class AppointmentIn(BaseModel):

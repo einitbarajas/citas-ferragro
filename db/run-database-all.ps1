@@ -14,7 +14,10 @@
     7) init/007_nit_10_digits.sql — migración de NIT/IdProveedor a 10 dígitos
     8) init/009_franjas_por_fecha.sql — franjas especiales por fecha exacta
     9) init/010_drop_dias_permitidos_cita.sql — elimina tabla legacy no utilizada
-    10) run-database-crud.ps1 — funciones PL/pgSQL en database-crud/
+    10) init/011_auth_sessions_login_audit.sql — sesiones refresh y auditoría de login
+    11) init/012_db_roles_template.sql — plantilla de roles de BD (opcional)
+    12) init/013_provider_account_status.sql — estado suspendido y purga programada de proveedores
+    13) run-database-crud.ps1 — funciones PL/pgSQL en database-crud/
     11) seeds/003_seed_data.sql — solo con -Seed (TRUNCATE + datos de ejemplo; solo desarrollo)
 
 .PARAMETER DatabaseUrl
@@ -68,7 +71,8 @@ $initSteps = @(
   @{ Label = "009_franjas_por_fecha"; Rel = "init\009_franjas_por_fecha.sql" },
   @{ Label = "010_drop_dias_permitidos_cita"; Rel = "init\010_drop_dias_permitidos_cita.sql" },
   @{ Label = "011_auth_sessions_login_audit"; Rel = "init\011_auth_sessions_login_audit.sql" },
-  @{ Label = "012_db_roles_template"; Rel = "init\012_db_roles_template.sql" }
+  @{ Label = "012_db_roles_template"; Rel = "init\012_db_roles_template.sql" },
+  @{ Label = "013_provider_account_status"; Rel = "init\013_provider_account_status.sql" }
 )
 
 $totalSteps = $initSteps.Count + 1

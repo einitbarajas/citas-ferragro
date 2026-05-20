@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Horas mínimas entre el momento de agendar/reprogramar y el inicio de la cita (proveedor).
     appointment_minimum_notice_hours: int = 24
     reminder_scheduler_interval_seconds: int = 300
+    # Proveedores suspendidos: días hasta purga automática (credenciales, citas, etc.; conserva AuditoriaSistema).
+    provider_purge_after_days: int = 180
+    provider_purge_check_interval_seconds: int = 3600
     rate_limit_per_minute_default: int = 120
     rate_limit_per_minute_auth: int = 20
     # Desactivar (false) solo en entornos de carga/pruebas de estrés; en producción debe quedar activo.

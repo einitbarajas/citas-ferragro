@@ -57,6 +57,8 @@ const adminSteps = [
   { title: "Sección del menú: Administración", description: "Equipo interno, auditoría de cambios y ajustes de tu cuenta.", sidebarMobile: "open" },
   { title: "Ítem: Equipo (Admin / Logística)", description: "Botón del menú para usuarios internos y roles.", moduleTarget: "equipo", sidebarMobile: "open" },
   { title: "Contenido: Equipo", description: "Aquí creas, editas y gestionas roles de Admin/Logística.", moduleTarget: "equipo", scrollMainTop: true, sidebarMobile: "close" },
+  { title: "Ítem: Proveedores", description: "Listado, suspensión y eliminación de cuentas proveedor.", moduleTarget: "proveedores", sidebarMobile: "open" },
+  { title: "Contenido: Proveedores", description: "Filtra por estado, edita datos y suspende o elimina según reglas del portal.", moduleTarget: "proveedores", scrollMainTop: true, sidebarMobile: "close" },
   { title: "Ítem: Auditoría", description: "Botón del menú para trazabilidad de cambios.", moduleTarget: "auditoria", sidebarMobile: "open" },
   { title: "Contenido: Auditoría", description: "Aquí revisas quién cambió qué, cuándo y sobre qué cita.", moduleTarget: "auditoria", scrollMainTop: true, sidebarMobile: "close" },
   { title: "Ítem: Configuraciones", description: "Botón del menú para ajustes de cuenta.", moduleTarget: "configuraciones", sidebarMobile: "open" },

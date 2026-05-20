@@ -22,6 +22,7 @@ export const MODULE_TO_NAV_TOUR_ID = {
   analitica: "nav-analitica",
   horarios: "nav-horarios",
   equipo: "nav-equipo",
+  proveedores: "nav-proveedores",
   auditoria: "nav-auditoria",
 };
 

@@ -26,9 +26,10 @@ from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.services.admin_bootstrap import ensure_production_admin
 from app.services.credential_cleanup import purge_orphan_credentials
+from app.services.provider_purge_scheduler import provider_purge_scheduler_loop
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
-API_BUILD_ID = "2026-05-19-live-v2"
+API_BUILD_ID = "2026-05-20-provider-admin-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -85,13 +86,16 @@ async def lifespan(app: FastAPI):
     _ensure_production_admin_on_startup()
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(reminder_scheduler_loop(stop_event))
+    purge_task = asyncio.create_task(provider_purge_scheduler_loop(stop_event))
     yield
     stop_event.set()
     scheduler_task.cancel()
-    try:
-        await scheduler_task
-    except asyncio.CancelledError:
-        pass
+    purge_task.cancel()
+    for task in (scheduler_task, purge_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
