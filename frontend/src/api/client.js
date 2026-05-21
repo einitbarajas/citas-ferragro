@@ -55,6 +55,26 @@ const UNAUTHORIZED_STATUSES = new Set([401, 403]);
 let refreshPromise = null;
 let accessToken = "";
 
+/** Un solo refresh en vuelo (cookie rota el JTI; llamadas paralelas invalidan el access token). */
+export function refreshAccessToken() {
+  if (!refreshPromise) {
+    refreshPromise = api
+      .post(`${API_PREFIX}/auth/refresh`)
+      .then((refreshResponse) => {
+        const refreshPayload = parseApiResponse(refreshResponse);
+        if (!refreshPayload.success || !refreshPayload?.data?.access_token) {
+          throw new Error(refreshPayload.message || "No se pudo refrescar la sesión");
+        }
+        setAccessToken(refreshPayload.data.access_token);
+        return refreshPayload.data;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
 export function setAccessToken(token) {
   accessToken = String(token || "").trim();
 }
@@ -93,26 +113,11 @@ api.interceptors.response.use(
       !originalRequest._retry
     ) {
       originalRequest._retry = true;
-      if (!refreshPromise) {
-        refreshPromise = api
-          .post(`${API_PREFIX}/auth/refresh`)
-          .then((refreshResponse) => {
-            const refreshPayload = parseApiResponse(refreshResponse);
-            if (!refreshPayload.success || !refreshPayload?.data?.access_token) {
-              throw new Error(refreshPayload.message || "No se pudo refrescar la sesión");
-            }
-            setAccessToken(refreshPayload.data.access_token);
-            return refreshPayload.data.access_token;
-          })
-          .finally(() => {
-            refreshPromise = null;
-          });
-      }
 
       try {
-        const newAccessToken = await refreshPromise;
+        const refreshed = await refreshAccessToken();
         originalRequest.headers = originalRequest.headers || {};
-        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        originalRequest.headers.Authorization = `Bearer ${refreshed.access_token}`;
         return api(originalRequest);
       } catch (refreshError) {
         if (typeof window !== "undefined") {
@@ -166,7 +171,9 @@ export function parseApiError(error) {
   if (typeof payload?.detail === "string" && payload.detail.trim()) {
     const detail = payload.detail.trim();
     if (status === 404 && detail.toLowerCase() === "not found") {
-      return "No se encontró el recurso solicitado. Si acabas de actualizar el sistema, reinicia el backend.";
+      return import.meta.env.PROD
+        ? "El servidor del API en Render está desactualizado respecto al portal. El administrador debe hacer Manual Deploy del servicio ferragro-api (rama main) y esperar estado Live."
+        : "No se encontró el recurso solicitado. Comprueba que el backend local esté en marcha y actualizado.";
     }
     return detail;
   }

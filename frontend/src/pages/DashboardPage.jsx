@@ -7,6 +7,10 @@ import {
   TOUR_DASHBOARD_SIDEBAR_SELECTOR,
 } from "../guidedTour/panelUtils";
 import api, { API_PREFIX, parseApiError, parseApiResponse } from "../api/client";
+import {
+  deriveWarehousesFromAppointments,
+  isApiRouteMissing,
+} from "../api/apiCompatibility";
 import ConfirmDialog from "../components/ConfirmDialog";
 import BrandLogo from "../components/BrandLogo";
 import NotificationCenter from "../components/NotificationCenter";
@@ -706,20 +710,32 @@ export default function DashboardPage() {
     setProviders(items);
   }, [session, authReady, isAdmin]);
 
+  const applyWarehouseList = useCallback((items) => {
+    const list = Array.isArray(items) ? items : [];
+    setWarehouses(list);
+    setSelectedWarehouseId((prev) => {
+      if (prev && list.some((w) => w.id === prev)) return prev;
+      return list[0]?.id ?? null;
+    });
+  }, []);
+
   const loadWarehouses = useCallback(async () => {
     if (!session) return;
-    const response = await api.get(`${API_PREFIX}/crud/warehouses`);
-    const payload = parseApiResponse(response);
-    if (!payload.success) {
-      throw new Error(payload.message);
+    try {
+      const response = await api.get(`${API_PREFIX}/crud/warehouses`);
+      const payload = parseApiResponse(response);
+      if (!payload.success) {
+        throw new Error(payload.message);
+      }
+      applyWarehouseList(payload.data);
+    } catch (err) {
+      if (isApiRouteMissing(err)) {
+        applyWarehouseList([]);
+        return;
+      }
+      throw err;
     }
-    const items = Array.isArray(payload.data) ? payload.data : [];
-    setWarehouses(items);
-    setSelectedWarehouseId((prev) => {
-      if (prev && items.some((w) => w.id === prev)) return prev;
-      return items[0]?.id ?? null;
-    });
-  }, [session]);
+  }, [session, applyWarehouseList]);
 
   const loadWindows = useCallback(async () => {
     if (!session || !selectedWarehouseId) return;
@@ -1105,7 +1121,11 @@ export default function DashboardPage() {
         if (isStaff || isProveedor) tasks.push(loadWarehouses());
         if (isProveedor) tasks.push(loadProviderAppointments());
         tasks.push(loadProfile());
-        await Promise.all(tasks);
+        const results = await Promise.allSettled(tasks);
+        const failed = results.find((r) => r.status === "rejected");
+        if (failed) {
+          throw failed.reason;
+        }
       } catch (err) {
         setError(parseApiError(err));
       }
@@ -1172,6 +1192,13 @@ export default function DashboardPage() {
     providerSelectedDay,
     specialDay,
   ]);
+
+  useEffect(() => {
+    if (!session || !authReady || warehouses.length > 0) return;
+    const derived = deriveWarehousesFromAppointments(appointments);
+    if (derived.length === 0) return;
+    applyWarehouseList(derived);
+  }, [session, authReady, warehouses.length, appointments, applyWarehouseList]);
 
   useEffect(() => {
     if (!session || !authReady) return;
