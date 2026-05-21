@@ -11,6 +11,10 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.audit_log import AuditLog
 from app.models.provider import Provider
 from app.models.user import UserRole
+from app.services.warehouse_scope import assert_warehouse_access, resolve_allowed_warehouse_ids
+
+STAFF_ROLES = (UserRole.admin, UserRole.logistica, UserRole.admin_bodega)
+WAREHOUSE_ADMIN_ROLES = (UserRole.admin, UserRole.admin_bodega)
 from app.core.config import settings
 from app.schemas.appointment import (
     AppointmentCreate,
@@ -239,10 +243,12 @@ def list_warehouse_unload_teams(
     warehouse_id: int = Query(..., ge=1),
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(
-        require_roles(UserRole.proveedor, UserRole.admin, UserRole.logistica)
+        require_roles(UserRole.proveedor, *STAFF_ROLES)
     ),
 ):
     get_active_warehouse_or_raise(db, warehouse_id)
+    if principal.role_name != UserRole.proveedor:
+        assert_warehouse_access(db, principal, warehouse_id)
     teams = list_active_unload_teams(db, warehouse_id, commit=True)
     return ok_response(
         [unload_team_to_dict(t) for t in teams],
@@ -267,10 +273,11 @@ def list_appointments(
     page_size: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(
-        require_roles(UserRole.admin, UserRole.logistica, UserRole.proveedor)
+        require_roles(*STAFF_ROLES, UserRole.proveedor)
     ),
 ):
     finalize_elapsed_appointments(db)
+    allowed = resolve_allowed_warehouse_ids(db, principal)
     stmt = select(Appointment).options(
         joinedload(Appointment.provider),
         joinedload(Appointment.warehouse),
@@ -282,7 +289,12 @@ def list_appointments(
         stmt = stmt.where(Appointment.provider_id == provider_id)
     if principal.role_name != UserRole.proveedor and warehouse_id is not None:
         get_active_warehouse_or_raise(db, warehouse_id)
+        assert_warehouse_access(db, principal, warehouse_id)
         stmt = stmt.where(Appointment.warehouse_id == warehouse_id)
+    elif allowed is not None:
+        if not allowed:
+            return ok_response({"items": [], "total": 0, "page": page, "page_size": page_size}, "Citas obtenidas")
+        stmt = stmt.where(Appointment.warehouse_id.in_(allowed))
 
     if status:
         status_enums = []
@@ -356,11 +368,13 @@ def check_slot_conflict(
     exclude_appointment_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(
-        require_roles(UserRole.admin, UserRole.logistica, UserRole.proveedor)
+        require_roles(*STAFF_ROLES, UserRole.proveedor)
     ),
 ):
     """Indica si no hay cupo de equipos de descarga (muelle y/o equipos del proveedor)."""
     get_active_warehouse_or_raise(db, warehouse_id)
+    if principal.role_name != UserRole.proveedor:
+        assert_warehouse_access(db, principal, warehouse_id)
     provider_id = None
     if principal.role_name == UserRole.proveedor:
         provider_id = int(principal.subject)
@@ -384,11 +398,11 @@ def list_available_slots_for_provider_day(
     exclude_appointment_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(
-        require_roles(UserRole.proveedor, UserRole.admin, UserRole.logistica)
+        require_roles(UserRole.proveedor, *STAFF_ROLES)
     ),
 ):
     tz = ZoneInfo(settings.business_timezone)
-    is_staff = principal.role_name in {UserRole.admin, UserRole.logistica}
+    is_staff = principal.role_name in set(STAFF_ROLES)
     minimum_hours = settings.appointment_minimum_notice_hours
     minimum_start_utc = (
         datetime.min.replace(tzinfo=timezone.utc)
@@ -396,6 +410,8 @@ def list_available_slots_for_provider_day(
         else datetime.now(timezone.utc) + timedelta(hours=minimum_hours)
     )
     get_active_warehouse_or_raise(db, warehouse_id)
+    if principal.role_name != UserRole.proveedor:
+        assert_warehouse_access(db, principal, warehouse_id)
     team = get_unload_team_or_raise(db, warehouse_id, unload_team_id)
     date_windows = list_date_windows_ordered(db, day, warehouse_id, team.id)
     weekly_windows = list_windows_ordered(db, warehouse_id, team.id)
@@ -520,11 +536,12 @@ def update_status(
     appointment_id: int,
     payload: AppointmentUpdateStatus,
     db: Session = Depends(get_db),
-    principal: SecurityPrincipal = Depends(require_roles(UserRole.admin, UserRole.logistica)),
+    principal: SecurityPrincipal = Depends(require_roles(*STAFF_ROLES)),
 ):
     appt = db.get(Appointment, appointment_id)
     if not appt:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
+    assert_warehouse_access(db, principal, appt.warehouse_id)
     _assert_logistics_business_rules(
         db=db,
         appt=appt,
@@ -534,7 +551,7 @@ def update_status(
     if payload.status == AppointmentStatus.cancelado:
         if principal.role_name == UserRole.logistica:
             raise HTTPException(status_code=403, detail="Logística no está autorizada para cancelar citas")
-        if principal.role_name != UserRole.admin:
+        if principal.role_name not in WAREHOUSE_ADMIN_ROLES:
             now_utc = datetime.now(timezone.utc)
             if appt.start_time - now_utc < timedelta(hours=24):
                 raise HTTPException(
@@ -570,11 +587,12 @@ def extend_appointment(
     appointment_id: int,
     payload: AppointmentExtend,
     db: Session = Depends(get_db),
-    principal: SecurityPrincipal = Depends(require_roles(UserRole.admin, UserRole.logistica)),
+    principal: SecurityPrincipal = Depends(require_roles(*STAFF_ROLES)),
 ):
     appt = db.get(Appointment, appointment_id)
     if not appt:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
+    assert_warehouse_access(db, principal, appt.warehouse_id)
     _assert_logistics_business_rules(
         db=db,
         appt=appt,

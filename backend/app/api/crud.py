@@ -82,8 +82,19 @@ from app.services.appointment_windows import (
 )
 from app.services.appointment_service import finalize_elapsed_appointments, reserve_slot_fifo_or_raise
 from app.services.range_bounds import business_local_range_bounds
-
+from app.services.warehouse_scope import (
+    ROLE_ADMIN_BODEGA,
+    assert_warehouse_access,
+    enforce_query_warehouse_id,
+    list_user_warehouse_ids,
+    resolve_allowed_warehouse_ids,
+    sync_user_warehouse_assignments,
+    validate_warehouse_ids_exist,
+)
 router = APIRouter(prefix="/crud", tags=["crud"])
+
+STAFF_APPOINTMENT_ROLES = ("Admin", "Logistica", "AdminBodega")
+WAREHOUSE_OPS_ROLES = ("Admin", "AdminBodega")
 
 
 def _local_day_utc_bounds(target_day: date) -> tuple[datetime, datetime]:
@@ -296,15 +307,47 @@ def _appointment_to_crud_out(appt: Appointment, *, logistics_extend_used: bool =
     ).model_dump()
 
 
-def _user_to_out(user: User) -> UserCrudOut:
+def _user_to_out(user: User, db: Session) -> UserCrudOut:
     email = user.credential.email if user.credential else ""
+    role_name = user.role.name if user.role else ""
+    warehouse_ids = (
+        list_user_warehouse_ids(db, user.document_id) if role_name == ROLE_ADMIN_BODEGA else []
+    )
     return UserCrudOut(
         document_id=user.document_id,
         email=email,
         full_name=user.full_name,
         role_id=user.role_id,
-        role_name=user.role.name if user.role else "",
+        role_name=role_name,
+        warehouse_ids=warehouse_ids,
     )
+
+
+def _resolve_appointment_warehouse_scope(
+    db: Session,
+    principal: SecurityPrincipal,
+    warehouse_id: int | None,
+) -> tuple[int | None, list[int] | None]:
+    allowed = resolve_allowed_warehouse_ids(db, principal)
+    if allowed is None:
+        if warehouse_id is not None:
+            get_active_warehouse_or_raise(db, warehouse_id)
+        return warehouse_id, None
+    wh_filter = enforce_query_warehouse_id(allowed, warehouse_id)
+    if wh_filter is not None:
+        get_active_warehouse_or_raise(db, wh_filter)
+        return wh_filter, None
+    return None, allowed
+
+
+def _validate_user_role_and_warehouses(db: Session, role_name: str, warehouse_ids: list[int]) -> None:
+    if role_name == ROLE_ADMIN_BODEGA:
+        validate_warehouse_ids_exist(db, warehouse_ids)
+    elif warehouse_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Solo el rol AdminBodega puede tener bodegas asignadas.",
+        )
 
 
 def _actor_display(db: Session, actor_id: str) -> tuple[str, str]:
@@ -432,7 +475,7 @@ def list_users(db: Session = Depends(get_db)):
         .scalars()
         .all()
     )
-    data = [_user_to_out(user).model_dump() for user in users]
+    data = [_user_to_out(user, db).model_dump() for user in users]
     return ok_response(data, "Usuarios consultados correctamente")
 
 
@@ -441,7 +484,7 @@ def get_user(document_id: str, db: Session = Depends(get_db)):
     user = db.get(User, document_id)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return ok_response(_user_to_out(user).model_dump(), "Usuario consultado correctamente")
+    return ok_response(_user_to_out(user, db).model_dump(), "Usuario consultado correctamente")
 
 
 @router.post("/users", dependencies=[Depends(require_roles("Admin"))])
@@ -453,11 +496,13 @@ def create_user(
     role = db.get(Role, payload.role_id)
     if not role:
         raise HTTPException(status_code=400, detail="El rol no existe")
-    if role.name not in ("Admin", "Logistica"):
+    if role.name not in ("Admin", "Logistica", ROLE_ADMIN_BODEGA):
         raise HTTPException(
             status_code=400,
-            detail="Solo se pueden crear usuarios internos con rol Admin o Logistica",
+            detail="Solo se pueden crear usuarios internos con rol Admin, Logistica o AdminBodega",
         )
+    warehouse_ids = [int(w) for w in (payload.warehouse_ids or [])]
+    _validate_user_role_and_warehouses(db, role.name, warehouse_ids)
     if db.get(User, payload.document_id):
         raise HTTPException(status_code=400, detail="El documento ya está registrado")
     email = str(payload.email).strip().lower()
@@ -474,6 +519,9 @@ def create_user(
         role_id=payload.role_id,
     )
     db.add(user)
+    db.flush()
+    if role.name == ROLE_ADMIN_BODEGA:
+        sync_user_warehouse_assignments(db, user.document_id, warehouse_ids)
     _log_admin_event(
         db=db,
         actor_id=principal.document_id,
@@ -484,7 +532,7 @@ def create_user(
     db.commit()
     db.refresh(user)
     dispatch_welcome_staff(email, payload.full_name, role.name)
-    return ok_response(_user_to_out(user).model_dump(), "Usuario creado correctamente")
+    return ok_response(_user_to_out(user, db).model_dump(), "Usuario creado correctamente")
 
 
 @router.put("/users/{document_id}", dependencies=[Depends(require_roles("Admin"))])
@@ -499,6 +547,7 @@ def update_user(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     updates = payload.model_dump(exclude_unset=True)
+    warehouse_ids_update = updates.pop("warehouse_ids", None)
     if "role_id" in updates and not db.get(Role, updates["role_id"]):
         raise HTTPException(status_code=400, detail="El rol no existe")
 
@@ -518,6 +567,22 @@ def update_user(
 
     for key, value in updates.items():
         setattr(user, key, value)
+    db.flush()
+    role_name = user.role.name if user.role else ""
+    if warehouse_ids_update is not None:
+        wh_ids = [int(w) for w in warehouse_ids_update]
+        _validate_user_role_and_warehouses(db, role_name, wh_ids)
+        if role_name == ROLE_ADMIN_BODEGA:
+            sync_user_warehouse_assignments(db, user.document_id, wh_ids)
+        else:
+            sync_user_warehouse_assignments(db, user.document_id, [])
+    elif role_name != ROLE_ADMIN_BODEGA:
+        sync_user_warehouse_assignments(db, user.document_id, [])
+    elif not list_user_warehouse_ids(db, user.document_id):
+        raise HTTPException(
+            status_code=400,
+            detail="El administrador de bodega debe tener al menos una bodega asignada.",
+        )
     _log_admin_event(
         db=db,
         actor_id=principal.document_id,
@@ -527,7 +592,7 @@ def update_user(
     )
     db.commit()
     db.refresh(user)
-    return ok_response(_user_to_out(user).model_dump(), "Usuario actualizado correctamente")
+    return ok_response(_user_to_out(user, db).model_dump(), "Usuario actualizado correctamente")
 
 
 @router.delete("/users/{document_id}", dependencies=[Depends(require_roles("Admin"))])
@@ -578,7 +643,7 @@ def admin_release_email(
     )
 
 
-@router.get("/profile/me", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+@router.get("/profile/me", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
 def get_my_profile(
     principal: SecurityPrincipal = Depends(get_security_principal),
     db: Session = Depends(get_db),
@@ -604,7 +669,7 @@ def get_my_profile(
     return ok_response(data, "Perfil consultado correctamente")
 
 
-@router.put("/profile/me", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+@router.put("/profile/me", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
 def update_my_profile(
     payload: ProfileMeUpdate,
     principal: SecurityPrincipal = Depends(get_security_principal),
@@ -625,7 +690,7 @@ def update_my_profile(
     return get_my_profile(principal=principal, db=db)
 
 
-@router.post("/profile/me/change-password", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+@router.post("/profile/me/change-password", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
 def change_my_password(
     payload: ProfilePasswordChange,
     principal: SecurityPrincipal = Depends(get_security_principal),
@@ -639,7 +704,7 @@ def change_my_password(
     return ok_response(None, "Contraseña actualizada correctamente")
 
 
-@router.post("/profile/me/photo", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+@router.post("/profile/me/photo", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
 async def upload_my_profile_photo(
     file: UploadFile = File(...),
     principal: SecurityPrincipal = Depends(get_security_principal),
@@ -664,7 +729,7 @@ async def upload_my_profile_photo(
     return get_my_profile(principal=principal, db=db)
 
 
-@router.delete("/profile/me/photo", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+@router.delete("/profile/me/photo", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
 def clear_my_profile_photo(
     principal: SecurityPrincipal = Depends(get_security_principal),
     db: Session = Depends(get_db),
@@ -874,6 +939,7 @@ def _staff_appointments_select(
     status_list: list[str] | None,
     provider_id: int | None,
     warehouse_id: int | None,
+    allowed_warehouse_ids: list[int] | None = None,
     date_from: date | None,
     date_to: date | None,
     sort_by: str,
@@ -887,6 +953,8 @@ def _staff_appointments_select(
         stmt = stmt.where(Appointment.provider_id == provider_id)
     if warehouse_id is not None:
         stmt = stmt.where(Appointment.warehouse_id == warehouse_id)
+    elif allowed_warehouse_ids is not None:
+        stmt = stmt.where(Appointment.warehouse_id.in_(allowed_warehouse_ids))
 
     if status_list:
         enums = []
@@ -933,9 +1001,10 @@ def _staff_appointments_select(
     return stmt
 
 
-@router.get("/appointments", dependencies=[Depends(require_roles("Admin", "Logistica"))])
+@router.get("/appointments", dependencies=[Depends(require_roles(*STAFF_APPOINTMENT_ROLES))])
 def list_appointments(
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
     mode: str = Query(default="list", pattern="^(list|day|week|biweekly|month)$"),
     day: date | None = None,
     month: int | None = Query(default=None, ge=1, le=12),
@@ -951,8 +1020,7 @@ def list_appointments(
     page_size: int = Query(default=50, ge=1, le=200),
 ):
     finalize_elapsed_appointments(db)
-    if warehouse_id is not None:
-        get_active_warehouse_or_raise(db, warehouse_id)
+    wh_filter, scope_ids = _resolve_appointment_warehouse_scope(db, principal, warehouse_id)
     stmt = _staff_appointments_select(
         mode=mode,
         day=day,
@@ -960,7 +1028,8 @@ def list_appointments(
         year=year,
         status_list=status,
         provider_id=provider_id,
-        warehouse_id=warehouse_id,
+        warehouse_id=wh_filter,
+        allowed_warehouse_ids=scope_ids,
         date_from=date_from,
         date_to=date_to,
         sort_by=sort_by,
@@ -984,9 +1053,10 @@ def list_appointments(
     )
 
 
-@router.get("/appointments/export.xlsx", dependencies=[Depends(require_roles("Admin", "Logistica"))])
+@router.get("/appointments/export.xlsx", dependencies=[Depends(require_roles(*STAFF_APPOINTMENT_ROLES))])
 def export_appointments_xlsx(
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
     mode: str = Query(default="list", pattern="^(list|day|week|biweekly|month)$"),
     day: date | None = None,
     month: int | None = Query(default=None, ge=1, le=12),
@@ -1000,8 +1070,7 @@ def export_appointments_xlsx(
     sort_dir: str = Query(default="asc", pattern="^(asc|desc)$"),
 ):
     finalize_elapsed_appointments(db)
-    if warehouse_id is not None:
-        get_active_warehouse_or_raise(db, warehouse_id)
+    wh_filter, scope_ids = _resolve_appointment_warehouse_scope(db, principal, warehouse_id)
     stmt = _staff_appointments_select(
         mode=mode,
         day=day,
@@ -1009,7 +1078,8 @@ def export_appointments_xlsx(
         year=year,
         status_list=status,
         provider_id=provider_id,
-        warehouse_id=warehouse_id,
+        warehouse_id=wh_filter,
+        allowed_warehouse_ids=scope_ids,
         date_from=date_from,
         date_to=date_to,
         sort_by=sort_by,
@@ -1056,8 +1126,12 @@ def export_appointments_xlsx(
     )
 
 
-@router.get("/appointments/{appointment_id}", dependencies=[Depends(require_roles("Admin", "Logistica"))])
-def get_appointment(appointment_id: int, db: Session = Depends(get_db)):
+@router.get("/appointments/{appointment_id}", dependencies=[Depends(require_roles(*STAFF_APPOINTMENT_ROLES))])
+def get_appointment(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
+):
     finalize_elapsed_appointments(db)
     appointment = db.execute(
         select(Appointment)
@@ -1066,6 +1140,7 @@ def get_appointment(appointment_id: int, db: Session = Depends(get_db)):
     ).unique().scalar_one_or_none()
     if not appointment:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
+    assert_warehouse_access(db, principal, appointment.warehouse_id)
     extended_ids = _appointment_ids_with_logistics_extend(db, [appointment.id])
     return ok_response(
         _appointment_to_crud_out(appointment, logistics_extend_used=appointment.id in extended_ids),
@@ -1073,14 +1148,16 @@ def get_appointment(appointment_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/appointments", dependencies=[Depends(require_roles("Admin"))])
+@router.post("/appointments", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
 def create_appointment(
     payload: AppointmentIn,
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
 ):
     if not db.get(Provider, payload.provider_id):
         raise HTTPException(status_code=400, detail="El proveedor no existe")
     get_active_warehouse_or_raise(db, payload.warehouse_id)
+    assert_warehouse_access(db, principal, payload.warehouse_id)
     from app.services.unload_teams import get_unload_team_or_raise, list_active_unload_teams
 
     teams = list_active_unload_teams(db, payload.warehouse_id)
@@ -1114,7 +1191,7 @@ def create_appointment(
     return ok_response(_appointment_to_crud_out(appointment), "Cita creada correctamente")
 
 
-@router.put("/appointments/{appointment_id}", dependencies=[Depends(require_roles("Admin", "Logistica"))])
+@router.put("/appointments/{appointment_id}", dependencies=[Depends(require_roles(*STAFF_APPOINTMENT_ROLES))])
 def update_appointment(
     appointment_id: int,
     payload: AppointmentUpdate,
@@ -1124,11 +1201,13 @@ def update_appointment(
     appointment = db.get(Appointment, appointment_id)
     if not appointment:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
+    assert_warehouse_access(db, principal, appointment.warehouse_id)
     updates = payload.model_dump(exclude_unset=True)
     if "provider_id" in updates and not db.get(Provider, updates["provider_id"]):
         raise HTTPException(status_code=400, detail="El proveedor no existe")
     if "warehouse_id" in updates:
         get_active_warehouse_or_raise(db, updates["warehouse_id"])
+        assert_warehouse_access(db, principal, updates["warehouse_id"])
     next_start = updates.get("start_time", appointment.start_time)
     next_duration = updates.get("duration_minutes", appointment.duration_minutes)
     next_warehouse = updates.get("warehouse_id", appointment.warehouse_id)
@@ -1193,14 +1272,20 @@ def update_appointment(
     return ok_response(_appointment_to_crud_out(appointment), "Cita actualizada correctamente")
 
 
-@router.get("/warehouses", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+@router.get("/warehouses", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
 def list_warehouses(
     active_only: bool = Query(default=True),
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
 ):
     stmt = select(Warehouse).order_by(Warehouse.sort_order, Warehouse.id)
     if active_only:
         stmt = stmt.where(Warehouse.active.is_(True))
+    allowed = resolve_allowed_warehouse_ids(db, principal)
+    if allowed is not None:
+        if not allowed:
+            return ok_response([], "Bodegas consultadas correctamente")
+        stmt = stmt.where(Warehouse.id.in_(allowed))
     rows = db.execute(stmt).scalars().all()
     return ok_response(
         [_warehouse_to_out(w) for w in rows],
@@ -1230,12 +1315,14 @@ def create_warehouse(payload: WarehouseIn, db: Session = Depends(get_db)):
     return ok_response(_warehouse_to_out(warehouse), "Bodega creada correctamente")
 
 
-@router.put("/warehouses/{warehouse_id}", dependencies=[Depends(require_roles("Admin"))])
+@router.put("/warehouses/{warehouse_id}", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
 def update_warehouse(
     warehouse_id: int,
     payload: WarehouseUpdate,
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
 ):
+    assert_warehouse_access(db, principal, warehouse_id)
     warehouse = db.get(Warehouse, warehouse_id)
     if not warehouse:
         raise HTTPException(status_code=404, detail="Bodega no encontrada")
@@ -1262,18 +1349,20 @@ def update_warehouse(
 
 @router.put(
     "/warehouses/{warehouse_id}/unload-teams",
-    dependencies=[Depends(require_roles("Admin"))],
+    dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))],
 )
 def update_warehouse_unload_team_names(
     warehouse_id: int,
     payload: WarehouseUnloadTeamsNamesIn,
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
 ):
     from app.services.unload_teams import (
         unload_team_to_dict,
         update_warehouse_unload_team_names as apply_team_names,
     )
 
+    assert_warehouse_access(db, principal, warehouse_id)
     if not db.get(Warehouse, warehouse_id):
         raise HTTPException(status_code=404, detail="Bodega no encontrada")
     name_by_id = {item.id: item.name for item in payload.teams}
@@ -1298,23 +1387,30 @@ def deactivate_warehouse(warehouse_id: int, db: Session = Depends(get_db)):
     return ok_response(_warehouse_to_out(warehouse), "Bodega desactivada correctamente")
 
 
-@router.delete("/appointments/{appointment_id}", dependencies=[Depends(require_roles("Admin"))])
-def delete_appointment(appointment_id: int, db: Session = Depends(get_db)):
+@router.delete("/appointments/{appointment_id}", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
+def delete_appointment(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
+):
     appointment = db.get(Appointment, appointment_id)
     if not appointment:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
+    assert_warehouse_access(db, principal, appointment.warehouse_id)
     db.delete(appointment)
     db.commit()
     return ok_response(None, "Cita eliminada correctamente")
 
 
-@router.get("/appointment-franjas", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+@router.get("/appointment-franjas", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
 def list_appointment_franjas(
     warehouse_id: int = Query(..., ge=1),
     unload_team_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
 ):
     get_active_warehouse_or_raise(db, warehouse_id)
+    assert_warehouse_access(db, principal, warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, warehouse_id, unload_team_id)
     wins = list_windows_ordered(db, warehouse_id, team_id)
     data = [_window_to_out(w) for w in wins]
@@ -1330,14 +1426,16 @@ def list_appointment_franjas(
     )
 
 
-@router.get("/appointment-franjas/resolved", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+@router.get("/appointment-franjas/resolved", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
 def get_resolved_appointment_franjas(
     day: date = Query(...),
     warehouse_id: int = Query(..., ge=1),
     unload_team_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
 ):
     get_active_warehouse_or_raise(db, warehouse_id)
+    assert_warehouse_access(db, principal, warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, warehouse_id, unload_team_id)
     date_windows = list_date_windows_ordered(db, day, warehouse_id, team_id)
     if date_windows:
@@ -1360,9 +1458,14 @@ def get_resolved_appointment_franjas(
     )
 
 
-@router.put("/appointment-franjas", dependencies=[Depends(require_roles("Admin"))])
-def replace_appointment_franjas(payload: AppointmentWindowsReplace, db: Session = Depends(get_db)):
+@router.put("/appointment-franjas", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
+def replace_appointment_franjas(
+    payload: AppointmentWindowsReplace,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
+):
     get_active_warehouse_or_raise(db, payload.warehouse_id)
+    assert_warehouse_access(db, principal, payload.warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, payload.warehouse_id, payload.unload_team_id, required=True)
     parsed = _parse_and_validate_windows(payload.franjas, "Franjas semanales inválidas")
     _assert_weekly_windows_do_not_break_existing_appointments(
@@ -1382,14 +1485,16 @@ def replace_appointment_franjas(payload: AppointmentWindowsReplace, db: Session 
     )
 
 
-@router.get("/appointment-franjas/fecha", dependencies=[Depends(require_roles("Admin"))])
+@router.get("/appointment-franjas/fecha", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
 def list_appointment_franjas_for_date(
     day: date = Query(...),
     warehouse_id: int = Query(..., ge=1),
     unload_team_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
 ):
     get_active_warehouse_or_raise(db, warehouse_id)
+    assert_warehouse_access(db, principal, warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, warehouse_id, unload_team_id)
     tz = ZoneInfo(settings.business_timezone)
     local_today = datetime.now(tz).date()
@@ -1411,15 +1516,17 @@ def list_appointment_franjas_for_date(
     )
 
 
-@router.get("/appointment-franjas/fecha/resumen", dependencies=[Depends(require_roles("Admin", "Logistica", "Proveedor"))])
+@router.get("/appointment-franjas/fecha/resumen", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
 def list_appointment_franjas_date_summary(
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
     warehouse_id: int = Query(..., ge=1),
     unload_team_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
 ):
     get_active_warehouse_or_raise(db, warehouse_id)
+    assert_warehouse_access(db, principal, warehouse_id)
     start_day = date(year, month, 1)
     if month == 12:
         end_day = date(year + 1, 1, 1)
@@ -1469,10 +1576,15 @@ def list_appointment_franjas_date_summary(
     )
 
 
-@router.put("/appointment-franjas/fecha", dependencies=[Depends(require_roles("Admin"))])
-def replace_appointment_franjas_for_date(payload: AppointmentDateWindowReplace, db: Session = Depends(get_db)):
+@router.put("/appointment-franjas/fecha", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
+def replace_appointment_franjas_for_date(
+    payload: AppointmentDateWindowReplace,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
+):
     day = datetime.strptime(payload.day, "%Y-%m-%d").date()
     get_active_warehouse_or_raise(db, payload.warehouse_id)
+    assert_warehouse_access(db, principal, payload.warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, payload.warehouse_id, payload.unload_team_id, required=True)
     tz = ZoneInfo(settings.business_timezone)
     local_today = datetime.now(tz).date()
@@ -1492,14 +1604,16 @@ def replace_appointment_franjas_for_date(payload: AppointmentDateWindowReplace, 
     )
 
 
-@router.delete("/appointment-franjas/fecha", dependencies=[Depends(require_roles("Admin"))])
+@router.delete("/appointment-franjas/fecha", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
 def delete_appointment_franjas_for_date(
     day: date = Query(...),
     warehouse_id: int = Query(..., ge=1),
     unload_team_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
 ):
     get_active_warehouse_or_raise(db, warehouse_id)
+    assert_warehouse_access(db, principal, warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, warehouse_id, unload_team_id, required=True)
     tz = ZoneInfo(settings.business_timezone)
     local_today = datetime.now(tz).date()
@@ -1517,9 +1631,14 @@ def delete_appointment_franjas_for_date(
     )
 
 
-@router.put("/appointment-franjas/fecha/lote", dependencies=[Depends(require_roles("Admin"))])
-def replace_appointment_franjas_for_date_bulk(payload: AppointmentDateWindowBulkReplace, db: Session = Depends(get_db)):
+@router.put("/appointment-franjas/fecha/lote", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
+def replace_appointment_franjas_for_date_bulk(
+    payload: AppointmentDateWindowBulkReplace,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
+):
     get_active_warehouse_or_raise(db, payload.warehouse_id)
+    assert_warehouse_access(db, principal, payload.warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, payload.warehouse_id, payload.unload_team_id, required=True)
     start_day = datetime.strptime(payload.start_day, "%Y-%m-%d").date()
     end_day = datetime.strptime(payload.end_day, "%Y-%m-%d").date()
@@ -1712,7 +1831,7 @@ def analytics_summary(
     return ok_response(out.model_dump(), "Analítica generada correctamente")
 
 
-@router.get("/reminders", dependencies=[Depends(require_roles("Admin", "Logistica"))])
+@router.get("/reminders", dependencies=[Depends(require_roles(*STAFF_APPOINTMENT_ROLES))])
 def list_reminders(
     db: Session = Depends(get_db),
     appointment_id: int | None = Query(default=None),

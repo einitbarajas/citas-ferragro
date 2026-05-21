@@ -8,6 +8,7 @@ class UserRole:
     """Nombres de rol en BD (tabla Rol)."""
 
     admin = "Admin"
+    admin_bodega = "AdminBodega"
     logistica = "Logistica"
     proveedor = "Proveedor"
 

@@ -1,5 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import api, { AUTH_EXPIRED_EVENT, API_PREFIX, clearAccessToken, getAccessToken, setAccessToken } from "../api/client";
+import api, {
+  AUTH_EXPIRED_EVENT,
+  API_PREFIX,
+  clearAccessToken,
+  getAccessToken,
+  refreshAccessToken,
+  setAccessToken,
+} from "../api/client";
 
 const AuthContext = createContext(null);
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
@@ -56,13 +63,8 @@ export function AuthProvider({ children }) {
         return;
       }
       try {
-        const refreshResponse = await api.post(`${API_PREFIX}/auth/refresh`);
-        const payload = refreshResponse?.data;
-        if (!payload?.success || !payload?.data?.access_token) {
-          throw new Error("No se pudo recuperar sesión");
-        }
-        setAccessToken(payload.data.access_token);
-        const role = payload?.data?.role || sessionStorage.getItem("role") || "";
+        const refreshed = await refreshAccessToken();
+        const role = refreshed?.role || sessionStorage.getItem("role") || "";
         const email = sessionStorage.getItem("user_email");
         if (role) {
           sessionStorage.setItem("role", role);
@@ -108,13 +110,8 @@ export function AuthProvider({ children }) {
       return;
     }
     try {
-      const refreshResponse = await api.post(`${API_PREFIX}/auth/refresh`);
-      const payload = refreshResponse?.data;
-      if (!payload?.success || !payload?.data?.access_token) {
-        throw new Error(payload?.message || "No se pudo recuperar sesión");
-      }
-      setAccessToken(payload.data.access_token);
-      const role = payload?.data?.role || storedRole || "";
+      const refreshed = await refreshAccessToken();
+      const role = refreshed?.role || storedRole || sessionStorage.getItem("role") || "";
       const email = sessionStorage.getItem("user_email");
       if (role) {
         sessionStorage.setItem("role", role);

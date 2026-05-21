@@ -23,6 +23,7 @@ class UserIn(BaseModel):
     full_name: str = Field(min_length=3, max_length=120)
     password: str = Field(min_length=6, max_length=100)
     role_id: int
+    warehouse_ids: list[int] = Field(default_factory=list)
 
 
 class UserUpdate(BaseModel):
@@ -30,6 +31,7 @@ class UserUpdate(BaseModel):
     full_name: str | None = Field(default=None, min_length=3, max_length=120)
     password: str | None = Field(default=None, min_length=6, max_length=100)
     role_id: int | None = None
+    warehouse_ids: list[int] | None = None
 
 
 class UserCrudOut(BaseModel):
@@ -38,6 +40,7 @@ class UserCrudOut(BaseModel):
     full_name: str
     role_id: int
     role_name: str
+    warehouse_ids: list[int] = Field(default_factory=list)
 
 
 class ProviderIn(BaseModel):

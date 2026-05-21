@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS "Credenciales" (
 );
 
 INSERT INTO "Rol" ("Nombre")
-VALUES ('Admin'), ('Logistica'), ('Proveedor')
+VALUES ('Admin'), ('Logistica'), ('Proveedor'), ('AdminBodega')
 ON CONFLICT ("Nombre") DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS "Usuarios" (

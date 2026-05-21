@@ -24,3 +24,5 @@ frontend/dist/
 
 # Artefactos generados por scripts de docs
 docs/_req_dump.json
+
+.vercel

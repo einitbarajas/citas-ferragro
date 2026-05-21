@@ -51,12 +51,19 @@ const api = axios.create({
 });
 
 export const AUTH_EXPIRED_EVENT = "auth:expired";
-const UNAUTHORIZED_STATUSES = new Set([401, 403]);
 let refreshPromise = null;
 let accessToken = "";
 
+function hasLocalSessionHint() {
+  if (typeof window === "undefined") return true;
+  return Boolean(sessionStorage.getItem("role") || sessionStorage.getItem("last_activity_at"));
+}
+
 /** Un solo refresh en vuelo (cookie rota el JTI; llamadas paralelas invalidan el access token). */
 export function refreshAccessToken() {
+  if (!hasLocalSessionHint()) {
+    return Promise.reject(new Error("No hay sesión local para refrescar"));
+  }
   if (!refreshPromise) {
     refreshPromise = api
       .post(`${API_PREFIX}/auth/refresh`)
@@ -81,6 +88,7 @@ export function setAccessToken(token) {
 
 export function clearAccessToken() {
   accessToken = "";
+  refreshPromise = null;
 }
 
 export function getAccessToken() {
@@ -109,8 +117,9 @@ api.interceptors.response.use(
       !isRefreshRequest &&
       !isLoginRequest &&
       !isLogoutRequest &&
-      UNAUTHORIZED_STATUSES.has(status) &&
-      !originalRequest._retry
+      status === 401 &&
+      !originalRequest._retry &&
+      hasLocalSessionHint()
     ) {
       originalRequest._retry = true;
 
@@ -127,7 +136,7 @@ api.interceptors.response.use(
       }
     }
 
-    if (status === 401 && typeof window !== "undefined") {
+    if (status === 401 && typeof window !== "undefined" && hasLocalSessionHint() && !isLogoutRequest) {
       window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
     }
     return Promise.reject(error);

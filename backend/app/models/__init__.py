@@ -16,6 +16,7 @@ from app.models.reminder_run import ReminderExecution
 from app.models.user_notification import UserNotification
 from app.models.role import Role
 from app.models.user import User, UserRole
+from app.models.user_warehouse import UserWarehouse
 
 __all__ = [
     "Role",
@@ -39,4 +40,5 @@ __all__ = [
     "PasswordResetState",
     "ReminderExecution",
     "UserNotification",
+    "UserWarehouse",
 ]

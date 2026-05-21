@@ -98,6 +98,25 @@ const ADMIN_NAV = [
   { type: "item", id: "configuraciones", label: "Configuraciones" },
 ];
 
+/** Panel operativo por bodega(s) asignadas (sin administración global). */
+const ADMIN_BODEGA_NAV = [
+  { type: "label", text: "Principal" },
+  { type: "item", id: "citas", label: "Citas" },
+  { type: "item", id: "buscar_citas", label: "Buscar citas" },
+  { type: "item", id: "revision_citas", label: "Revision de citas" },
+  { type: "label", text: "Operación" },
+  { type: "item", id: "bodegas", label: "Bodegas" },
+  { type: "item", id: "horarios", label: "Franjas horarias" },
+  { type: "item", id: "configuraciones", label: "Configuraciones" },
+];
+
+const ROLE_LABELS = {
+  Admin: "Administrador",
+  AdminBodega: "Administrador de bodega",
+  Logistica: "Logística",
+  Proveedor: "Proveedor",
+};
+
 const card = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
 const inlay = "rounded-lg border border-slate-200 bg-slate-50/90 p-4";
 const TOAST_AUTO_DISMISS_MS = 5000;
@@ -306,6 +325,8 @@ export default function DashboardPage() {
   const [nuPass, setNuPass] = useState("");
   const [nuPassConfirm, setNuPassConfirm] = useState("");
   const [nuRoleId, setNuRoleId] = useState("");
+  const [nuWarehouseIds, setNuWarehouseIds] = useState([]);
+  const [editUserWarehouseIds, setEditUserWarehouseIds] = useState([]);
   const [staffNameFilter, setStaffNameFilter] = useState("");
   const [staffRoleFilter, setStaffRoleFilter] = useState("");
   const [showNuPass, setShowNuPass] = useState(false);
@@ -436,7 +457,10 @@ export default function DashboardPage() {
     return MODULE_TO_NAV_TOUR_ID[step.moduleTarget] || "";
   }, [panelGuidedOpen, panelGuidedIndex, panelGuidedSteps]);
 
-  const isAdmin = session?.role === "Admin";
+  const isGlobalAdmin = session?.role === "Admin";
+  const isWarehouseAdmin = session?.role === "AdminBodega";
+  const isAdmin = isGlobalAdmin;
+  const isAdminPanel = isGlobalAdmin || isWarehouseAdmin;
   const isLogistica = session?.role === "Logistica";
   const isProveedor = session?.role === "Proveedor";
 
@@ -463,10 +487,18 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const isStaff = isLogistica || isAdmin;
+  const isStaff = isLogistica || isAdminPanel;
+  const adminNavEntries = isWarehouseAdmin ? ADMIN_BODEGA_NAV : ADMIN_NAV;
 
-  const internalRolesOnly = roles.filter((r) => r.name === "Admin" || r.name === "Logistica");
-  const staffUsersOnly = internalUsers.filter((u) => u.role_name === "Admin" || u.role_name === "Logistica");
+  const internalRolesOnly = roles.filter((r) =>
+    ["Admin", "Logistica", "AdminBodega"].includes(r.name)
+  );
+  const staffUsersOnly = internalUsers.filter((u) =>
+    ["Admin", "Logistica", "AdminBodega"].includes(u.role_name)
+  );
+  const nuRoleName = internalRolesOnly.find((r) => String(r.id) === String(nuRoleId))?.name || "";
+  const editRoleName =
+    internalRolesOnly.find((r) => String(r.id) === String(editUserRoleId))?.name || "";
   const filteredProviders = useMemo(() => {
     const q = providerFilter.trim().toLowerCase();
     const nitQ = providerFilter.replace(/\D/g, "");
@@ -546,7 +578,7 @@ export default function DashboardPage() {
       else if (step.sidebarMobile === "close") setMobileNavOpen(false);
     }
     if (step.moduleTarget) {
-      if (isAdmin) setAdminTab(step.moduleTarget);
+      if (isAdminPanel) setAdminTab(step.moduleTarget);
       if (isLogistica) setLogisticaTab(step.moduleTarget);
       if (isProveedor) setProveedorTab(step.moduleTarget);
     }
@@ -572,7 +604,7 @@ export default function DashboardPage() {
       setPanelTourLayout(true);
       setMobileNavOpen(true);
     }
-    if (isAdmin) setAdminTab("citas");
+    if (isAdminPanel) setAdminTab("citas");
     if (isLogistica) setLogisticaTab("citas");
     if (isProveedor) setProveedorTab("inicio");
 
@@ -588,9 +620,9 @@ export default function DashboardPage() {
   }, [isAdmin, isLogistica, isProveedor]);
 
   const loadAppointments = useCallback(async () => {
-    if (!session || !authReady || (!isAdmin && !isLogistica)) return;
+    if (!session || !authReady || !isStaff) return;
     const isRevisionTabActive =
-      (isAdmin && adminTab === "revision_citas") || (isLogistica && logisticaTab === "revision_citas");
+      (isAdminPanel && adminTab === "revision_citas") || (isLogistica && logisticaTab === "revision_citas");
     const requestMode = isRevisionTabActive ? "list" : viewMode;
     const buildParams = (mode) => {
       const effectiveMode = mode === "list" && !isRevisionTabActive ? "week" : mode;
@@ -650,7 +682,7 @@ export default function DashboardPage() {
   ]);
 
   const loadLogs = useCallback(async () => {
-    if (!session || (!isAdmin && !isLogistica)) return;
+    if (!session || !isStaff) return;
     const params = new URLSearchParams();
     if (auditActorId.trim()) {
       params.set("actor_id", auditActorId.trim());
@@ -799,7 +831,7 @@ export default function DashboardPage() {
 
   const loadSpecialDayWindows = useCallback(
     async (day) => {
-      if (!session || !isAdmin || !day || !selectedWarehouseId) return;
+      if (!session || !isAdminPanel || !day || !selectedWarehouseId) return;
       const params = new URLSearchParams({
         day: String(day),
         warehouse_id: String(selectedWarehouseId),
@@ -827,9 +859,9 @@ export default function DashboardPage() {
   );
 
   useEffect(() => {
-    if (!isAdmin || adminTab !== "horarios" || !specialDay) return;
+    if (!isAdminPanel || adminTab !== "horarios" || !specialDay) return;
     void loadSpecialDayWindows(specialDay);
-  }, [isAdmin, adminTab, specialDay, activeAdminFranjaTeamId, loadSpecialDayWindows]);
+  }, [isAdminPanel, adminTab, specialDay, activeAdminFranjaTeamId, loadSpecialDayWindows]);
 
   const loadProviderAppointments = useCallback(async () => {
     if (!session || !isProveedor) return;
@@ -986,7 +1018,7 @@ export default function DashboardPage() {
 
   const loadCalendarOverrideSummary = useCallback(
     async (targetDate) => {
-      if (!session || !isAdmin || !targetDate || !selectedWarehouseId) return;
+      if (!session || !isAdminPanel || !targetDate || !selectedWarehouseId) return;
       const year = targetDate.getFullYear();
       const month = targetDate.getMonth() + 1;
       const params = new URLSearchParams({
@@ -1163,7 +1195,7 @@ export default function DashboardPage() {
           await loadProviderMonthAvailability(provCal);
           if (providerSelectedDay) await loadProviderDayAvailability(providerSelectedDay);
         }
-        if (isAdmin && adminTab === "horarios") {
+        if (isAdminPanel && adminTab === "horarios") {
           await loadSpecialDayWindows(specialDay);
           const now = new Date();
           const adminCal = new Date(now.getFullYear(), now.getMonth() + calendarMonthOffset, 1);
@@ -1283,7 +1315,7 @@ export default function DashboardPage() {
   ]);
 
   useEffect(() => {
-    if (!isAdmin || adminTab !== "horarios") return;
+    if (!isAdminPanel || adminTab !== "horarios") return;
     const run = async () => {
       try {
         await loadSpecialDayWindows(specialDay);
@@ -1295,7 +1327,7 @@ export default function DashboardPage() {
   }, [isAdmin, adminTab, specialDay, loadSpecialDayWindows]);
 
   useEffect(() => {
-    if (!isAdmin || adminTab !== "horarios") return;
+    if (!isAdminPanel || adminTab !== "horarios") return;
     const run = async () => {
       try {
         const now = new Date();
@@ -1390,8 +1422,13 @@ export default function DashboardPage() {
   }, [isAdmin, adminTab, loadProviders]);
 
   useEffect(() => {
+    if (!isGlobalAdmin || adminTab !== "equipo") return;
+    void loadWarehouses();
+  }, [isGlobalAdmin, adminTab, loadWarehouses]);
+
+  useEffect(() => {
     // Evita que el navegador/autofill deje valores viejos al entrar al formulario.
-    if (isAdmin && adminTab === "equipo") {
+    if (isGlobalAdmin && adminTab === "equipo") {
       setNuDoc("");
       setNuEmail("");
       setNuName("");
@@ -1649,18 +1686,25 @@ export default function DashboardPage() {
         setError(strengthError);
         return;
       }
+      const warehouseIds = nuWarehouseIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
+      if (nuRoleName === "AdminBodega" && warehouseIds.length === 0) {
+        setError("Selecciona al menos una bodega para el administrador de bodega.");
+        return;
+      }
       await api.post(`${API_PREFIX}/crud/users`, {
         document_id: nuDoc.trim(),
         email: nuEmail.trim(),
         full_name: nuName.trim(),
         password: nuPass,
         role_id: Number(nuRoleId),
+        warehouse_ids: warehouseIds,
       });
       setNuDoc("");
       setNuEmail("");
       setNuName("");
       setNuPass("");
       setNuPassConfirm("");
+      setNuWarehouseIds([]);
       await loadInternalUsers();
       setTeamMessage("Usuario creado correctamente.");
       setSuccess("Usuario creado exitosamente.");
@@ -1677,6 +1721,9 @@ export default function DashboardPage() {
     setEditUserEmail(u.email || "");
     const matchedRole = internalRolesOnly.find((r) => r.name === u.role_name);
     setEditUserRoleId(matchedRole ? String(matchedRole.id) : "");
+    setEditUserWarehouseIds(
+      Array.isArray(u.warehouse_ids) ? u.warehouse_ids.map((id) => String(id)) : []
+    );
   };
 
   const onCancelEditUser = () => {
@@ -1684,6 +1731,7 @@ export default function DashboardPage() {
     setEditUserName("");
     setEditUserEmail("");
     setEditUserRoleId("");
+    setEditUserWarehouseIds([]);
   };
 
   const onSaveEditUser = async (documentId) => {
@@ -1691,10 +1739,18 @@ export default function DashboardPage() {
       setError("");
       setSuccess("");
       setTeamMessage("");
+      const warehouseIds = editUserWarehouseIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (editRoleName === "AdminBodega" && warehouseIds.length === 0) {
+        setError("Selecciona al menos una bodega para el administrador de bodega.");
+        return;
+      }
       await api.put(`${API_PREFIX}/crud/users/${documentId}`, {
         full_name: editUserName.trim(),
         email: editUserEmail.trim(),
         role_id: Number(editUserRoleId),
+        warehouse_ids: warehouseIds,
       });
       await loadInternalUsers();
       onCancelEditUser();
@@ -2375,12 +2431,13 @@ export default function DashboardPage() {
     [isAdmin, isLogistica, isProveedor]
   );
 
-  const showCitasSection = isStaff && (!isAdmin || adminTab === "citas") && (!isLogistica || logisticaTab === "citas");
+  const showCitasSection =
+    isStaff && (!isAdminPanel || adminTab === "citas") && (!isLogistica || logisticaTab === "citas");
   const showBuscarCitasSection = isStaff && (adminTab === "buscar_citas" || (isLogistica && logisticaTab === "buscar_citas"));
   const showRevisionSection = isStaff && (adminTab === "revision_citas" || (isLogistica && logisticaTab === "revision_citas"));
   const showLogisticaHistorial = isLogistica && logisticaTab === "historial";
   const showConfiguraciones =
-    (isAdmin && adminTab === "configuraciones") ||
+    (isAdminPanel && adminTab === "configuraciones") ||
     (isLogistica && logisticaTab === "configuraciones") ||
     (isProveedor && proveedorTab === "configuraciones");
 
@@ -2609,7 +2666,16 @@ export default function DashboardPage() {
       <div className="border-b border-slate-100 px-4 py-5" data-tour="sidebar-brand">
         <div>
           <BrandLogo className="h-16 sm:h-20" />
-          <p className="text-[11px] text-slate-600">Panel {isAdmin ? "administrador" : isLogistica ? "logística" : "proveedor"}</p>
+          <p className="text-[11px] text-slate-600">
+            Panel{" "}
+            {isGlobalAdmin
+              ? "administrador"
+              : isWarehouseAdmin
+                ? "administrador de bodega"
+                : isLogistica
+                  ? "logística"
+                  : "proveedor"}
+          </p>
         </div>
       </div>
 
@@ -2691,8 +2757,8 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {isAdmin &&
-          ADMIN_NAV.map((entry, idx) =>
+        {isAdminPanel &&
+          adminNavEntries.map((entry, idx) =>
             entry.type === "label" ? (
               <p
                 key={`l-${idx}`}
@@ -2756,8 +2822,10 @@ export default function DashboardPage() {
       <p className="text-xs font-medium uppercase tracking-wide text-emerald-600">{activeNavLabel}</p>
       <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">{saludoHorario()}</h1>
       <p className="mt-2 max-w-2xl text-sm text-slate-600">
-        {isAdmin &&
+        {isGlobalAdmin &&
           "Gestiona citas de entrega, franjas horarias, equipo interno, proveedores y auditoría desde un solo panel."}
+        {isWarehouseAdmin &&
+          "Gestiona citas, bodegas asignadas y franjas horarias de tus bodegas."}
         {isLogistica && "Coordina citas con proveedores y revisa el historial de cambios."}
         {isProveedor && "Consulta información de tu cuenta. Para nuevas citas, contacta a logística o usa los canales acordados."}
       </p>
@@ -3332,7 +3400,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {isAdmin && adminTab === "analitica" && (
+        {isGlobalAdmin && adminTab === "analitica" && (
           <div className={card}>
             <h2 className="mb-4 text-lg font-semibold text-slate-900">Analítica</h2>
             <div className="mb-4 grid gap-3 sm:grid-cols-2">
@@ -3446,42 +3514,49 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {isAdmin && adminTab === "bodegas" && (
+        {isAdminPanel && adminTab === "bodegas" && (
           <div className={card}>
             <h2 className="mb-2 text-lg font-semibold text-slate-900">Bodegas de entrega</h2>
             <p className="mb-4 text-xs text-slate-600">
               Cada bodega tiene su calendario de turnos y <strong>equipos de descarga</strong> (citas simultáneas en el mismo horario).
               Cambia <em>Equipos</em> o abre <strong>Nombres de muelles</strong> y pulsa <strong>Aplicar cambios</strong> en esa fila.
             </p>
-            <form className="mb-6 grid gap-2 md:grid-cols-3" onSubmit={onCreateWarehouse}>
-              <input
-                className={input}
-                placeholder="Nombre de la bodega"
-                value={newWarehouseName}
-                onChange={(e) => setNewWarehouseName(e.target.value)}
-                required
-              />
-              <input
-                className={input}
-                placeholder="Dirección (opcional)"
-                value={newWarehouseAddress}
-                onChange={(e) => setNewWarehouseAddress(e.target.value)}
-              />
-              <label className="flex flex-col gap-1 text-xs text-slate-600">
-                Equipos de descarga
+            {isGlobalAdmin && (
+              <form className="mb-6 grid gap-2 md:grid-cols-3" onSubmit={onCreateWarehouse}>
                 <input
                   className={input}
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={newWarehouseUnloadTeams}
-                  onChange={(e) => setNewWarehouseUnloadTeams(e.target.value)}
+                  placeholder="Nombre de la bodega"
+                  value={newWarehouseName}
+                  onChange={(e) => setNewWarehouseName(e.target.value)}
+                  required
                 />
-              </label>
-              <button type="submit" className={btnPrimary + " md:col-span-3"}>
-                Agregar bodega
-              </button>
-            </form>
+                <input
+                  className={input}
+                  placeholder="Dirección (opcional)"
+                  value={newWarehouseAddress}
+                  onChange={(e) => setNewWarehouseAddress(e.target.value)}
+                />
+                <label className="flex flex-col gap-1 text-xs text-slate-600">
+                  Equipos de descarga
+                  <input
+                    className={input}
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={newWarehouseUnloadTeams}
+                    onChange={(e) => setNewWarehouseUnloadTeams(e.target.value)}
+                  />
+                </label>
+                <button type="submit" className={btnPrimary + " md:col-span-3"}>
+                  Agregar bodega
+                </button>
+              </form>
+            )}
+            {isWarehouseAdmin && (
+              <p className="mb-4 text-xs text-amber-800">
+                Solo puedes configurar las bodegas que te asignó el administrador global.
+              </p>
+            )}
             <ul className="space-y-2">
               {warehouses.map((w) => (
                 <li
@@ -3624,7 +3699,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {isAdmin && adminTab === "horarios" && (
+        {isAdminPanel && adminTab === "horarios" && (
           <div className={card}>
             <h2 className="mb-2 text-lg font-semibold text-slate-900">Turnos por bodega y fecha</h2>
             <p className="mb-4 text-xs text-slate-600">
@@ -3920,11 +3995,13 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {isAdmin && adminTab === "equipo" && (
+        {isGlobalAdmin && adminTab === "equipo" && (
           <div className="grid gap-4 md:grid-cols-1">
             <div className={card}>
-              <h2 className="mb-2 text-lg font-semibold text-slate-900">Alta Admin o Logística</h2>
-              <p className="mb-3 text-xs text-slate-500">Solo roles Admin o Logistica.</p>
+              <h2 className="mb-2 text-lg font-semibold text-slate-900">Alta de personal interno</h2>
+              <p className="mb-3 text-xs text-slate-500">
+                Admin global, administrador de bodega (con bodegas asignadas) o Logística.
+              </p>
               <form className="flex flex-col gap-2" onSubmit={onCreateUser}>
                 <input
                   className={input}
@@ -3989,13 +4066,47 @@ export default function DashboardPage() {
                     label="confirmar contraseña"
                   />
                 </div>
-                <select className={input} value={nuRoleId} onChange={(e) => setNuRoleId(e.target.value)} required>
+                <select
+                  className={input}
+                  value={nuRoleId}
+                  onChange={(e) => {
+                    setNuRoleId(e.target.value);
+                    const role = internalRolesOnly.find((r) => String(r.id) === e.target.value);
+                    if (role?.name !== "AdminBodega") setNuWarehouseIds([]);
+                  }}
+                  required
+                >
                   {internalRolesOnly.map((r) => (
                     <option key={r.id} value={r.id}>
-                      {r.name}
+                      {ROLE_LABELS[r.name] || r.name}
                     </option>
                   ))}
                 </select>
+                {nuRoleName === "AdminBodega" && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                    <p className="mb-2 text-xs font-medium text-slate-700">Bodegas asignadas</p>
+                    <div className="max-h-36 space-y-1 overflow-y-auto">
+                      {warehouses.map((w) => (
+                        <label key={w.id} className="flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={nuWarehouseIds.includes(String(w.id))}
+                            onChange={(e) => {
+                              const id = String(w.id);
+                              setNuWarehouseIds((prev) =>
+                                e.target.checked ? [...prev, id] : prev.filter((x) => x !== id)
+                              );
+                            }}
+                          />
+                          {w.name}
+                        </label>
+                      ))}
+                    </div>
+                    {warehouses.length === 0 && (
+                      <p className="text-xs text-slate-500">Crea bodegas antes de asignar este rol.</p>
+                    )}
+                  </div>
+                )}
                 <button type="submit" className={btnPrimary}>
                   Crear usuario
                 </button>
@@ -4013,7 +4124,8 @@ export default function DashboardPage() {
                 />
                 <select className={input} value={staffRoleFilter} onChange={(e) => setStaffRoleFilter(e.target.value)}>
                   <option value="">Todos los roles</option>
-                  <option value="Admin">Admin</option>
+                  <option value="Admin">Administrador</option>
+                  <option value="AdminBodega">Administrador de bodega</option>
                   <option value="Logistica">Logística</option>
                 </select>
               </div>
@@ -4035,13 +4147,43 @@ export default function DashboardPage() {
                           onChange={(e) => setEditUserEmail(e.target.value)}
                           placeholder="Correo"
                         />
-                        <select className={input} value={editUserRoleId} onChange={(e) => setEditUserRoleId(e.target.value)}>
+                        <select
+                          className={input}
+                          value={editUserRoleId}
+                          onChange={(e) => {
+                            setEditUserRoleId(e.target.value);
+                            const role = internalRolesOnly.find((r) => String(r.id) === e.target.value);
+                            if (role?.name !== "AdminBodega") setEditUserWarehouseIds([]);
+                          }}
+                        >
                           {internalRolesOnly.map((r) => (
                             <option key={r.id} value={r.id}>
-                              {r.name}
+                              {ROLE_LABELS[r.name] || r.name}
                             </option>
                           ))}
                         </select>
+                        {editRoleName === "AdminBodega" && (
+                          <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                            <p className="mb-2 text-xs font-medium text-slate-700">Bodegas asignadas</p>
+                            <div className="max-h-36 space-y-1 overflow-y-auto">
+                              {warehouses.map((w) => (
+                                <label key={w.id} className="flex items-center gap-2 text-sm text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={editUserWarehouseIds.includes(String(w.id))}
+                                    onChange={(e) => {
+                                      const id = String(w.id);
+                                      setEditUserWarehouseIds((prev) =>
+                                        e.target.checked ? [...prev, id] : prev.filter((x) => x !== id)
+                                      );
+                                    }}
+                                  />
+                                  {w.name}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         <div className="flex gap-2">
                           <button type="button" className={btnPrimary} onClick={() => onSaveEditUser(u.document_id)}>
                             Guardar cambios
@@ -4054,7 +4196,13 @@ export default function DashboardPage() {
                     ) : (
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <span className="min-w-0 break-words text-sm">
-                          {u.full_name} — {u.role_name} — doc. {u.document_id} — {u.email}
+                          {u.full_name} — {ROLE_LABELS[u.role_name] || u.role_name}
+                          {u.role_name === "AdminBodega" && Array.isArray(u.warehouse_ids) && u.warehouse_ids.length > 0
+                            ? ` — bodegas: ${u.warehouse_ids
+                                .map((id) => warehouses.find((w) => w.id === id)?.name || id)
+                                .join(", ")}`
+                            : ""}{" "}
+                          — doc. {u.document_id} — {u.email}
                         </span>
                         {isAdmin && (
                           <div className="flex shrink-0 flex-wrap gap-2">
@@ -4084,7 +4232,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {isAdmin && adminTab === "proveedores" && (
+        {isGlobalAdmin && adminTab === "proveedores" && (
           <div className="grid gap-4">
             <div className={card}>
               <h2 className="mb-1 text-lg font-semibold text-slate-900">Proveedores registrados</h2>
@@ -4246,7 +4394,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {isAdmin && adminTab === "auditoria" && (
+        {isGlobalAdmin && adminTab === "auditoria" && (
           <div className={card}>
             <h2 className="mb-2 text-lg font-semibold text-slate-900">Auditoría</h2>
             <p className="mb-3 text-xs text-slate-500">Acciones de Admin y Logística sobre citas, usuarios y proveedores.</p>
@@ -4526,7 +4674,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {showCitasSection && isAdmin && (
+        {showCitasSection && isAdminPanel && (
           <section className="space-y-5" aria-labelledby="admin-citas-title" data-tour="section-citas">
             <h2 id="admin-citas-title" className="sr-only">Gestión de citas</h2>
             <Suspense fallback={appointmentSectionFallback}>

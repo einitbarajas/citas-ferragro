@@ -31,6 +31,8 @@ class UserCreate(BaseModel):
             return "Logistica"
         if clean.lower() == "admin":
             return "Admin"
+        if clean.lower() in {"adminbodega", "admin bodega", "administrador de bodega"}:
+            return "AdminBodega"
         return clean
 
 
