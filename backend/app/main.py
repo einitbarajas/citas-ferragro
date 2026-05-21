@@ -29,7 +29,7 @@ from app.services.credential_cleanup import purge_orphan_credentials
 from app.services.provider_purge_scheduler import provider_purge_scheduler_loop
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
-API_BUILD_ID = "2026-05-20-provider-admin-v1"
+API_BUILD_ID = "2026-05-21-unload-teams-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
