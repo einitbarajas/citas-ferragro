@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $apiUrl = "https://ferragro-api.onrender.com"
 $renderPanel = "https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0"
-$expectedBuild = "2026-05-21-unload-teams-v1"
+$expectedBuild = "2026-05-21-unload-teams-v2"
 
 Set-Location $repoRoot
 
