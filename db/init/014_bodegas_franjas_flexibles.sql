@@ -56,8 +56,30 @@ BEGIN
 END $$;
 
 ALTER TABLE "FranjasPermitidasCitaFecha" DROP CONSTRAINT IF EXISTS "UqFranjaFechaOrden";
+ALTER TABLE "FranjasPermitidasCitaFecha" DROP CONSTRAINT IF EXISTS "UqFranjaFechaBodegaOrden";
+
+-- Restricción legacy (Fecha + Bodega + Orden) solo sin equipos de descarga y sin duplicados.
+-- Con varios muelles por bodega, 018 define índices únicos parciales por equipo.
 DO $$
 BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'FranjasPermitidasCitaFecha'
+      AND column_name = 'IdEquipoDescargaBodega'
+  ) THEN
+    RETURN;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM "FranjasPermitidasCitaFecha"
+    GROUP BY "Fecha", "IdBodega", "Orden"
+    HAVING COUNT(*) > 1
+  ) THEN
+    RETURN;
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1
     FROM pg_constraint c

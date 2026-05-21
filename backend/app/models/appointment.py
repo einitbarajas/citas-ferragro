@@ -25,6 +25,16 @@ class Appointment(Base):
     warehouse_id: Mapped[int] = mapped_column(
         "IdBodega", Integer, ForeignKey("Bodegas.Id"), nullable=False, index=True
     )
+    warehouse_unload_team_id: Mapped[int] = mapped_column(
+        "IdEquipoDescargaBodega",
+        Integer,
+        ForeignKey("EquiposDescargaBodega.Id"),
+        nullable=False,
+        index=True,
+    )
+    provider_team_index: Mapped[int] = mapped_column(
+        "IndiceEquipoProveedor", Integer, nullable=False, default=1
+    )
     material_description: Mapped[str] = mapped_column("DescripcionMaterial", Text, nullable=False)
     start_time: Mapped[datetime] = mapped_column("FechaHoraInicio", DateTime(timezone=True), nullable=False, index=True)
     duration_minutes: Mapped[int] = mapped_column("DuracionMinutos", Integer, nullable=False, default=90)
@@ -34,5 +44,6 @@ class Appointment(Base):
 
     provider = relationship("Provider", back_populates="appointments")
     warehouse = relationship("Warehouse", back_populates="appointments")
+    warehouse_unload_team = relationship("WarehouseUnloadTeam")
     change_logs = relationship("ChangeLog", back_populates="appointment")
     reminder_executions = relationship("ReminderExecution", back_populates="appointment")

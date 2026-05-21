@@ -12,10 +12,10 @@ Desde la carpeta `db` (con la base `db_trabajo` ya creada y `DATABASE_URL` en el
 
 Eso ejecuta en orden:
 
-1. `init/001_schema.sql` — tipos ENUM, tablas (`Rol`, `Credenciales`, `Usuarios`, `Proveedores`, `Citas`, `HistorialCambios`), índices y roles base (Admin, Logistica, Proveedor).
-2. `init/002_audit_triggers.sql` — funciones y triggers de auditoría en citas.
-3. `init/003_historial_id_actor_drop_fk.sql` — quita la FK antigua de `HistorialCambios.IdActor` hacia `Usuarios` si existía (idempotente; no borra datos).
-4. `run-database-crud.ps1` — crea/reemplaza las funciones PL/pgSQL bajo `database-crud/`.
+1. `init/001` … `003` — esquema base, auditoría, parche historial.
+2. `init/004` … `014` — franjas, perfil, admin events, NIT, sesiones, proveedores suspendidos, **bodegas** (`014`).
+3. `init/015_performance_indexes.sql` — índices de rendimiento en citas e historial.
+4. `run-database-crud.ps1` — funciones PL/pgSQL bajo `database-crud/` (incluye `citas_create` con `IdBodega`).
 
 Datos de ejemplo (hace **TRUNCATE** de tablas de negocio; solo desarrollo):
 

@@ -40,10 +40,14 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           manualChunks(id) {
-            if (!id.includes("node_modules")) return undefined;
-            if (id.includes("node_modules/react-dom")) return "vendor-react-dom";
-            if (id.includes("node_modules/react/")) return "vendor-react";
-            if (id.includes("axios")) return "vendor-axios";
+            if (id.includes("node_modules")) {
+              if (id.includes("node_modules/react-dom")) return "vendor-react-dom";
+              if (id.includes("node_modules/react/")) return "vendor-react";
+              if (id.includes("axios")) return "vendor-axios";
+              return undefined;
+            }
+            if (id.includes("/guidedTour/")) return "guided-tour";
+            if (id.includes("/components/Appointment")) return "appointments-ui";
             return undefined;
           },
         },

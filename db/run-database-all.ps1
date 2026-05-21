@@ -18,7 +18,9 @@
     11) init/012_db_roles_template.sql — plantilla de roles de BD (opcional)
     12) init/013_provider_account_status.sql — estado suspendido y purga programada de proveedores
     13) init/014_bodegas_franjas_flexibles.sql — bodegas y turnos explícitos por bodega
-    14) run-database-crud.ps1 — funciones PL/pgSQL en database-crud/
+    14) init/015_performance_indexes.sql — índices de rendimiento en citas e historial
+    15) init/016_equipos_descarga.sql — equipos de descarga en bodegas y proveedores
+    16) run-database-crud.ps1 — funciones PL/pgSQL en database-crud/
     11) seeds/003_seed_data.sql — solo con -Seed (TRUNCATE + datos de ejemplo; solo desarrollo)
 
 .PARAMETER DatabaseUrl
@@ -74,7 +76,12 @@ $initSteps = @(
   @{ Label = "011_auth_sessions_login_audit"; Rel = "init\011_auth_sessions_login_audit.sql" },
   @{ Label = "012_db_roles_template"; Rel = "init\012_db_roles_template.sql" },
   @{ Label = "013_provider_account_status"; Rel = "init\013_provider_account_status.sql" },
-  @{ Label = "014_bodegas_franjas_flexibles"; Rel = "init\014_bodegas_franjas_flexibles.sql" }
+  @{ Label = "014_bodegas_franjas_flexibles"; Rel = "init\014_bodegas_franjas_flexibles.sql" },
+  @{ Label = "015_performance_indexes"; Rel = "init\015_performance_indexes.sql" },
+  @{ Label = "016_equipos_descarga"; Rel = "init\016_equipos_descarga.sql" },
+  @{ Label = "017_equipos_entidades"; Rel = "init\017_equipos_descarga_entidades.sql" },
+  @{ Label = "018_franjas_unique_equipo"; Rel = "init\018_franjas_unique_por_equipo.sql" },
+  @{ Label = "019_franjas_semanales_equipo"; Rel = "init\019_franjas_semanales_unique_por_equipo.sql" }
 )
 
 $totalSteps = $initSteps.Count + 1

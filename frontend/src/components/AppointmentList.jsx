@@ -259,8 +259,8 @@ export default function AppointmentList({
           {!reviewMode && (
             <>
               <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-slate-600">Vista</label>
-                <select className={field} value={viewMode} onChange={(e) => onViewModeChange(e.target.value)}>
+                <label htmlFor="appt-list-view-mode" className="mb-1 block text-xs font-medium text-slate-600">Vista</label>
+                <select id="appt-list-view-mode" className={field} value={viewMode} onChange={(e) => onViewModeChange(e.target.value)}>
                   <option value="list">Lista (todas)</option>
                   <option value="day">Por día</option>
                   <option value="week">Por semana</option>
@@ -270,15 +270,15 @@ export default function AppointmentList({
               </div>
               {viewMode === "day" && (
                 <div className="sm:col-span-1">
-                  <label className="mb-1 block text-xs font-medium text-slate-600">Día</label>
-                  <input type="date" className={field + " w-full"} value={filterDay} onChange={(e) => onFilterDayChange(e.target.value)} />
+                  <label htmlFor="appt-list-filter-day" className="mb-1 block text-xs font-medium text-slate-600">Día</label>
+                  <input id="appt-list-filter-day" type="date" className={field + " w-full"} value={filterDay} onChange={(e) => onFilterDayChange(e.target.value)} />
                 </div>
               )}
               {viewMode === "month" && (
                 <>
                   <div className="sm:col-span-1">
-                    <label className="mb-1 block text-xs font-medium text-slate-600">Mes</label>
-                    <select className={field} value={filterMonth} onChange={(e) => onFilterMonthChange(Number(e.target.value))}>
+                    <label htmlFor="appt-list-filter-month" className="mb-1 block text-xs font-medium text-slate-600">Mes</label>
+                    <select id="appt-list-filter-month" className={field} value={filterMonth} onChange={(e) => onFilterMonthChange(Number(e.target.value))}>
                       {Array.from({ length: 12 }, (_, i) => (
                         <option key={i + 1} value={i + 1}>
                           {new Date(2000, i, 1).toLocaleString("es", { month: "long" })}
@@ -287,8 +287,9 @@ export default function AppointmentList({
                     </select>
                   </div>
                   <div className="sm:col-span-1">
-                    <label className="mb-1 block text-xs font-medium text-slate-600">Año</label>
+                    <label htmlFor="appt-list-filter-year" className="mb-1 block text-xs font-medium text-slate-600">Año</label>
                     <input
+                      id="appt-list-filter-year"
                       type="number"
                       min={2000}
                       max={2100}
@@ -302,8 +303,9 @@ export default function AppointmentList({
             </>
           )}
           <div className="sm:col-span-1">
-            <label className="mb-1 block text-xs font-medium text-slate-600">Empresa</label>
+            <label htmlFor="appt-list-filter-company" className="mb-1 block text-xs font-medium text-slate-600">Empresa</label>
             <input
+              id="appt-list-filter-company"
               type="text"
               className={field + " w-full"}
               placeholder="Nombre de empresa"
@@ -312,8 +314,9 @@ export default function AppointmentList({
             />
           </div>
           <div className="sm:col-span-1">
-            <label className="mb-1 block text-xs font-medium text-slate-600">NIT</label>
+            <label htmlFor="appt-list-filter-nit" className="mb-1 block text-xs font-medium text-slate-600">NIT</label>
             <input
+              id="appt-list-filter-nit"
               type="text"
               inputMode="numeric"
               className={field + " w-full"}
@@ -327,8 +330,9 @@ export default function AppointmentList({
           </div>
           {!reviewMode && onWarehouseFilterChange && warehouses.length > 0 && (
             <div className="sm:col-span-1">
-              <label className="mb-1 block text-xs font-medium text-slate-600">Bodega</label>
+              <label htmlFor="appt-list-filter-warehouse" className="mb-1 block text-xs font-medium text-slate-600">Bodega</label>
               <select
+                id="appt-list-filter-warehouse"
                 className={field + " w-full"}
                 value={warehouseFilter}
                 onChange={(e) => onWarehouseFilterChange(e.target.value)}
@@ -386,15 +390,20 @@ export default function AppointmentList({
 
       {editAppointment && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="appointment-dialog-title"
-          onClick={() => setEditAppointment(null)}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          role="presentation"
         >
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/45"
+            aria-label="Cerrar diálogo de cita"
+            onClick={() => setEditAppointment(null)}
+          />
           <div
-            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-xl"
-            onClick={(event) => event.stopPropagation()}
+            className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="appointment-dialog-title"
           >
             <div className="flex items-start justify-between gap-3">
               <h3 id="appointment-dialog-title" className="text-lg font-semibold text-slate-900">

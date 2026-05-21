@@ -220,20 +220,45 @@ Trabaja siempre **desde la carpeta `backend`**. El punto de entrada es `main.py`
 
    > Recomendado en Windows: usar `python -m pip` del venv evita errores del launcher de `pip.exe` cuando el proyecto se mueve de carpeta.
 
-**Pruebas (funciones CRUD PL/pgSQL en PostgreSQL)**
+**Pruebas automatizadas**
 
-Con `DATABASE_URL` válido en el `.env` de la raíz del repo y el esquema + CRUD aplicados (`db\run-database-all.ps1`):
+Con `DATABASE_URL` válido en el `.env` de la raíz y esquema + CRUD aplicados (`db\run-database-all.ps1`):
 
 ```powershell
+# Backend (56 tests: API, reglas logística, franjas, citas con equipos, CRUD PL/pgSQL)
 cd backend
-.\.venv\Scripts\python.exe -m pytest tests/test_db_crud_functions.py -v
+$env:PYTHONPATH="."
+.\.venv\Scripts\python.exe -m pytest tests/ -v
+.\.venv\Scripts\python.exe scripts\system_check.py
+.\.venv\Scripts\python.exe scripts\operational_check.py
+
+# Frontend (build + accesibilidad)
+cd ..\frontend
+npm run lint:a11y
+npm run build
 ```
 
 Si ya activaste el venv (`.\.venv\Scripts\Activate.ps1`), puedes usar `python -m pytest ...`.
 
 En **Windows**, si `python` no existe en el PATH (mensaje de Microsoft Store), usa siempre la ruta del venv como arriba, o el launcher: `py -3 -m pytest ...` (con Python instalado desde [python.org](https://www.python.org/downloads/)).
 
-Cada prueba usa una transacción que se revierte al terminar (no deja datos de prueba en la base).
+Las pruebas de BD usan transacciones que se revierten al terminar (no dejan datos de prueba).
+
+**Equipos de descarga por bodega:** migraciones `016`–`019` en `db/init/`. Tras actualizar SQL en `database-crud/`, ejecutar `db\run-database-crud.ps1` (o `scripts\apply_migration_019.py` / `fix_franjas_constraint.py` si aplica). En el panel **Admin → Bodegas**, usa **Nombres de muelles** para etiquetar cada equipo (ej. Carlos, Rubén) en lugar de «Equipo 1», «Equipo 2».
+
+**Comprobación operativa al 100%** (esquema BD + API en marcha):
+
+```powershell
+cd backend
+$env:PYTHONPATH="."
+.\.venv\Scripts\python.exe scripts\operational_check.py
+# Opcional: flujos autenticados (admin/logística)
+$env:OPERATIONAL_LOGIN_EMAIL="tu@correo.com"
+$env:OPERATIONAL_LOGIN_PASSWORD="tu-contraseña"
+.\.venv\Scripts\python.exe scripts\operational_check.py
+```
+
+Debe imprimir `Resultado: operativo al 100%`. Checklist manual en UI: admin franjas por muelle, proveedor bodega → calendario → muelle → horario, dos citas misma hora en equipos distintos.
 
 **Cada vez que vuelvas a desarrollar**
 
@@ -386,11 +411,11 @@ Para validar cambios con ZAP o herramientas similares:
 2. Limpia historial/caché del escáner antes de volver a ejecutar.
 3. En modo desarrollo (`npm run dev`) pueden aparecer alertas informativas por tooling de frontend; para validar un escenario más cercano a producción usa `npm run build` y `npm run preview` (o el servidor estático que despliegues).
 
-Documentación operativa (RPO/RTO, backups, roles DB): `documentacion/operacion_continuidad.md`.
+Documentación operativa (RPO/RTO, backups, roles DB): `docs/operacion_continuidad.md`. Índice completo: `docs/README.md`.
 
 ## 5) Despliegue en la nube (Vercel + Render)
 
-La documentación funcional y técnica permanece en este repositorio de GitHub (`README.md`, `documentacion/`, `db/README.md`). El contrato del API en producción se consulta en `https://<tu-api>.onrender.com/docs`.
+La documentación funcional y técnica permanece en este repositorio de GitHub (`README.md`, `docs/`, `db/README.md`). El contrato del API en producción se consulta en `https://<tu-api>.onrender.com/docs`.
 
 ### 5.1) Render (PostgreSQL + backend)
 

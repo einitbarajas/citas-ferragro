@@ -149,6 +149,8 @@ Tras cambiar variables en Vercel hay que hacer **Redeploy** del frontend.
 ### Base de datos
 
 - Esquema y funciones SQL aplicados con `db/run-database-all.ps1` o `db/run-database-all.sh` contra la External Database URL.
+- Scripts `init/` aplicados en orden hasta **`015_performance_indexes.sql`** (incluye **bodegas** en `014` y **IdBodega** obligatorio en citas).
+- Tras cambiar solo archivos en `db/database-crud/` (p. ej. `citas/create.sql`): `cd db` → `.\run-database-crud.ps1`.
 - **No** ejecutar `-Seed` / `--seed` en producción (borra datos y carga demo).
 
 ### Cuentas y acceso
@@ -252,7 +254,9 @@ JOIN "Credenciales" c ON c."IdCredencial" = p."IdCredencial";
 |------------|----------------|
 | Frontend (Vercel) | Siempre disponible en la URL de producción. |
 | API (Render Free) | Puede **dormir** tras ~15 min sin tráfico. La **primera petición** tras dormir tarda 30–90 s (cold start). |
-| Base de datos (Render Free) | Permanece activa; expira el plan gratuito de BD si no se renueva según políticas de Render (revisar avisos en el dashboard). |
+| Base de datos (Render Free) | Permanece activa (no “duerme” como el API); revisar avisos de expiración del plan en el dashboard. |
+
+**En la práctica:** la web (Vercel) abre al instante; lo que a veces tarda es el **servidor del API** la primera vez tras un rato sin uso (~30 s–1,5 min). La base de datos suele responder de inmediato.
 
 **Para “despertar” el API:** abre en el navegador o ejecuta:
 
@@ -268,7 +272,7 @@ Cuando responda `{"success":true,...}`, el backend ya está listo. Luego entra a
 |---------------|-----------------|------|
 | Solo pantallas (React, CSS, JS) | **Vercel** (frontend) | Redeploy en panel o CLI (abajo) |
 | API, reglas de negocio, borrado de usuarios | **Render** (`ferragro-api`) | Push a `main` o Manual Deploy en Render |
-| Base de datos (SQL en `db/init/`) | **PostgreSQL** en Render | Scripts SQL contra la BD (sin seed) |
+| Base de datos (SQL en `db/init/` o `database-crud/`) | **PostgreSQL** en Render | `run-database-all` o `run-database-crud` contra External URL (sin seed) |
 
 > Si arreglas algo del **correo al eliminar usuarios**, del **login** o de la **API**, debes desplegar el **backend en Render**. Subir solo a Vercel **no** aplica esos cambios.
 
@@ -318,15 +322,13 @@ Comprueba el deploy:
 GET https://ferragro-api.onrender.com/health
 ```
 
-Debe incluir `"build_id":"2026-05-15-orphan-cleanup-b"` (si ves solo `"status":"ok"` sin `build_id`, el API sigue en versión antigua).
+Debe incluir `"build_id":"2026-05-20-provider-admin-v1"` (si falta `build_id`, el API puede estar en versión antigua).
 
-En el servicio, verifica también **Settings** → **Build Command**:
+**Root Directory:** `backend`  
+**Build Command (referencia):** `pip install -r requirements.txt`  
+**Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
-```bash
-pip install -r requirements.txt && python scripts/purge_orphan_credentials.py
-```
-
-**Root Directory:** `backend`
+El frontend llama `warmApi()` antes del login (petición a `/health`) para reducir timeouts en plan Free.
 
 ### Usuarios internos: eliminar y volver a registrar el mismo correo
 
@@ -355,6 +357,7 @@ Si aún aparece *"El email ya está registrado"* tras eliminar:
 3. Aplicar BD: `cd db` → `.\run-database-all.ps1` (opcional `-Seed` solo en dev).
 4. Backend: `cd backend` → `python -m uvicorn app.main:app --reload --port 8000`
 5. Frontend: `cd frontend` → `npm install` → `npm run dev` (puerto 2711, proxy al API).
+6. Pruebas BD (opcional): `cd backend` → `.\.venv\Scripts\python.exe -m pytest tests/test_db_crud_functions.py -v` (ver `docs/PRUEBAS.md`).
 
 Detalle completo en `README.md` secciones 3 y 4.
 
@@ -482,10 +485,15 @@ Usuario (navegador)
 | `frontend/.env.example` | Variables del frontend |
 | `render.yaml` | Blueprint Render (BD + API) |
 | `db/bootstrap-admin.ps1` | Crear o restablecer el primer Admin |
-| `docs/operacion_continuidad.md` | Continuidad, backups, RPO/RTO (si aplica) |
+| `docs/operacion_continuidad.md` | Continuidad, backups, RPO/RTO |
+| `docs/PRUEBAS.md` | Plan de pruebas (pytest, Locust) |
+| `docs/ESCALABILIDAD.md` | Rendimiento y bodegas |
+| `docs/README.md` | Índice de documentación |
+
+Regenerar Word desde Markdown: `.\docs\scripts\regenerate_docx.ps1`
 
 ---
 
-*Última actualización: mayo 2026 (Vercel CLI `frontend/`, Render API, reutilización de correo al eliminar usuarios). Si cambias nombres de servicios o dominios en los dashboards, actualiza las URLs de este documento.*
+*Última actualización: mayo 2026 (bodegas 014, índices 015, `citas_create` con IdBodega, warmApi, build_id 2026-05-20). Si cambias nombres de servicios o dominios en los dashboards, actualiza las URLs de este documento.*
 
 **Versión web en producción (referencia):** frontend en https://frontend-ferragro.vercel.app — despliegue con `npx vercel deploy --prod` desde `frontend/`.

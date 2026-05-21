@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -37,6 +37,36 @@ def _assert_slot_duration_valid(start_local: time, end_local: time, error_prefix
     return minutes
 
 
+def day_has_team_schedule(
+    db: Session, day: date, warehouse_id: int, warehouse_unload_team_id: int
+) -> bool:
+    if list_date_windows_ordered(db, day, warehouse_id, warehouse_unload_team_id):
+        return True
+    return bool(list_windows_ordered(db, warehouse_id, warehouse_unload_team_id))
+
+
+def list_warehouse_open_days_in_month(db: Session, year: int, month: int, warehouse_id: int) -> list[str]:
+    from app.services.unload_teams import list_active_unload_teams
+
+    teams = list_active_unload_teams(db, warehouse_id)
+    if not teams:
+        return []
+    start_day = date(year, month, 1)
+    if month == 12:
+        end_day = date(year + 1, 1, 1)
+    else:
+        end_day = date(year, month + 1, 1)
+    open_days: list[str] = []
+    cursor = start_day
+    while cursor < end_day:
+        for team in teams:
+            if day_has_team_schedule(db, cursor, warehouse_id, team.id):
+                open_days.append(str(cursor))
+                break
+        cursor += timedelta(days=1)
+    return open_days
+
+
 def get_active_warehouse_or_raise(db: Session, warehouse_id: int) -> Warehouse:
     warehouse = db.get(Warehouse, warehouse_id)
     if not warehouse or not warehouse.active:
@@ -44,13 +74,34 @@ def get_active_warehouse_or_raise(db: Session, warehouse_id: int) -> Warehouse:
     return warehouse
 
 
-def list_date_windows_ordered(db: Session, day: date, warehouse_id: int) -> list[AppointmentDateWindow]:
+def list_date_windows_ordered(
+    db: Session,
+    day: date,
+    warehouse_id: int,
+    warehouse_unload_team_id: int | None = None,
+) -> list[AppointmentDateWindow]:
+    if warehouse_unload_team_id is not None:
+        team_rows = (
+            db.execute(
+                select(AppointmentDateWindow)
+                .where(
+                    AppointmentDateWindow.day == day,
+                    AppointmentDateWindow.warehouse_id == warehouse_id,
+                    AppointmentDateWindow.warehouse_unload_team_id == warehouse_unload_team_id,
+                )
+                .order_by(AppointmentDateWindow.sort_order, AppointmentDateWindow.id)
+            )
+            .scalars()
+            .all()
+        )
+        return team_rows
     return (
         db.execute(
             select(AppointmentDateWindow)
             .where(
                 AppointmentDateWindow.day == day,
                 AppointmentDateWindow.warehouse_id == warehouse_id,
+                AppointmentDateWindow.warehouse_unload_team_id.is_(None),
             )
             .order_by(AppointmentDateWindow.sort_order, AppointmentDateWindow.id)
         )
@@ -59,11 +110,30 @@ def list_date_windows_ordered(db: Session, day: date, warehouse_id: int) -> list
     )
 
 
-def list_windows_ordered(db: Session, warehouse_id: int) -> list[AppointmentWindow]:
+def list_windows_ordered(
+    db: Session, warehouse_id: int, warehouse_unload_team_id: int | None = None
+) -> list[AppointmentWindow]:
+    if warehouse_unload_team_id is not None:
+        team_rows = (
+            db.execute(
+                select(AppointmentWindow)
+                .where(
+                    AppointmentWindow.warehouse_id == warehouse_id,
+                    AppointmentWindow.warehouse_unload_team_id == warehouse_unload_team_id,
+                )
+                .order_by(AppointmentWindow.sort_order, AppointmentWindow.id)
+            )
+            .scalars()
+            .all()
+        )
+        return team_rows
     return (
         db.execute(
             select(AppointmentWindow)
-            .where(AppointmentWindow.warehouse_id == warehouse_id)
+            .where(
+                AppointmentWindow.warehouse_id == warehouse_id,
+                AppointmentWindow.warehouse_unload_team_id.is_(None),
+            )
             .order_by(AppointmentWindow.sort_order, AppointmentWindow.id)
         )
         .scalars()
@@ -112,12 +182,17 @@ def start_time_allowed(
     start: datetime,
     duration_minutes: int,
     warehouse_id: int,
+    warehouse_unload_team_id: int | None = None,
 ) -> bool:
     tz = ZoneInfo(settings.business_timezone)
     aware = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
     local_dt = aware.astimezone(tz)
-    date_windows = list_date_windows_ordered(db, local_dt.date(), warehouse_id)
-    windows_for_eval = date_windows or list_windows_ordered(db, warehouse_id)
+    date_windows = list_date_windows_ordered(
+        db, local_dt.date(), warehouse_id, warehouse_unload_team_id
+    )
+    windows_for_eval = date_windows or list_windows_ordered(
+        db, warehouse_id, warehouse_unload_team_id
+    )
     if not windows_for_eval:
         return False
     t = local_dt.time()
@@ -132,13 +207,16 @@ def assert_appointment_slot(
     start: datetime,
     duration_minutes: int,
     warehouse_id: int,
+    warehouse_unload_team_id: int | None = None,
 ) -> None:
-    if not start_time_allowed(db, start, duration_minutes, warehouse_id):
+    if not start_time_allowed(db, start, duration_minutes, warehouse_id, warehouse_unload_team_id):
         tz = ZoneInfo(settings.business_timezone)
         aware = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
         local_dt = aware.astimezone(tz)
-        date_windows = list_date_windows_ordered(db, local_dt.date(), warehouse_id)
-        windows = date_windows or list_windows_ordered(db, warehouse_id)
+        date_windows = list_date_windows_ordered(
+            db, local_dt.date(), warehouse_id, warehouse_unload_team_id
+        )
+        windows = date_windows or list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
         raise HTTPException(
             status_code=400,
             detail=(
@@ -152,32 +230,50 @@ def assert_start_within_windows(db: Session, start: datetime, warehouse_id: int,
     assert_appointment_slot(db, start, duration_minutes, warehouse_id)
 
 
-def replace_windows(db: Session, warehouse_id: int, items: list[tuple[time, time]]) -> list[AppointmentWindow]:
-    db.execute(delete(AppointmentWindow).where(AppointmentWindow.warehouse_id == warehouse_id))
+def replace_windows(
+    db: Session,
+    warehouse_id: int,
+    items: list[tuple[time, time]],
+    warehouse_unload_team_id: int | None = None,
+) -> list[AppointmentWindow]:
+    stmt = delete(AppointmentWindow).where(AppointmentWindow.warehouse_id == warehouse_id)
+    if warehouse_unload_team_id is None:
+        stmt = stmt.where(AppointmentWindow.warehouse_unload_team_id.is_(None))
+    else:
+        stmt = stmt.where(AppointmentWindow.warehouse_unload_team_id == warehouse_unload_team_id)
+    db.execute(stmt)
     db.flush()
     for idx, (hi, hf) in enumerate(items):
         _assert_slot_duration_valid(hi, hf, "Franja semanal")
         db.add(
             AppointmentWindow(
                 warehouse_id=warehouse_id,
+                warehouse_unload_team_id=warehouse_unload_team_id,
                 start_local=hi,
                 end_local=hf,
                 sort_order=idx,
             )
         )
     db.commit()
-    return list_windows_ordered(db, warehouse_id)
+    return list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
 
 
 def replace_date_windows(
-    db: Session, day: date, warehouse_id: int, items: list[tuple[time, time]]
+    db: Session,
+    day: date,
+    warehouse_id: int,
+    items: list[tuple[time, time]],
+    warehouse_unload_team_id: int | None = None,
 ) -> list[AppointmentDateWindow]:
-    db.execute(
-        delete(AppointmentDateWindow).where(
-            AppointmentDateWindow.day == day,
-            AppointmentDateWindow.warehouse_id == warehouse_id,
-        )
+    stmt = delete(AppointmentDateWindow).where(
+        AppointmentDateWindow.day == day,
+        AppointmentDateWindow.warehouse_id == warehouse_id,
     )
+    if warehouse_unload_team_id is None:
+        stmt = stmt.where(AppointmentDateWindow.warehouse_unload_team_id.is_(None))
+    else:
+        stmt = stmt.where(AppointmentDateWindow.warehouse_unload_team_id == warehouse_unload_team_id)
+    db.execute(stmt)
     db.flush()
     for idx, (hi, hf) in enumerate(items):
         _assert_slot_duration_valid(hi, hf, "Franja por fecha")
@@ -185,20 +281,29 @@ def replace_date_windows(
             AppointmentDateWindow(
                 day=day,
                 warehouse_id=warehouse_id,
+                warehouse_unload_team_id=warehouse_unload_team_id,
                 start_local=hi,
                 end_local=hf,
                 sort_order=idx,
             )
         )
     db.commit()
-    return list_date_windows_ordered(db, day, warehouse_id)
+    return list_date_windows_ordered(db, day, warehouse_id, warehouse_unload_team_id)
 
 
-def clear_date_windows(db: Session, day: date, warehouse_id: int) -> None:
-    db.execute(
-        delete(AppointmentDateWindow).where(
-            AppointmentDateWindow.day == day,
-            AppointmentDateWindow.warehouse_id == warehouse_id,
-        )
+def clear_date_windows(
+    db: Session,
+    day: date,
+    warehouse_id: int,
+    warehouse_unload_team_id: int | None = None,
+) -> None:
+    stmt = delete(AppointmentDateWindow).where(
+        AppointmentDateWindow.day == day,
+        AppointmentDateWindow.warehouse_id == warehouse_id,
     )
+    if warehouse_unload_team_id is None:
+        stmt = stmt.where(AppointmentDateWindow.warehouse_unload_team_id.is_(None))
+    else:
+        stmt = stmt.where(AppointmentDateWindow.warehouse_unload_team_id == warehouse_unload_team_id)
+    db.execute(stmt)
     db.commit()

@@ -44,6 +44,30 @@ def _rol_logistica_id(cur) -> int:
     return int(rid)
 
 
+def _default_equipo_descarga_id(cur, bodega_id: int) -> int:
+    eid = _scalar(
+        cur,
+        """
+        SELECT MIN("Id") FROM "EquiposDescargaBodega"
+        WHERE "IdBodega" = %s AND "Activo" = TRUE
+        """,
+        (bodega_id,),
+    )
+    assert eid is not None, f"La bodega {bodega_id} debe tener al menos un equipo (017_equipos_descarga_entidades)"
+    return int(eid)
+
+
+def _default_bodega_id(cur) -> int:
+    bid = _scalar(
+        cur,
+        'SELECT MIN("Id") FROM "Bodegas" WHERE "Activa" = TRUE',
+    )
+    if bid is None:
+        bid = _scalar(cur, 'SELECT MIN("Id") FROM "Bodegas"')
+    assert bid is not None, 'Debe existir al menos una bodega (db/init/014_bodegas_franjas_flexibles.sql)'
+    return int(bid)
+
+
 # --- Rol ---
 
 
@@ -182,6 +206,52 @@ def test_proveedores_crud(db):
 # --- Citas ---
 
 
+def test_citas_create_default_bodega_when_param_null(db):
+    """citas_create con p_id_bodega NULL usa la bodega activa por defecto."""
+    with db.cursor() as cur:
+        email = f"pytest_bodega_def_{_suffix()}@test.local"
+        cid = _scalar(cur, "SELECT credenciales_create(%s, %s)", (email, "$2b$12$b"))
+        nit = random.randint(805_000_000, 805_999_999)
+        while _scalar(cur, 'SELECT 1 FROM "Proveedores" WHERE "IdNit" = %s', (nit,)):
+            nit += 1
+        cur.execute(
+            "SELECT proveedores_create(%s, %s, %s, %s, %s, %s, %s)",
+            (nit, "7", "Prov Bodega Def", email, cid, "B", "55667788"),
+        )
+        start = datetime.now(timezone.utc) + timedelta(days=9)
+        appt_id = _scalar(
+            cur,
+            "SELECT citas_create(%s, %s, %s, %s, %s, NULL)",
+            (nit, "Cita bodega default", start, 60, "sin_revision"),
+        )
+        bodega = _scalar(cur, 'SELECT "IdBodega" FROM "Citas" WHERE "Id" = %s', (appt_id,))
+        equipo = _scalar(cur, 'SELECT "IdEquipoDescargaBodega" FROM "Citas" WHERE "Id" = %s', (appt_id,))
+        assert bodega is not None
+        assert bodega == _default_bodega_id(cur)
+        assert equipo == _default_equipo_descarga_id(cur, int(bodega))
+
+
+def test_citas_create_invalid_bodega_raises(db):
+    with db.cursor() as cur:
+        email = f"pytest_bodega_bad_{_suffix()}@test.local"
+        cid = _scalar(cur, "SELECT credenciales_create(%s, %s)", (email, "$2b$12$e"))
+        nit = random.randint(806_000_000, 806_999_999)
+        while _scalar(cur, 'SELECT 1 FROM "Proveedores" WHERE "IdNit" = %s', (nit,)):
+            nit += 1
+        cur.execute(
+            "SELECT proveedores_create(%s, %s, %s, %s, %s, %s, %s)",
+            (nit, "8", "Prov Bad Bodega", email, cid, "E", "66778899"),
+        )
+        start = datetime.now(timezone.utc) + timedelta(days=10)
+        with pytest.raises(psycopg.Error) as exc:
+            _scalar(
+                cur,
+                "SELECT citas_create(%s, %s, %s, %s, %s, %s)",
+                (nit, "Cita mala bodega", start, 60, "sin_revision", 999999999),
+            )
+        assert "bodega" in str(exc.value).lower() or "Bodegas" in str(exc.value)
+
+
 def test_citas_crud_create_read_update(db):
     with db.cursor() as cur:
         email = f"pytest_cita_{_suffix()}@test.local"
@@ -195,15 +265,18 @@ def test_citas_crud_create_read_update(db):
         )
 
         start = datetime.now(timezone.utc) + timedelta(days=5)
+        bodega_id = _default_bodega_id(cur)
         appt_id = _scalar(
             cur,
-            "SELECT citas_create(%s, %s, %s, %s, %s)",
-            (nit, "Material pytest", start, 90, "sin_revision"),
+            "SELECT citas_create(%s, %s, %s, %s, %s, %s)",
+            (nit, "Material pytest", start, 90, "sin_revision", bodega_id),
         )
         assert isinstance(appt_id, int)
 
         row = _one(cur, "SELECT * FROM citas_get_by_id(%s)", (appt_id,))
         assert row[0] == appt_id and row[1] == nit and "pytest" in row[2].lower()
+        equipo = _scalar(cur, 'SELECT "IdEquipoDescargaBodega" FROM "Citas" WHERE "Id" = %s', (appt_id,))
+        assert equipo == _default_equipo_descarga_id(cur, bodega_id)
 
         start2 = start + timedelta(hours=1)
         cur.execute(
@@ -231,10 +304,11 @@ def test_citas_delete_raises_when_historial_blocks(db):
             (nit, "4", "Prov Del", email, cred_id, "D", "22334455"),
         )
         start = datetime.now(timezone.utc) + timedelta(days=6)
+        bodega_id = _default_bodega_id(cur)
         appt_id = _scalar(
             cur,
-            "SELECT citas_create(%s, %s, %s, %s, %s)",
-            (nit, "Cita para delete", start, 60, "sin_revision"),
+            "SELECT citas_create(%s, %s, %s, %s, %s, %s)",
+            (nit, "Cita para delete", start, 60, "sin_revision", bodega_id),
         )
         # Trigger de auditoria suele insertar en HistorialCambios
         n_hist = _scalar(cur, 'SELECT COUNT(*) FROM "HistorialCambios" WHERE "IdCita" = %s', (appt_id,))
@@ -265,10 +339,11 @@ def test_historial_cambios_create_and_get_by_id(db):
             (nit, "5", "Prov Hist", email, cred_id, "H", "33445566"),
         )
         start = datetime.now(timezone.utc) + timedelta(days=7)
+        bodega_id = _default_bodega_id(cur)
         appt_id = _scalar(
             cur,
-            "SELECT citas_create(%s, %s, %s, %s, %s)",
-            (nit, "Cita hist", start, 90, "sin_revision"),
+            "SELECT citas_create(%s, %s, %s, %s, %s, %s)",
+            (nit, "Cita hist", start, 90, "sin_revision", bodega_id),
         )
         hid = _scalar(
             cur,
@@ -294,10 +369,11 @@ def _create_cita_con_historial_por_trigger(cur) -> tuple[int, int]:
         (nit, "6", "Prov Imm", email, cred_id, "I", "44556677"),
     )
     start = datetime.now(timezone.utc) + timedelta(days=8)
+    bodega_id = _default_bodega_id(cur)
     appt_id = _scalar(
         cur,
-        "SELECT citas_create(%s, %s, %s, %s, %s)",
-        (nit, "Cita trigger historial", start, 90, "sin_revision"),
+        "SELECT citas_create(%s, %s, %s, %s, %s, %s)",
+        (nit, "Cita trigger historial", start, 90, "sin_revision", bodega_id),
     )
     hid = _scalar(
         cur,

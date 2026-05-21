@@ -57,6 +57,7 @@ class ProviderUpdate(BaseModel):
     password: str | None = Field(default=None, min_length=6, max_length=100)
     contact_name: str | None = Field(default=None, min_length=3, max_length=160)
     contact_document: str | None = Field(default=None, min_length=7, max_length=10)
+    unload_teams: int | None = Field(default=None, ge=1, le=20)
 
 
 class ProviderOut(BaseModel):
@@ -74,6 +75,7 @@ class ProviderOut(BaseModel):
     purge_scheduled_at: datetime | None = None
     appointments_count: int = 0
     last_login_at: datetime | None = None
+    unload_teams: int = 1
 
 
 class ProviderSuspendIn(BaseModel):
@@ -83,6 +85,8 @@ class ProviderSuspendIn(BaseModel):
 class AppointmentIn(BaseModel):
     provider_id: int = Field(ge=1000000000, le=9999999999)
     warehouse_id: int = Field(ge=1)
+    warehouse_unload_team_id: int | None = Field(default=None, ge=1)
+    provider_team_index: int = Field(default=1, ge=1, le=20)
     material_description: str = Field(min_length=5)
     start_time: datetime
     duration_minutes: int = Field(default=60, ge=15, le=480)
@@ -116,6 +120,7 @@ class WarehouseIn(BaseModel):
     address: str | None = Field(default=None, max_length=255)
     active: bool = True
     sort_order: int = Field(default=0, ge=0, le=9999)
+    unload_teams: int = Field(default=1, ge=1, le=20)
 
 
 class WarehouseUpdate(BaseModel):
@@ -123,6 +128,7 @@ class WarehouseUpdate(BaseModel):
     address: str | None = Field(default=None, max_length=255)
     active: bool | None = None
     sort_order: int | None = Field(default=None, ge=0, le=9999)
+    unload_teams: int | None = Field(default=None, ge=1, le=20)
 
 
 class WarehouseOut(BaseModel):
@@ -131,6 +137,16 @@ class WarehouseOut(BaseModel):
     address: str | None = None
     active: bool
     sort_order: int
+    unload_teams: int = 1
+
+
+class UnloadTeamNameIn(BaseModel):
+    id: int = Field(ge=1)
+    name: str = Field(min_length=1, max_length=80)
+
+
+class WarehouseUnloadTeamsNamesIn(BaseModel):
+    teams: list[UnloadTeamNameIn] = Field(min_length=1)
 
 
 class ChangeLogIn(BaseModel):
@@ -170,6 +186,7 @@ class AppointmentWindowItem(BaseModel):
 
 class AppointmentWindowsReplace(BaseModel):
     warehouse_id: int = Field(ge=1)
+    unload_team_id: int | None = Field(default=None, ge=1)
     franjas: list[AppointmentWindowItem] = Field(min_length=1, max_length=32)
 
 
@@ -184,11 +201,13 @@ class AppointmentWindowOut(BaseModel):
 class AppointmentDateWindowReplace(BaseModel):
     day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="Fecha local YYYY-MM-DD")
     warehouse_id: int = Field(ge=1)
+    unload_team_id: int | None = Field(default=None, ge=1)
     franjas: list[AppointmentWindowItem] = Field(min_length=1, max_length=32)
 
 
 class AppointmentDateWindowBulkReplace(BaseModel):
     warehouse_id: int = Field(ge=1)
+    unload_team_id: int | None = Field(default=None, ge=1)
     start_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="Fecha inicial YYYY-MM-DD")
     end_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="Fecha final YYYY-MM-DD")
     iso_weekdays: list[int] = Field(min_length=1, max_length=7, description="Dias ISO a aplicar: 1..7")
@@ -210,11 +229,13 @@ class ProfileMeOut(BaseModel):
     full_name: str
     email: EmailStr
     photo_url: str | None = None
+    unload_teams: int | None = None
 
 
 class ProfileMeUpdate(BaseModel):
     full_name: str = Field(min_length=3, max_length=160)
     email: EmailStr
+    unload_teams: int | None = Field(default=None, ge=1, le=20)
 
 
 class ProfilePasswordChange(BaseModel):

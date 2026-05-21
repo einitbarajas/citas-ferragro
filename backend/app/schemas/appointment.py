@@ -9,6 +9,8 @@ class AppointmentCreate(BaseModel):
     title: str = Field(min_length=3, max_length=120)
     material_description: str = Field(min_length=5)
     warehouse_id: int = Field(ge=1)
+    warehouse_unload_team_id: int = Field(ge=1, description="Muelle/equipo de descarga en la bodega")
+    provider_team_index: int = Field(default=1, ge=1, le=20, description="Equipo propio del proveedor (1..N)")
     start_time: datetime
     duration_minutes: int = Field(default=60, ge=15, le=480)
 
@@ -27,6 +29,8 @@ class AppointmentProviderCancel(BaseModel):
 
 class AppointmentProviderReschedule(BaseModel):
     start_time: datetime
+    warehouse_unload_team_id: int | None = Field(default=None, ge=1)
+    provider_team_index: int | None = Field(default=None, ge=1, le=20)
 
 
 class AppointmentOut(BaseModel):
@@ -35,6 +39,9 @@ class AppointmentOut(BaseModel):
     provider_name: str
     warehouse_id: int
     warehouse_name: str = ""
+    warehouse_unload_team_id: int | None = None
+    warehouse_unload_team_name: str = ""
+    provider_team_index: int = 1
     title: str
     material_description: str
     start_time: datetime

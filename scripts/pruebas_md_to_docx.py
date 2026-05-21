@@ -162,8 +162,8 @@ def main() -> None:
         if not out.is_absolute():
             out = root / out
     else:
-        md = root / "PRUEBAS.md"
-        out = root / "PRUEBAS.docx"
+        md = root / "docs" / "PRUEBAS.md"
+        out = root / "docs" / "PRUEBAS.docx"
     if not md.is_file():
         print(f"No existe {md}", file=sys.stderr)
         sys.exit(1)

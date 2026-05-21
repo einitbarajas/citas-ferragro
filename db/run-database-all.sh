@@ -36,6 +36,11 @@ INIT_FILES=(
   "init/012_db_roles_template.sql"
   "init/013_provider_account_status.sql"
   "init/014_bodegas_franjas_flexibles.sql"
+  "init/015_performance_indexes.sql"
+  "init/016_equipos_descarga.sql"
+  "init/017_equipos_descarga_entidades.sql"
+  "init/018_franjas_unique_por_equipo.sql"
+  "init/019_franjas_semanales_unique_por_equipo.sql"
 )
 
 echo "=== Ferragro: despliegue de base de datos (init + CRUD) ==="

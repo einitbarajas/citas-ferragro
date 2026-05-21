@@ -27,9 +27,17 @@ No hace falta que el usuario “elija rápido”: el segundo recibe error 409 y 
 | Auto-refresh | 45 s y solo si la pestaña está visible |
 | Historial logística | Ya no se carga al entrar; solo en pestaña Historial |
 | Finalizar citas vencidas | Máximo 1 ejecución por minuto |
-| BD | Índices en `015_performance_indexes.sql` |
+| BD | Índices en `015_performance_indexes.sql` (incluido en `run-database-all`) |
+| Citas SQL | `citas_create` exige `IdBodega` (parámetro o bodega activa por defecto) |
 
-Ejecutar en PostgreSQL (una vez):
+El script `015` se aplica automáticamente con:
+
+```powershell
+cd db
+.\run-database-all.ps1
+```
+
+Solo el índice (BD ya con 014):
 
 ```powershell
 psql $env:DATABASE_URL -f db/init/015_performance_indexes.sql
@@ -71,3 +79,19 @@ psql $env:DATABASE_URL -f db/init/015_performance_indexes.sql
 - Redis para caché de franjas del día (TTL 1–5 min).
 - Separar lecturas (réplica PostgreSQL) para reportes.
 - WebSockets o SSE solo para notificaciones, en lugar de polling.
+
+---
+
+## Pruebas de regresión
+
+Antes de releases con cambios en citas o BD:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest tests/ -v
+```
+
+Detalle: `docs/PRUEBAS.md`.
+
+*Última actualización: mayo 2026.*
+

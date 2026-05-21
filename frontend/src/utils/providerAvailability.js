@@ -43,7 +43,17 @@ export function describeProviderSlotAvailability({
   message,
   minimumNoticeHours,
   selectedDayOpen,
+  needsTeamSelection = false,
 }) {
+  if (needsTeamSelection) {
+    return {
+      optionLabel: "Selecciona muelle",
+      title: "Elige el equipo de descarga",
+      detail:
+        "Primero selecciona el día en el calendario general. Luego elige el muelle para ver los horarios disponibles de ese equipo.",
+      tone: "info",
+    };
+  }
   if (loading) {
     return {
       optionLabel: "Consultando disponibilidad...",
@@ -60,13 +70,13 @@ export function describeProviderSlotAvailability({
       tone: "error",
     };
   }
-  if (hasExistingAppointment || reason === "provider_has_appointment") {
+  if (reason === "team_busy" || reason === "provider_busy") {
     return {
-      optionLabel: "Ya tienes cita este día",
-      title: "Ya tienes una cita este día",
+      optionLabel: "Sin horarios libres",
+      title: "Sin horarios para este equipo",
       detail:
         message ||
-        "Solo se permite una cita por día. Elige otro día en el calendario.",
+        "Ese muelle o tu equipo ya están ocupados en esos horarios. Prueba otro turno u otro equipo de descarga.",
       tone: "warning",
     };
   }

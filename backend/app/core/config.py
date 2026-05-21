@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     forgot_password_cooldown_seconds: int = 60
     # Horas mínimas entre el momento de agendar/reprogramar y el inicio de la cita (proveedor).
     appointment_minimum_notice_hours: int = 24
+    # Máximo de equipos de descarga en paralelo (bodega o proveedor).
+    max_unload_teams: int = 20
     reminder_scheduler_interval_seconds: int = 300
     # Proveedores suspendidos: días hasta purga automática (credenciales, citas, etc.; conserva AuditoriaSistema).
     provider_purge_after_days: int = 180

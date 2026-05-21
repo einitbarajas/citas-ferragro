@@ -46,6 +46,7 @@ export default function AppointmentReschedulePanel({
   const [businessTz, setBusinessTz] = useState(DEFAULT_BUSINESS_TZ);
   const usesSlotPicker = variant === "provider" || variant === "staff";
   const warehouseId = appointment.warehouse_id;
+  const unloadTeamId = appointment.warehouse_unload_team_id;
 
   useEffect(() => {
     setDateValue(toDateInputValue(appointment.start_time, businessTz));
@@ -55,7 +56,7 @@ export default function AppointmentReschedulePanel({
   }, [appointment.id, appointment.start_time, appointment.duration_minutes, businessTz]);
 
   useEffect(() => {
-    if (variant !== "staff" || !dateValue || !warehouseId) return;
+    if (variant !== "staff" || !dateValue || !warehouseId || !unloadTeamId) return;
     let cancelled = false;
     const run = async () => {
       setLoadingSlots(true);
@@ -64,6 +65,7 @@ export default function AppointmentReschedulePanel({
         const params = new URLSearchParams({
           day: dateValue,
           warehouse_id: String(warehouseId),
+          unload_team_id: String(unloadTeamId),
           exclude_appointment_id: String(appointment.id),
         });
         const response = await api.get(`${API_PREFIX}/appointments/available-slots?${params.toString()}`);
@@ -101,7 +103,7 @@ export default function AppointmentReschedulePanel({
     return () => {
       cancelled = true;
     };
-  }, [variant, dateValue, appointment.id, appointment.duration_minutes, warehouseId]);
+  }, [variant, dateValue, appointment.id, appointment.duration_minutes, warehouseId, unloadTeamId]);
 
   useEffect(() => {
     if (variant !== "provider" || !dateValue || !loadProviderDayAvailability) return;
@@ -110,7 +112,11 @@ export default function AppointmentReschedulePanel({
       setLoadingSlots(true);
       setSlotError("");
       try {
-        const result = await loadProviderDayAvailability(dateValue, appointment.id);
+        const result = await loadProviderDayAvailability(
+          dateValue,
+          appointment.id,
+          unloadTeamId
+        );
         if (cancelled) return;
         const normalized = normalizeAvailableSlots({
           available_slots: result?.slots,
@@ -136,7 +142,7 @@ export default function AppointmentReschedulePanel({
     return () => {
       cancelled = true;
     };
-  }, [variant, dateValue, appointment.id, loadProviderDayAvailability]);
+  }, [variant, dateValue, appointment.id, unloadTeamId, loadProviderDayAvailability]);
 
   const slotKeys = useMemo(() => slots.map((s) => slotKey(s)), [slots]);
 
@@ -214,8 +220,11 @@ export default function AppointmentReschedulePanel({
       )}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Nueva fecha</label>
+          <label htmlFor={`reschedule-date-${appointment.id}`} className="mb-1 block text-xs font-medium text-slate-600">
+            Nueva fecha
+          </label>
           <input
+            id={`reschedule-date-${appointment.id}`}
             type="date"
             className={inputClass}
             value={dateValue}
@@ -224,9 +233,12 @@ export default function AppointmentReschedulePanel({
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Nuevo turno</label>
+          <label htmlFor={`reschedule-slot-${appointment.id}`} className="mb-1 block text-xs font-medium text-slate-600">
+            Nuevo turno
+          </label>
           {usesSlotPicker ? (
             <select
+              id={`reschedule-slot-${appointment.id}`}
               className={inputClass}
               value={timeValue}
               onChange={(event) => setTimeValue(event.target.value)}
@@ -246,6 +258,7 @@ export default function AppointmentReschedulePanel({
             </select>
           ) : (
             <input
+              id={`reschedule-slot-${appointment.id}`}
               type="time"
               className={inputClass}
               value={timeValue}

@@ -3,6 +3,7 @@ from app.models.appointment_date_window import AppointmentDateWindow
 from app.models.admin_event import AdminEvent
 from app.models.appointment_window import AppointmentWindow
 from app.models.warehouse import Warehouse
+from app.models.warehouse_unload_team import WarehouseUnloadTeam
 from app.models.audit_log import AuditLog, ChangeLog
 from app.models.credential import Credential
 from app.models.login_attempt import LoginAttempt
@@ -29,6 +30,7 @@ __all__ = [
     "AppointmentDateWindow",
     "AppointmentWindow",
     "Warehouse",
+    "WarehouseUnloadTeam",
     "ChangeLog",
     "AuditLog",
     "RefreshSession",

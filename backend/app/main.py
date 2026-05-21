@@ -273,6 +273,25 @@ for api_prefix in ("/api", "/api/v1"):
 app.add_middleware(PatchOpenApiDocsCspMiddleware)
 
 CONSTRAINT_ERROR_MESSAGES = {
+    "UqFranjaFechaBodegaOrden": (
+        "Ya hay una franja con ese orden para este día y bodega. "
+        "Elige otro equipo de descarga o cambia el orden del turno."
+    ),
+    "UqFranjaFechaBodegaOrdenCompartido": (
+        "Ya existe una franja compartida con ese orden para este día. Añade otro turno u otro equipo."
+    ),
+    "UqFranjaFechaBodegaEquipoOrden": (
+        "Ya existe una franja para ese muelle con el mismo orden en este día."
+    ),
+    "UqFranjaBodegaOrden": (
+        "Ya hay una franja semanal con ese orden para esta bodega. Elige otro equipo u otro turno."
+    ),
+    "UqFranjaBodegaOrdenCompartido": (
+        "Ya existe una franja semanal compartida con ese orden. Añade otro turno u otro equipo."
+    ),
+    "UqFranjaBodegaEquipoOrden": (
+        "Ya existe una franja semanal para ese muelle con el mismo orden."
+    ),
     "Credenciales_Correo_key": "El correo ya está registrado.",
     "Usuarios_IdCredencial_key": "Las credenciales del usuario ya están asociadas a otra cuenta.",
     "Proveedores_IdCredencial_key": "Las credenciales del proveedor ya están asociadas a otra cuenta.",

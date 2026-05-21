@@ -239,6 +239,7 @@ def format_provider_update_detail(before: dict, after: dict) -> str:
         "contact_name": "Responsable",
         "contact_document": "Documento responsable",
         "verification_digit": "Dígito verificación",
+        "unload_teams": "Equipos de descarga",
     }
     parts: list[str] = []
     for key, label in labels.items():

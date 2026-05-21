@@ -17,7 +17,7 @@ from docx.shared import Cm, Pt
 
 ROOT = Path(__file__).resolve().parent
 OUTPUT = ROOT / "ESPECIFICACION_REQUISITOS_IEEE830_FERRAGRO.docx"
-VERSION = "1.0"
+VERSION = "1.1"
 TODAY = date.today().strftime("%d/%m/%Y")
 
 
@@ -147,7 +147,8 @@ class DocBuilder:
         terms = [
             ("API", "Interfaz de programación de aplicaciones; servicio HTTP JSON del backend."),
             ("Admin", "Usuario interno con permisos completos de configuración y eliminación."),
-            ("Cita", "Reserva de una ventana horaria para entrega de material en instalaciones Ferragro."),
+            ("Bodega", "Lugar de entrega (almacén/punto logístico) donde se agenda la cita; define franjas y conflictos horarios."),
+            ("Cita", "Reserva de una ventana horaria para entrega de material en una bodega Ferragro."),
             ("Credencial", "Registro de correo y contraseña (hash) usado para autenticación."),
             ("Franja horaria", "Intervalo de tiempo en el que se permiten citas (configurable por día)."),
             ("JWT", "JSON Web Token; credencial de acceso de corta duración."),
@@ -186,7 +187,7 @@ class DocBuilder:
             "Autenticación unificada (correo y contraseña) con roles Admin, Logística y Proveedor.",
             "Registro de proveedores con validación de NIT, dígito de verificación y datos de contacto.",
             "Creación y consulta de citas con validación de anticipación mínima y conflictos horarios.",
-            "Configuración de franjas horarias por día y calendario operativo (zona America/Bogota).",
+            "Gestión de bodegas (lugares de entrega) y franjas horarias por bodega y calendario (zona America/Bogota).",
             "Revisión, extensión, reprogramación y cancelación de citas según rol.",
             "Gestión de usuarios internos y proveedores por personal autorizado.",
             "Notificaciones en aplicación, recordatorios programados y correo opcional (SMTP).",
@@ -214,6 +215,8 @@ class DocBuilder:
             "Estados de cita: sin revisión, revisado, finalizada, no presentada, cancelado.",
             "Un correo electrónico no puede asociarse a más de una credencial activa.",
             "Un NIT no puede registrarse dos veces mientras exista el proveedor en base de datos.",
+            "Toda cita debe asociarse a una bodega activa (IdBodega obligatorio).",
+            "Conflictos de horario se evalúan por bodega: dos citas no pueden solaparse en la misma bodega y ventana.",
             "Producción debe operar bajo HTTPS; cookies de actualización seguras en entorno productivo.",
         ]
         for c in constraints:
@@ -340,9 +343,15 @@ class DocBuilder:
         self.h("3.1.4 Citas de entrega", 2)
         self.req_functional(
             "Solicitud de cita por proveedor",
-            "El proveedor crea una cita indicando material, fecha/hora de inicio y duración. "
-            "El sistema valida anticipación mínima, franja permitida y ausencia de conflicto horario.",
+            "El proveedor crea una cita indicando bodega, material, fecha/hora de inicio y duración. "
+            "El sistema valida anticipación mínima, franja permitida en esa bodega y ausencia de conflicto horario en la bodega.",
             actors="Proveedor",
+        )
+        self.req_functional(
+            "Gestión de bodegas",
+            "Admin define bodegas (nombre, dirección, activa/inactiva, orden). Las citas y franjas se asocian a una bodega.",
+            actors="Admin",
+            priority="Alta",
         )
         self.req_functional(
             "Consulta de citas por proveedor",
@@ -392,12 +401,12 @@ class DocBuilder:
         )
         self.req_functional(
             "Verificación de conflicto",
-            "Antes de confirmar horario, el sistema indica si existe solapamiento con otra cita del mismo proveedor.",
+            "Antes de confirmar horario, el sistema indica si existe solapamiento con otra cita en la misma bodega y ventana.",
             priority="Alta",
         )
         self.req_functional(
             "Consulta de cupos disponibles",
-            "El sistema calcula franjas disponibles para una fecha y proveedor según configuración y citas existentes.",
+            "El sistema calcula franjas disponibles para una fecha, bodega y proveedor según configuración y citas existentes.",
             actors="Proveedor, Admin, Logística",
         )
         self.req_functional(
@@ -424,12 +433,12 @@ class DocBuilder:
         )
         self.req_functional(
             "Configuración de franjas semanales",
-            "Admin define o actualiza intervalos permitidos por día de la semana.",
+            "Admin define o actualiza intervalos permitidos por día de la semana y por bodega.",
             actors="Admin",
         )
         self.req_functional(
             "Excepciones por fecha",
-            "Admin configura franjas o cierres específicos para fechas puntuales (festivos, mantenimiento).",
+            "Admin configura franjas o cierres específicos para fechas puntuales y bodega (festivos, mantenimiento).",
             actors="Admin",
             priority="Media",
         )
@@ -506,6 +515,12 @@ class DocBuilder:
             "Renovación silenciosa de token",
             "Ante expiración del token de acceso, el cliente solicita renovación automática usando la cookie de actualización.",
             priority="Alta",
+        )
+        self.req_functional(
+            "Despertar API en producción",
+            "Ante hosting con suspensión por inactividad, el cliente puede solicitar /health antes del login para reducir timeouts.",
+            actors="Proveedor, Admin, Logística",
+            priority="Media",
         )
 
         self.h("3.2 Requisitos no funcionales", 2)
@@ -628,16 +643,20 @@ class DocBuilder:
 
         self.doc.add_paragraph()
         self.h("Historial de revisiones", 2)
-        rev = self.doc.add_table(rows=2, cols=4)
+        rev = self.doc.add_table(rows=3, cols=4)
         rev.style = "Table Grid"
         rev.rows[0].cells[0].text = "Versión"
         rev.rows[0].cells[1].text = "Fecha"
         rev.rows[0].cells[2].text = "Autor"
         rev.rows[0].cells[3].text = "Descripción"
-        rev.rows[1].cells[0].text = VERSION
+        rev.rows[1].cells[0].text = "1.0"
         rev.rows[1].cells[1].text = TODAY
         rev.rows[1].cells[2].text = "Equipo Ferragro"
         rev.rows[1].cells[3].text = "Emisión inicial de la especificación IEEE 830."
+        rev.rows[2].cells[0].text = VERSION
+        rev.rows[2].cells[1].text = TODAY
+        rev.rows[2].cells[2].text = "Equipo Ferragro"
+        rev.rows[2].cells[3].text = "Bodegas obligatorias en citas, franjas por bodega, citas_create con IdBodega, índices 015."
 
 
 def build_document() -> Path:

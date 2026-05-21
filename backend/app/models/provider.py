@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -26,6 +26,10 @@ class Provider(Base):
             "\"Estado\" IN ('activo', 'suspendido')",
             name="ChkProveedoresEstado",
         ),
+        CheckConstraint(
+            "\"EquiposDescarga\" >= 1 AND \"EquiposDescarga\" <= 20",
+            name="ChkProveedoresEquiposDescarga",
+        ),
     )
 
     nit: Mapped[int] = mapped_column("IdNit", Numeric(10, 0), primary_key=True, index=True)
@@ -42,6 +46,7 @@ class Provider(Base):
     suspension_reason: Mapped[str | None] = mapped_column("MotivoSuspension", Text, nullable=True)
     suspended_by: Mapped[str | None] = mapped_column("SuspendidoPor", String(30), nullable=True)
     purge_scheduled_at: Mapped[datetime | None] = mapped_column("PurgaProgramadaEn", DateTime(timezone=True), nullable=True)
+    unload_teams: Mapped[int] = mapped_column("EquiposDescarga", Integer, nullable=False, default=1)
 
     credential = relationship("Credential", back_populates="provider", uselist=False)
     appointments = relationship("Appointment", back_populates="provider")

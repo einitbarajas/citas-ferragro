@@ -1,5 +1,6 @@
 import pytest
 import psycopg
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 
@@ -13,3 +14,16 @@ def db():
     finally:
         conn.rollback()
         conn.close()
+
+
+@pytest.fixture
+def db_session():
+    """Sesion SQLAlchemy; rollback al cerrar (no persiste datos de prueba)."""
+    from app.db.session import SessionLocal
+
+    session: Session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()

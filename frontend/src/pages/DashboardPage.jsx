@@ -6,11 +6,7 @@ import {
   scrollDashboardSidebarNavItemIntoView,
   TOUR_DASHBOARD_SIDEBAR_SELECTOR,
 } from "../guidedTour/panelUtils";
-import { getPanelGuidedSteps } from "../guidedTour/panelSteps";
 import api, { API_PREFIX, parseApiError, parseApiResponse } from "../api/client";
-import AppointmentForm from "../components/AppointmentForm";
-import AppointmentList from "../components/AppointmentList";
-import AppointmentReschedulePanel from "../components/AppointmentReschedulePanel";
 import ConfirmDialog from "../components/ConfirmDialog";
 import BrandLogo from "../components/BrandLogo";
 import NotificationCenter from "../components/NotificationCenter";
@@ -18,6 +14,9 @@ import PasswordVisibilityButton from "../components/PasswordVisibilityButton";
 import ThemeToggle from "../components/ThemeToggle";
 
 const GuidedTourDialog = lazy(() => import("../components/GuidedTourDialog"));
+const AppointmentForm = lazy(() => import("../components/AppointmentForm"));
+const AppointmentList = lazy(() => import("../components/AppointmentList"));
+const AppointmentReschedulePanel = lazy(() => import("../components/AppointmentReschedulePanel"));
 import { useAuth } from "../context/AuthContext";
 import {
   describeProviderSlotAvailability,
@@ -32,6 +31,12 @@ import {
   slotDurationMinutes,
   slotKey,
 } from "../utils/appointmentSlots";
+
+const appointmentSectionFallback = (
+  <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+    Cargando citas…
+  </div>
+);
 
 function todayISO() {
   const d = new Date();
@@ -146,6 +151,15 @@ function formatLongEsDateFromISO(isoDate) {
   const [y, m, d] = String(isoDate).split("-").map(Number);
   if (!y || !m || !d) return isoDate;
   return formatLongEsDate(new Date(y, m - 1, d));
+}
+
+/** Evita enviar unload_team_id de otra bodega tras cambiar de bodega en el selector. */
+function resolveUnloadTeamIdForWarehouse(teamId, teams) {
+  if (teamId == null || teamId === "") return "";
+  const id = Number(teamId);
+  if (!Number.isFinite(id) || id < 1) return "";
+  if (teams.some((t) => Number(t.id) === id)) return String(id);
+  return "";
 }
 
 function formatTodayWindowsHint(dayIso, resolvedData, availability = null) {
@@ -333,6 +347,19 @@ export default function DashboardPage() {
   const [providerListWarehouseFilter, setProviderListWarehouseFilter] = useState("");
   const [newWarehouseName, setNewWarehouseName] = useState("");
   const [newWarehouseAddress, setNewWarehouseAddress] = useState("");
+  const [newWarehouseUnloadTeams, setNewWarehouseUnloadTeams] = useState(1);
+  const [warehouseTeamNamesEditId, setWarehouseTeamNamesEditId] = useState(null);
+  const [warehouseTeamNamesDraft, setWarehouseTeamNamesDraft] = useState([]);
+  const [warehouseTeamNamesLoading, setWarehouseTeamNamesLoading] = useState(false);
+  const [warehouseEquiposDraft, setWarehouseEquiposDraft] = useState({});
+  const [warehouseConfigApplyingId, setWarehouseConfigApplyingId] = useState(null);
+  const [warehouseTeamNamesBaseline, setWarehouseTeamNamesBaseline] = useState([]);
+  const [warehouseRowError, setWarehouseRowError] = useState({});
+  const [profileUnloadTeams, setProfileUnloadTeams] = useState(1);
+  const [warehouseUnloadTeams, setWarehouseUnloadTeams] = useState([]);
+  const [selectedWarehouseUnloadTeamId, setSelectedWarehouseUnloadTeamId] = useState(null);
+  const [selectedProviderTeamIndex, setSelectedProviderTeamIndex] = useState(1);
+  const [adminFranjaUnloadTeamId, setAdminFranjaUnloadTeamId] = useState("");
   const [providerTimeChoice, setProviderTimeChoice] = useState("");
   const [providerMaterialDescription, setProviderMaterialDescription] = useState("");
   const [providerAppointments, setProviderAppointments] = useState([]);
@@ -356,6 +383,17 @@ export default function DashboardPage() {
   ]);
   const [bulkMessage, setBulkMessage] = useState("");
   const [calendarOverrideDays, setCalendarOverrideDays] = useState([]);
+  const [teamHasWeeklyFranjas, setTeamHasWeeklyFranjas] = useState(false);
+
+  const activeAdminFranjaTeamId = useMemo(
+    () => resolveUnloadTeamIdForWarehouse(adminFranjaUnloadTeamId, warehouseUnloadTeams),
+    [adminFranjaUnloadTeamId, warehouseUnloadTeams]
+  );
+
+  const activeProviderUnloadTeamId = useMemo(() => {
+    const resolved = resolveUnloadTeamIdForWarehouse(selectedWarehouseUnloadTeamId, warehouseUnloadTeams);
+    return resolved ? Number(resolved) : null;
+  }, [selectedWarehouseUnloadTeamId, warehouseUnloadTeams]);
   const [calendarMonthOffset, setCalendarMonthOffset] = useState(0);
   const [analytics, setAnalytics] = useState(null);
   const [auditActorId, setAuditActorId] = useState("");
@@ -534,9 +572,10 @@ export default function DashboardPage() {
     if (isLogistica) setLogisticaTab("citas");
     if (isProveedor) setProveedorTab("inicio");
 
-    const steps = getPanelGuidedSteps(isAdmin, isLogistica, isProveedor);
     const bootDelayMs = manualTourBootDelayMs();
-    window.setTimeout(() => {
+    window.setTimeout(async () => {
+      const { getPanelGuidedSteps } = await import("../guidedTour/panelSteps");
+      const steps = getPanelGuidedSteps(isAdmin, isLogistica, isProveedor);
       setPanelGuidedSteps(steps);
       setPanelGuidedIndex(0);
       if (!narrow) setPanelTourLayout(true);
@@ -684,9 +723,11 @@ export default function DashboardPage() {
 
   const loadWindows = useCallback(async () => {
     if (!session || !selectedWarehouseId) return;
-    const response = await api.get(
-      `${API_PREFIX}/crud/appointment-franjas?warehouse_id=${selectedWarehouseId}`
-    );
+    const params = new URLSearchParams({ warehouse_id: String(selectedWarehouseId) });
+    if (activeAdminFranjaTeamId) {
+      params.set("unload_team_id", activeAdminFranjaTeamId);
+    }
+    const response = await api.get(`${API_PREFIX}/crud/appointment-franjas?${params.toString()}`);
     const payload = parseApiResponse(response);
     if (!payload.success) {
       throw new Error(payload.message);
@@ -695,10 +736,23 @@ export default function DashboardPage() {
     const f = payload.data?.franjas;
     if (Array.isArray(f) && f.length > 0) {
       setFranjaRows(f.map((w) => ({ start_local: w.start_local, end_local: w.end_local })));
+      setTeamHasWeeklyFranjas(true);
+    } else {
+      setFranjaRows([]);
+      if (activeAdminFranjaTeamId) {
+        setTeamHasWeeklyFranjas(false);
+      }
     }
     const today = todayISO();
+    const resolvedParams = new URLSearchParams({
+      day: today,
+      warehouse_id: String(selectedWarehouseId),
+    });
+    if (activeAdminFranjaTeamId) {
+      resolvedParams.set("unload_team_id", activeAdminFranjaTeamId);
+    }
     const resolvedResponse = await api.get(
-      `${API_PREFIX}/crud/appointment-franjas/resolved?day=${today}&warehouse_id=${selectedWarehouseId}`
+      `${API_PREFIX}/crud/appointment-franjas/resolved?${resolvedParams.toString()}`
     );
     const resolvedPayload = parseApiResponse(resolvedResponse);
     let availability = null;
@@ -725,13 +779,20 @@ export default function DashboardPage() {
     } else {
       setTodayWindowsHint("");
     }
-  }, [session, isProveedor, selectedWarehouseId]);
+  }, [session, isProveedor, selectedWarehouseId, activeAdminFranjaTeamId]);
 
   const loadSpecialDayWindows = useCallback(
     async (day) => {
       if (!session || !isAdmin || !day || !selectedWarehouseId) return;
+      const params = new URLSearchParams({
+        day: String(day),
+        warehouse_id: String(selectedWarehouseId),
+      });
+      if (activeAdminFranjaTeamId) {
+        params.set("unload_team_id", activeAdminFranjaTeamId);
+      }
       const response = await api.get(
-        `${API_PREFIX}/crud/appointment-franjas/fecha?day=${day}&warehouse_id=${selectedWarehouseId}`
+        `${API_PREFIX}/crud/appointment-franjas/fecha?${params.toString()}`
       );
       const payload = parseApiResponse(response);
       if (!payload.success) {
@@ -746,8 +807,13 @@ export default function DashboardPage() {
         setSpecialFranjaRows([]);
       }
     },
-    [session, isAdmin, selectedWarehouseId]
+    [session, isAdmin, selectedWarehouseId, activeAdminFranjaTeamId]
   );
+
+  useEffect(() => {
+    if (!isAdmin || adminTab !== "horarios" || !specialDay) return;
+    void loadSpecialDayWindows(specialDay);
+  }, [isAdmin, adminTab, specialDay, activeAdminFranjaTeamId, loadSpecialDayWindows]);
 
   const loadProviderAppointments = useCallback(async () => {
     if (!session || !isProveedor) return;
@@ -772,12 +838,49 @@ export default function DashboardPage() {
     setError("");
   }, [session, isProveedor]);
 
+  const loadWarehouseUnloadTeams = useCallback(async () => {
+    if (!session || !selectedWarehouseId) {
+      setWarehouseUnloadTeams([]);
+      setSelectedWarehouseUnloadTeamId(null);
+      return;
+    }
+    const whId = Number(selectedWarehouseId);
+    const configuredMax = Math.max(
+      1,
+      Number(warehouses.find((w) => Number(w.id) === whId)?.unload_teams) || 1
+    );
+    try {
+      const response = await api.get(
+        `${API_PREFIX}/appointments/unload-teams?warehouse_id=${whId}`
+      );
+      const payload = parseApiResponse(response);
+      const raw = Array.isArray(payload.data) ? payload.data : [];
+      const teams = raw
+        .filter((t) => Number(t.warehouse_id) === whId)
+        .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || Number(a.id) - Number(b.id))
+        .slice(0, configuredMax);
+      setWarehouseUnloadTeams(teams);
+      setSelectedWarehouseUnloadTeamId((prev) => {
+        if (prev && teams.some((t) => t.id === prev)) return prev;
+        return teams.length === 1 ? teams[0]?.id ?? null : null;
+      });
+      setAdminFranjaUnloadTeamId((prev) => {
+        if (prev && teams.some((t) => String(t.id) === String(prev))) return prev;
+        return teams[0]?.id ? String(teams[0].id) : "";
+      });
+    } catch {
+      setWarehouseUnloadTeams([]);
+      setSelectedWarehouseUnloadTeamId(null);
+    }
+  }, [session, selectedWarehouseId, warehouses]);
+
   const fetchProviderDayAvailability = useCallback(
-    async (dayIso, excludeAppointmentId = null) => {
-      if (!session || !isProveedor || !dayIso || !selectedWarehouseId) {
+    async (dayIso, excludeAppointmentId = null, overrideUnloadTeamId = null) => {
+      const teamId = overrideUnloadTeamId ?? activeProviderUnloadTeamId;
+      if (!session || !isProveedor || !dayIso || !selectedWarehouseId || !teamId) {
         return { slots: [], times: [], reason: "", message: "", minimumNoticeHours: 24 };
       }
-      let url = `${API_PREFIX}/appointments/available-slots?day=${dayIso}&warehouse_id=${selectedWarehouseId}`;
+      let url = `${API_PREFIX}/appointments/available-slots?day=${dayIso}&warehouse_id=${selectedWarehouseId}&unload_team_id=${teamId}`;
       if (excludeAppointmentId != null) {
         url += `&exclude_appointment_id=${excludeAppointmentId}`;
       }
@@ -793,8 +896,25 @@ export default function DashboardPage() {
         minimumNoticeHours: Number(sourceData?.minimum_notice_hours || 24),
       };
     },
-    [session, isProveedor, selectedWarehouseId]
+    [session, isProveedor, selectedWarehouseId, activeProviderUnloadTeamId]
   );
+
+  useEffect(() => {
+    setWarehouseUnloadTeams([]);
+    setSelectedWarehouseUnloadTeamId(null);
+    setAdminFranjaUnloadTeamId("");
+    setTeamHasWeeklyFranjas(false);
+    setCalendarOverrideDays([]);
+    void loadWarehouseUnloadTeams();
+  }, [selectedWarehouseId, loadWarehouseUnloadTeams]);
+
+  useEffect(() => {
+    if (!isProveedor || warehouseUnloadTeams.length !== 1 || !providerSelectedDay) return;
+    const only = warehouseUnloadTeams[0];
+    if (only && !selectedWarehouseUnloadTeamId) {
+      setSelectedWarehouseUnloadTeamId(only.id);
+    }
+  }, [isProveedor, warehouseUnloadTeams, providerSelectedDay, selectedWarehouseUnloadTeamId]);
 
   const loadProviderDayAvailability = useCallback(
     async (dayIso) => {
@@ -838,8 +958,12 @@ export default function DashboardPage() {
         throw new Error(payload.message);
       }
       const today = todayISO();
-      const overrideDays = Array.isArray(payload.data?.override_days) ? payload.data.override_days : [];
-      setProviderAvailableDays(overrideDays.filter((d) => String(d) >= today));
+      const openDays = Array.isArray(payload.data?.open_days)
+        ? payload.data.open_days
+        : payload.data?.override_days;
+      setProviderAvailableDays(
+        (Array.isArray(openDays) ? openDays : []).filter((d) => String(d) >= today)
+      );
     },
     [session, isProveedor, selectedWarehouseId]
   );
@@ -849,16 +973,27 @@ export default function DashboardPage() {
       if (!session || !isAdmin || !targetDate || !selectedWarehouseId) return;
       const year = targetDate.getFullYear();
       const month = targetDate.getMonth() + 1;
+      const params = new URLSearchParams({
+        year: String(year),
+        month: String(month),
+        warehouse_id: String(selectedWarehouseId),
+      });
+      if (activeAdminFranjaTeamId) {
+        params.set("unload_team_id", activeAdminFranjaTeamId);
+      }
       const response = await api.get(
-        `${API_PREFIX}/crud/appointment-franjas/fecha/resumen?year=${year}&month=${month}&warehouse_id=${selectedWarehouseId}`
+        `${API_PREFIX}/crud/appointment-franjas/fecha/resumen?${params.toString()}`
       );
       const payload = parseApiResponse(response);
       if (!payload.success) {
         throw new Error(payload.message);
       }
-      setCalendarOverrideDays(Array.isArray(payload.data?.override_days) ? payload.data.override_days : []);
+      setCalendarOverrideDays(
+        Array.isArray(payload.data?.override_days) ? payload.data.override_days : []
+      );
+      setTeamHasWeeklyFranjas(Boolean(payload.data?.has_weekly_franjas));
     },
-    [session, isAdmin, selectedWarehouseId]
+    [session, isAdmin, selectedWarehouseId, activeAdminFranjaTeamId]
   );
 
   const loadAnalytics = useCallback(async () => {
@@ -886,6 +1021,9 @@ export default function DashboardPage() {
     setProfileData(data);
     setProfileFullName(data?.full_name || "");
     setProfileEmail(data?.email || "");
+    if (data?.unload_teams != null) {
+      setProfileUnloadTeams(Math.max(1, Number(data.unload_teams) || 1));
+    }
   }, [session]);
 
   const dismissToast = useCallback((id) => {
@@ -1020,6 +1158,7 @@ export default function DashboardPage() {
     session,
     authReady,
     selectedWarehouseId,
+    activeAdminFranjaTeamId,
     loadWindows,
     isProveedor,
     isAdmin,
@@ -1140,7 +1279,7 @@ export default function DashboardPage() {
       }
     };
     run();
-  }, [isAdmin, adminTab, calendarMonthOffset, loadCalendarOverrideSummary]);
+  }, [isAdmin, adminTab, calendarMonthOffset, loadCalendarOverrideSummary, activeAdminFranjaTeamId]);
 
   useEffect(() => {
     if (!isProveedor || proveedorTab !== "inicio") return;
@@ -1665,8 +1804,14 @@ export default function DashboardPage() {
     try {
       setError("");
       setSuccess("");
+      const teamId = activeAdminFranjaTeamId ? Number(activeAdminFranjaTeamId) : null;
+      if (!teamId) {
+        setError("Selecciona un equipo de descarga de la bodega.");
+        return;
+      }
       const response = await api.put(`${API_PREFIX}/crud/appointment-franjas`, {
         warehouse_id: selectedWarehouseId,
+        unload_team_id: teamId,
         franjas: franjaRows,
       });
       const payload = parseApiResponse(response);
@@ -1697,10 +1842,16 @@ export default function DashboardPage() {
         setError(specialFranjaValidationError);
         return;
       }
+      const teamId = activeAdminFranjaTeamId ? Number(activeAdminFranjaTeamId) : null;
+      if (!teamId) {
+        setError("Selecciona un equipo de descarga de la bodega.");
+        return;
+      }
       const sortedRows = [...specialFranjaRows].sort((a, b) => String(a.start_local).localeCompare(String(b.start_local)));
       const response = await api.put(`${API_PREFIX}/crud/appointment-franjas/fecha`, {
         day: specialDay,
         warehouse_id: selectedWarehouseId,
+        unload_team_id: teamId,
         franjas: sortedRows,
       });
       const payload = parseApiResponse(response);
@@ -1739,8 +1890,14 @@ export default function DashboardPage() {
           return;
         }
       }
+      const teamId = activeAdminFranjaTeamId ? Number(activeAdminFranjaTeamId) : null;
+      if (!teamId) {
+        setError("Selecciona un equipo de descarga de la bodega.");
+        return;
+      }
       const response = await api.put(`${API_PREFIX}/crud/appointment-franjas/fecha/lote`, {
         warehouse_id: selectedWarehouseId,
+        unload_team_id: teamId,
         start_day: bulkStartDay,
         end_day: bulkEndDay,
         iso_weekdays: BULK_ALL_WEEKDAYS,
@@ -1796,11 +1953,13 @@ export default function DashboardPage() {
         setError("El nombre de la bodega debe tener al menos 2 caracteres.");
         return;
       }
+      const unloadTeams = Math.min(20, Math.max(1, Number(newWarehouseUnloadTeams) || 1));
       const response = await api.post(`${API_PREFIX}/crud/warehouses`, {
         name,
         address: newWarehouseAddress.trim() || null,
         active: true,
         sort_order: warehouses.length,
+        unload_teams: unloadTeams,
       });
       const payload = parseApiResponse(response);
       if (!payload.success) {
@@ -1808,10 +1967,184 @@ export default function DashboardPage() {
       }
       setNewWarehouseName("");
       setNewWarehouseAddress("");
+      setNewWarehouseUnloadTeams(1);
       await loadWarehouses();
       setSuccess("Bodega creada correctamente.");
     } catch (err) {
       setError(parseApiError(err));
+    }
+  };
+
+  const loadWarehouseTeamNamesForEdit = async (warehouseId) => {
+    setWarehouseTeamNamesLoading(true);
+    setError("");
+    try {
+      const response = await api.get(
+        `${API_PREFIX}/appointments/unload-teams?warehouse_id=${warehouseId}`
+      );
+      const payload = parseApiResponse(response);
+      const teams = Array.isArray(payload.data) ? payload.data : [];
+      const sorted = [...teams].sort(
+        (a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || Number(a.id) - Number(b.id)
+      );
+      const draft = sorted.map((t, idx) => ({
+        id: t.id,
+        name: String(t.name || "").trim() || `Equipo ${idx + 1}`,
+      }));
+      setWarehouseTeamNamesDraft(draft);
+      setWarehouseTeamNamesBaseline(draft.map((t) => ({ ...t })));
+      setWarehouseTeamNamesEditId(warehouseId);
+      setWarehouseRowError((prev) => {
+        const next = { ...prev };
+        delete next[warehouseId];
+        return next;
+      });
+    } catch (err) {
+      setError(parseApiError(err));
+      setWarehouseTeamNamesEditId(null);
+      setWarehouseTeamNamesDraft([]);
+      setWarehouseTeamNamesBaseline([]);
+    } finally {
+      setWarehouseTeamNamesLoading(false);
+    }
+  };
+
+  const getWarehouseEquiposCount = useCallback(
+    (warehouse) => {
+      const draft = warehouseEquiposDraft[warehouse.id];
+      if (draft != null) return Math.min(20, Math.max(1, Number(draft) || 1));
+      return Math.min(20, Math.max(1, Number(warehouse.unload_teams) || 1));
+    },
+    [warehouseEquiposDraft]
+  );
+
+  const warehouseEquiposCountChanged = useCallback(
+    (warehouse) => {
+      const draft = warehouseEquiposDraft[warehouse.id];
+      if (draft == null) return false;
+      return Number(draft) !== Number(warehouse.unload_teams ?? 1);
+    },
+    [warehouseEquiposDraft]
+  );
+
+  const warehouseTeamNamesDirty = useCallback(() => {
+    if (!warehouseTeamNamesDraft.length) return false;
+    const baselineById = new Map(warehouseTeamNamesBaseline.map((t) => [t.id, t.name]));
+    return warehouseTeamNamesDraft.some((t) => t.name !== baselineById.get(t.id));
+  }, [warehouseTeamNamesDraft, warehouseTeamNamesBaseline]);
+
+  const hasWarehousePendingChanges = useCallback(
+    (warehouse) =>
+      warehouseEquiposCountChanged(warehouse) ||
+      (warehouseTeamNamesEditId === warehouse.id && warehouseTeamNamesDirty()),
+    [warehouseEquiposCountChanged, warehouseTeamNamesEditId, warehouseTeamNamesDirty]
+  );
+
+  const persistWarehouseUnloadTeamsCount = async (warehouseId, unloadTeams) => {
+    const teams = Math.min(20, Math.max(1, Number(unloadTeams) || 1));
+    const response = await api.put(`${API_PREFIX}/crud/warehouses/${warehouseId}`, {
+      unload_teams: teams,
+    });
+    const payload = parseApiResponse(response);
+    if (!payload.success) {
+      throw new Error(payload.message);
+    }
+    const updatedRow = payload.data;
+    if (updatedRow?.id != null) {
+      setWarehouses((prev) =>
+        prev.map((row) => (row.id === updatedRow.id ? { ...row, ...updatedRow } : row))
+      );
+    } else {
+      await loadWarehouses();
+    }
+    if (Number(selectedWarehouseId) === Number(warehouseId)) {
+      setAdminFranjaUnloadTeamId("");
+      await loadWarehouseUnloadTeams();
+    }
+    return teams;
+  };
+
+  const persistWarehouseTeamNames = async (warehouseId, teamsPayload) => {
+    if (!teamsPayload.length) return;
+    const response = await api.put(`${API_PREFIX}/crud/warehouses/${warehouseId}/unload-teams`, {
+      teams: teamsPayload,
+    });
+    const payload = parseApiResponse(response);
+    if (!payload.success) {
+      throw new Error(payload.message);
+    }
+    if (Number(selectedWarehouseId) === Number(warehouseId)) {
+      await loadWarehouseUnloadTeams();
+    }
+  };
+
+  const onApplyWarehouseChanges = async (warehouse) => {
+    const warehouseId = warehouse.id;
+    const targetCount = getWarehouseEquiposCount(warehouse);
+    const namesPanelOpen = warehouseTeamNamesEditId === warehouseId;
+    const localNameDraft =
+      namesPanelOpen && warehouseTeamNamesDraft.length
+        ? warehouseTeamNamesDraft.slice(0, targetCount)
+        : [];
+
+    if (
+      !warehouseEquiposCountChanged(warehouse) &&
+      !(namesPanelOpen && warehouseTeamNamesDirty())
+    ) {
+      setError("No hay cambios pendientes. Modifica el número de equipos o los nombres de muelles.");
+      return;
+    }
+
+    const willSaveCount =
+      warehouseEquiposCountChanged(warehouse) || targetCount !== Number(warehouse.unload_teams ?? 1);
+    const willSaveNames = namesPanelOpen && warehouseTeamNamesDirty();
+
+    try {
+      setWarehouseConfigApplyingId(warehouseId);
+      setError("");
+      setSuccess("");
+      setWarehouseRowError((prev) => {
+        const next = { ...prev };
+        delete next[warehouseId];
+        return next;
+      });
+
+      if (willSaveCount) {
+        await persistWarehouseUnloadTeamsCount(warehouseId, targetCount);
+      }
+
+      let savedNamesPayload = [];
+      if (namesPanelOpen && localNameDraft.length) {
+        savedNamesPayload = localNameDraft.map((t, idx) => ({
+          id: t.id,
+          name: (t.name || "").trim() || `Equipo ${idx + 1}`,
+        }));
+        await persistWarehouseTeamNames(warehouseId, savedNamesPayload);
+        await loadWarehouseTeamNamesForEdit(warehouseId);
+        if (Number(selectedWarehouseId) === Number(warehouseId)) {
+          await loadWarehouseUnloadTeams();
+        }
+      }
+
+      setWarehouseEquiposDraft((prev) => {
+        const next = { ...prev };
+        delete next[warehouseId];
+        return next;
+      });
+      const savedNames = namesPanelOpen && savedNamesPayload.length > 0;
+      setSuccess(
+        savedNames && willSaveCount
+          ? "Cambios guardados (muelles y nombres). Al recargar F5 se mantienen."
+          : savedNames
+            ? "Nombres guardados. Al recargar F5 se mantienen en Bodegas y Franjas horarias."
+            : "Cantidad de equipos de descarga actualizada."
+      );
+    } catch (err) {
+      const msg = parseApiError(err);
+      setError(msg);
+      setWarehouseRowError((prev) => ({ ...prev, [warehouseId]: msg }));
+    } finally {
+      setWarehouseConfigApplyingId(null);
     }
   };
 
@@ -1840,8 +2173,15 @@ export default function DashboardPage() {
         setError("No puedes editar esta fecha: ya pasó o ya tiene citas.");
         return;
       }
+      const clearParams = new URLSearchParams({
+        day: specialDay,
+        warehouse_id: String(selectedWarehouseId),
+      });
+      if (activeAdminFranjaTeamId) {
+        clearParams.set("unload_team_id", activeAdminFranjaTeamId);
+      }
       const response = await api.delete(
-        `${API_PREFIX}/crud/appointment-franjas/fecha?day=${specialDay}&warehouse_id=${selectedWarehouseId}`
+        `${API_PREFIX}/crud/appointment-franjas/fecha?${clearParams.toString()}`
       );
       const payload = parseApiResponse(response);
       if (!payload.success) {
@@ -1861,10 +2201,14 @@ export default function DashboardPage() {
     try {
       setError("");
       setSuccess("");
-      const response = await api.put(`${API_PREFIX}/crud/profile/me`, {
+      const body = {
         full_name: profileFullName.trim(),
         email: profileEmail.trim(),
-      });
+      };
+      if (isProveedor) {
+        body.unload_teams = Math.min(20, Math.max(1, Number(profileUnloadTeams) || 1));
+      }
+      const response = await api.put(`${API_PREFIX}/crud/profile/me`, body);
       const payload = parseApiResponse(response);
       if (!payload.success) {
         throw new Error(payload.message);
@@ -2042,7 +2386,7 @@ export default function DashboardPage() {
     () => buildMonthCalendar(providerCalendarBase, [1, 2, 3, 4, 5, 6, 7]),
     [providerCalendarBase]
   );
-  const providerBookedDays = useMemo(() => {
+  const providerDaysWithAppointments = useMemo(() => {
     const set = new Set();
     const tz = String(windowsPack?.timezone || DEFAULT_BUSINESS_TZ);
     providerAppointments.forEach((a) => {
@@ -2060,19 +2404,28 @@ export default function DashboardPage() {
     () => parseSlotKey(providerTimeChoice),
     [providerTimeChoice]
   );
+  const providerTeamOptions = useMemo(() => {
+    const n = Math.min(20, Math.max(1, Number(profileUnloadTeams) || 1));
+    return Array.from({ length: n }, (_, i) => i + 1);
+  }, [profileUnloadTeams]);
+
+  const providerNeedsTeamForSlots = Boolean(
+    isProveedor && providerSelectedDay && selectedWarehouseId && !activeProviderUnloadTeamId
+  );
+
   const providerCannotScheduleSlot = useMemo(() => {
     if (!selectedWarehouseId) return true;
+    if (!activeProviderUnloadTeamId) return true;
     if (!providerSelectedDay) return true;
     if (providerDayAvailabilityLoading) return true;
-    if (providerBookedDays.has(providerSelectedDay)) return true;
     if (providerAvailableSlotKeys.length === 0) return true;
     if (!providerTimeChoice || !providerAvailableSlotKeys.includes(providerTimeChoice)) return true;
     return false;
   }, [
     selectedWarehouseId,
+    activeProviderUnloadTeamId,
     providerSelectedDay,
     providerDayAvailabilityLoading,
-    providerBookedDays,
     providerAvailableSlotKeys,
     providerTimeChoice,
   ]);
@@ -2081,21 +2434,21 @@ export default function DashboardPage() {
       describeProviderSlotAvailability({
         loading: providerDayAvailabilityLoading,
         loadError: providerDayAvailabilityError,
-        hasExistingAppointment: providerBookedDays.has(providerSelectedDay),
         reason: providerSlotUnavailableReason,
         message: providerSlotUnavailableMessage,
         minimumNoticeHours: providerMinimumNoticeHours,
         selectedDayOpen: providerAvailableDays.includes(providerSelectedDay),
+        needsTeamSelection: providerNeedsTeamForSlots,
       }),
     [
       providerDayAvailabilityLoading,
       providerDayAvailabilityError,
-      providerBookedDays,
       providerSelectedDay,
       providerSlotUnavailableReason,
       providerSlotUnavailableMessage,
       providerMinimumNoticeHours,
       providerAvailableDays,
+      providerNeedsTeamForSlots,
     ]
   );
   const providerSlotAvailabilityNoticeClass =
@@ -2107,18 +2460,24 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!isProveedor || !providerSelectedDay) return;
-    if (!providerBookedDays.has(providerSelectedDay)) return;
-    setProviderTimeChoice("");
-  }, [isProveedor, providerBookedDays, providerSelectedDay]);
+    if (!activeProviderUnloadTeamId) {
+      setProviderSelectedSlots([]);
+      setProviderTimeChoice("");
+      setProviderSlotUnavailableReason("");
+      setProviderSlotUnavailableMessage("");
+      return;
+    }
+    void loadProviderDayAvailability(providerSelectedDay);
+  }, [isProveedor, providerSelectedDay, activeProviderUnloadTeamId, loadProviderDayAvailability]);
 
   useEffect(() => {
     if (!isProveedor || proveedorTab !== "inicio") return;
     const open = providerAvailableDays;
     if (!Array.isArray(open) || open.length === 0) return;
     const sel = providerSelectedDay;
-    if (!sel || open.includes(sel) || providerBookedDays.has(sel)) return;
+    if (!sel || open.includes(sel)) return;
     setProviderSelectedDay(open[0]);
-  }, [isProveedor, proveedorTab, providerAvailableDays, providerBookedDays, providerSelectedDay]);
+  }, [isProveedor, proveedorTab, providerAvailableDays, providerSelectedDay]);
 
   const onProviderCreateAppointment = useCallback(async () => {
     try {
@@ -2126,15 +2485,6 @@ export default function DashboardPage() {
       setSuccess("");
       if (!providerSelectedDay) {
         setError("Selecciona un día en el calendario.");
-        return;
-      }
-      const tz = String(windowsPack?.timezone || DEFAULT_BUSINESS_TZ);
-      const dayBooked = providerAppointments.some((a) => {
-        if (a.status === "cancelado") return false;
-        return calendarDayISOInTimeZone(a.start_time, tz) === providerSelectedDay;
-      });
-      if (dayBooked) {
-        setError("Ya tienes una cita agendada para este día.");
         return;
       }
       const chosen = parseSlotKey(providerTimeChoice);
@@ -2154,6 +2504,8 @@ export default function DashboardPage() {
         title: "Entrega de material",
         material_description: desc,
         warehouse_id: selectedWarehouseId,
+        warehouse_unload_team_id: activeProviderUnloadTeamId,
+        provider_team_index: Number(selectedProviderTeamIndex) || 1,
         start_time: localDate.toISOString(),
         duration_minutes: chosen.duration_minutes,
       });
@@ -2173,6 +2525,8 @@ export default function DashboardPage() {
     providerMaterialDescription,
     providerCalendarBase,
     selectedWarehouseId,
+    activeProviderUnloadTeamId,
+    selectedProviderTeamIndex,
     windowsPack?.timezone,
     loadProviderAppointments,
     loadProviderMonthAvailability,
@@ -2565,8 +2919,9 @@ export default function DashboardPage() {
           El proveedor no podrá iniciar sesión. Tras 6 meses suspendido se eliminarán credenciales, citas y demás datos;
           solo quedará auditoría.
         </p>
-        <label className="mb-1 block text-xs font-medium text-slate-600">Motivo</label>
+        <label htmlFor="suspend-provider-reason" className="mb-1 block text-xs font-medium text-slate-600">Motivo</label>
         <textarea
+          id="suspend-provider-reason"
           className={input + " min-h-[80px]"}
           value={suspendReason}
           onChange={(e) => setSuspendReason(e.target.value)}
@@ -2656,12 +3011,14 @@ export default function DashboardPage() {
               <p className="text-xs font-medium uppercase tracking-wide text-emerald-600">Proveedor</p>
               <h1 id="proveedor-inicio-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-900">{saludoHorario()}</h1>
               <p className="mt-2 text-sm text-slate-600">
-                Solo puedes agendar en fechas en las que la empresa habilitó franja en el calendario (días en verde claro). La franja semanal general no habilita el día hasta que se abra por fecha.
+                Primero elige la bodega y un día en el calendario general (verde = algún equipo tiene franja abierta).
+                Después selecciona el muelle y verás solo los horarios de ese equipo.
               </p>
             </header>
             <div className={card}>
-              <label className="mb-1 block text-xs font-medium text-slate-600">Bodega de entrega</label>
+              <label htmlFor="provider-warehouse-select" className="mb-1 block text-xs font-medium text-slate-600">Bodega de entrega</label>
               <select
+                id="provider-warehouse-select"
                 className={input}
                 value={selectedWarehouseId ?? ""}
                 onChange={(e) => setSelectedWarehouseId(Number(e.target.value) || null)}
@@ -2670,13 +3027,10 @@ export default function DashboardPage() {
                 {warehouses.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name}
+                    {w.unload_teams > 1 ? ` (${w.unload_teams} equipos descarga)` : ""}
                   </option>
                 ))}
               </select>
-            </div>
-            <div className={card}>
-              <p className="text-xs font-medium uppercase text-slate-500">Turnos vigentes hoy</p>
-              <p className="mt-2 text-sm text-slate-700">{todayWindowsHint || windowsPack?.hint || "Sin detalle disponible por ahora."}</p>
             </div>
             <div className={card}>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -2697,8 +3051,7 @@ export default function DashboardPage() {
               <div className="grid grid-cols-7 gap-1">
                 {providerCalendar.cells.map((cell, idx) => {
                   if (!cell) return <div key={`prov-empty-${idx}`} />;
-                  const canPickDay =
-                    providerAvailableDays.includes(cell.dateISO) || providerBookedDays.has(cell.dateISO);
+                  const canPickDay = providerAvailableDays.includes(cell.dateISO);
                   return (
                     <button
                       type="button"
@@ -2711,7 +3064,7 @@ export default function DashboardPage() {
                       className={`rounded-md border px-1 py-1.5 text-center text-xs ${
                         !canPickDay
                           ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
-                          : providerBookedDays.has(cell.dateISO)
+                          : providerDaysWithAppointments.has(cell.dateISO)
                             ? "border-emerald-700 bg-emerald-600 text-white"
                             : providerAvailableDays.includes(cell.dateISO)
                               ? "border-emerald-300 bg-emerald-100 text-emerald-900"
@@ -2720,8 +3073,8 @@ export default function DashboardPage() {
                       title={
                         !canPickDay
                           ? "Sin franja abierta este día: la empresa no habilitó citas en esta fecha"
-                          : providerBookedDays.has(cell.dateISO)
-                            ? "Ya tienes cita ese día"
+                          : providerDaysWithAppointments.has(cell.dateISO)
+                            ? "Tienes citas ese día; puedes agendar otro turno si hay cupo"
                             : "Franja habilitada: puedes agendar"
                       }
                     >
@@ -2731,12 +3084,64 @@ export default function DashboardPage() {
                 })}
               </div>
               <p className="mt-2 text-[11px] text-slate-600">
-                Verde claro: la empresa abrió franja ese día. Blanco: sin franja (no se puede elegir). Verde oscuro: ya tienes cita.
+                Verde claro: la bodega tiene franja ese día (algún equipo). Verde oscuro: ya tienes cita ese día. Blanco: sin franja en la bodega.
               </p>
             </div>
             <div className={card}>
-              <p className="text-xs font-medium uppercase text-slate-500">Disponibilidad del día</p>
-              <p className="mt-1 text-xs text-slate-600">{formatLongEsDateFromISO(providerSelectedDay)} ({providerSelectedDay})</p>
+              <p className="text-xs font-medium uppercase text-slate-500">Equipo y turno</p>
+              <p className="mt-1 text-xs text-slate-600">
+                Día: <strong>{formatLongEsDateFromISO(providerSelectedDay)}</strong> ({providerSelectedDay})
+              </p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <label htmlFor="provider-unload-team-select" className="mb-1 block text-xs font-medium text-slate-600">
+                    Muelle en la bodega
+                  </label>
+                  <select
+                    id="provider-unload-team-select"
+                    className={input}
+                    value={activeProviderUnloadTeamId ?? selectedWarehouseUnloadTeamId ?? ""}
+                    onChange={(e) => setSelectedWarehouseUnloadTeamId(Number(e.target.value) || null)}
+                    disabled={warehouseUnloadTeams.length === 0 || !providerSelectedDay}
+                  >
+                    {warehouseUnloadTeams.length === 0 && <option value="">Sin equipos en bodega</option>}
+                    {!providerSelectedDay && warehouseUnloadTeams.length > 0 && (
+                      <option value="">Primero elige un día en el calendario</option>
+                    )}
+                    {warehouseUnloadTeams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Cada muelle tiene horarios distintos en la misma bodega.
+                  </p>
+                </div>
+                <div>
+                  <label htmlFor="provider-own-team-select" className="mb-1 block text-xs font-medium text-slate-600">
+                    Tu equipo (camión / descarga)
+                  </label>
+                  <select
+                    id="provider-own-team-select"
+                    className={input}
+                    value={selectedProviderTeamIndex}
+                    onChange={(e) => setSelectedProviderTeamIndex(Number(e.target.value) || 1)}
+                  >
+                    {providerTeamOptions.map((n) => (
+                      <option key={`prov-team-${n}`} value={n}>
+                        Equipo proveedor {n}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Tienes <strong>{profileUnloadTeams}</strong> equipo(s) propios para citas en paralelo.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className={card}>
+              <p className="text-xs font-medium uppercase text-slate-500">Horarios del muelle seleccionado</p>
               {providerCannotScheduleSlot && providerSlotAvailabilityCopy.title && (
                 <div
                   className={`mt-3 rounded-lg border px-3 py-2 text-sm ${providerSlotAvailabilityNoticeClass}`}
@@ -2750,8 +3155,9 @@ export default function DashboardPage() {
               )}
               <div className="mt-3 grid gap-2 md:grid-cols-2">
                 <div className="md:col-span-2">
-                  <label className="mb-1 block text-xs font-medium text-slate-600">Turno disponible</label>
+                  <label htmlFor="provider-slot-select" className="mb-1 block text-xs font-medium text-slate-600">Turno disponible</label>
                   <select
+                    id="provider-slot-select"
                     className={input}
                     value={providerTimeChoice}
                     onChange={(e) => setProviderTimeChoice(e.target.value)}
@@ -2777,8 +3183,11 @@ export default function DashboardPage() {
                 )}
               </div>
               <div className="mt-2">
-                <label className="mb-1 block text-xs font-medium text-slate-600">Descripción de lo que vas a entregar</label>
+                <label htmlFor="provider-material-description" className="mb-1 block text-xs font-medium text-slate-600">
+                  Descripción de lo que vas a entregar
+                </label>
                 <textarea
+                  id="provider-material-description"
                   className={input + " min-h-[88px]"}
                   value={providerMaterialDescription}
                   onChange={(e) => setProviderMaterialDescription(e.target.value)}
@@ -2849,14 +3258,16 @@ export default function DashboardPage() {
                           </button>
                         </div>
                         {providerRescheduleId === a.id && (
-                          <AppointmentReschedulePanel
-                            appointment={a}
-                            variant="provider"
-                            inputClass={input}
-                            buttonClass={btnPrimary}
-                            loadProviderDayAvailability={fetchProviderDayAvailability}
-                            onReschedule={onProviderRescheduleAppointment}
-                          />
+                          <Suspense fallback={appointmentSectionFallback}>
+                            <AppointmentReschedulePanel
+                              appointment={a}
+                              variant="provider"
+                              inputClass={input}
+                              buttonClass={btnPrimary}
+                              loadProviderDayAvailability={fetchProviderDayAvailability}
+                              onReschedule={onProviderRescheduleAppointment}
+                            />
+                          </Suspense>
                         )}
                       </div>
                     )}
@@ -3012,9 +3423,10 @@ export default function DashboardPage() {
           <div className={card}>
             <h2 className="mb-2 text-lg font-semibold text-slate-900">Bodegas de entrega</h2>
             <p className="mb-4 text-xs text-slate-600">
-              Cada bodega tiene su propio calendario de turnos. Los proveedores eligen bodega al agendar.
+              Cada bodega tiene su calendario de turnos y <strong>equipos de descarga</strong> (citas simultáneas en el mismo horario).
+              Cambia <em>Equipos</em> o abre <strong>Nombres de muelles</strong> y pulsa <strong>Aplicar cambios</strong> en esa fila.
             </p>
-            <form className="mb-6 grid gap-2 md:grid-cols-2" onSubmit={onCreateWarehouse}>
+            <form className="mb-6 grid gap-2 md:grid-cols-3" onSubmit={onCreateWarehouse}>
               <input
                 className={input}
                 placeholder="Nombre de la bodega"
@@ -3028,7 +3440,18 @@ export default function DashboardPage() {
                 value={newWarehouseAddress}
                 onChange={(e) => setNewWarehouseAddress(e.target.value)}
               />
-              <button type="submit" className={btnPrimary + " md:col-span-2"}>
+              <label className="flex flex-col gap-1 text-xs text-slate-600">
+                Equipos de descarga
+                <input
+                  className={input}
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={newWarehouseUnloadTeams}
+                  onChange={(e) => setNewWarehouseUnloadTeams(e.target.value)}
+                />
+              </label>
+              <button type="submit" className={btnPrimary + " md:col-span-3"}>
                 Agregar bodega
               </button>
             </form>
@@ -3036,20 +3459,138 @@ export default function DashboardPage() {
               {warehouses.map((w) => (
                 <li
                   key={w.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
                 >
-                  <div>
-                    <p className="font-medium text-slate-800">{w.name}</p>
-                    {w.address && <p className="text-xs text-slate-500">{w.address}</p>}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-slate-800">{w.name}</p>
+                      {w.address && <p className="text-xs text-slate-500">{w.address}</p>}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-1 text-xs text-slate-600">
+                        Equipos
+                        <input
+                          className={input + " w-16 py-1 text-center"}
+                          type="number"
+                          min={1}
+                          max={20}
+                          value={getWarehouseEquiposCount(w)}
+                          onChange={(e) => {
+                            const n = Math.min(20, Math.max(1, Number(e.target.value) || 1));
+                            setWarehouseEquiposDraft((prev) => ({ ...prev, [w.id]: n }));
+                            if (warehouseTeamNamesEditId === w.id) {
+                              setWarehouseTeamNamesDraft((prev) => prev.slice(0, n));
+                            }
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className={btnPrimary + " px-3 py-1 text-xs"}
+                        disabled={
+                          warehouseConfigApplyingId === w.id || !hasWarehousePendingChanges(w)
+                        }
+                        title={
+                          hasWarehousePendingChanges(w)
+                            ? "Guardar cantidad de muelles y/o nombres"
+                            : "Primero cambia Equipos o edita nombres de muelles"
+                        }
+                        onClick={() => void onApplyWarehouseChanges(w)}
+                      >
+                        {warehouseConfigApplyingId === w.id ? "Aplicando…" : "Aplicar cambios"}
+                      </button>
+                      {(w.unload_teams ?? 1) >= 1 && (
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-sky-700 underline hover:text-sky-900"
+                          onClick={() => {
+                            if (warehouseTeamNamesEditId === w.id) {
+                              setWarehouseTeamNamesEditId(null);
+                              setWarehouseTeamNamesDraft([]);
+                              setWarehouseTeamNamesBaseline([]);
+                            } else {
+                              void loadWarehouseTeamNamesForEdit(w.id);
+                            }
+                          }}
+                        >
+                          {warehouseTeamNamesEditId === w.id ? "Ocultar nombres" : "Nombres de muelles"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="text-xs text-rose-700 underline hover:text-rose-800 disabled:opacity-40"
+                        disabled={warehouses.filter((x) => x.active).length <= 1}
+                        onClick={() => void onDeactivateWarehouse(w.id)}
+                      >
+                        Desactivar
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    className="text-xs text-rose-700 underline hover:text-rose-800 disabled:opacity-40"
-                    disabled={warehouses.filter((x) => x.active).length <= 1}
-                    onClick={() => void onDeactivateWarehouse(w.id)}
-                  >
-                    Desactivar
-                  </button>
+                  {warehouseRowError[w.id] && (
+                    <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs text-rose-800" role="alert">
+                      {warehouseRowError[w.id]}
+                    </p>
+                  )}
+                  {warehouseTeamNamesEditId === w.id && (
+                    <div className="mt-3 border-t border-slate-200 pt-3">
+                      <p className="mb-2 text-xs text-slate-600">
+                        Asigna un nombre a cada muelle (ej. Carlos, Rubén), pulsa <strong>Aplicar cambios</strong> y
+                        luego F5: el nombre queda guardado en la base de datos. Para <strong>quitar muelles</strong>,
+                        baja <em>Equipos</em> y aplica (no si ese muelle tiene citas activas).
+                      </p>
+                      {warehouseTeamNamesLoading && (
+                        <p className="text-xs text-slate-500">Cargando equipos…</p>
+                      )}
+                      {!warehouseTeamNamesLoading && warehouseTeamNamesDraft.length === 0 && (
+                        <p className="text-xs text-slate-500">Sin equipos en esta bodega.</p>
+                      )}
+                      <ul className="space-y-2">
+                        {warehouseTeamNamesDraft
+                          .slice(0, getWarehouseEquiposCount(w))
+                          .map((t, idx) => (
+                          <li key={t.id} className="flex flex-wrap items-center gap-2">
+                            <label
+                              htmlFor={`team-name-${w.id}-${t.id}`}
+                              className="w-24 shrink-0 text-xs text-slate-500"
+                            >
+                              Muelle {idx + 1}
+                            </label>
+                            <input
+                              id={`team-name-${w.id}-${t.id}`}
+                              className={input + " min-w-[10rem] flex-1"}
+                              type="text"
+                              maxLength={80}
+                              value={t.name}
+                              placeholder={`Ej. ${idx === 0 ? "Carlos" : idx === 1 ? "Rubén" : "Nombre"}`}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setWarehouseTeamNamesDraft((prev) =>
+                                  prev.map((row) => (row.id === t.id ? { ...row, name: value } : row))
+                                );
+                              }}
+                            />
+                          </li>
+                        ))}
+                      </ul>
+                      {warehouseTeamNamesDraft.length > 0 && (
+                        <div className="sticky bottom-0 mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 bg-slate-50 py-3">
+                          <button
+                            type="button"
+                            className={btnPrimary}
+                            disabled={
+                              warehouseConfigApplyingId === w.id || !hasWarehousePendingChanges(w)
+                            }
+                            onClick={() => void onApplyWarehouseChanges(w)}
+                          >
+                            {warehouseConfigApplyingId === w.id ? "Aplicando…" : "Aplicar cambios"}
+                          </button>
+                          {!hasWarehousePendingChanges(w) && (
+                            <span className="text-xs text-slate-500">Edita equipos o nombres para habilitar.</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -3064,11 +3605,21 @@ export default function DashboardPage() {
               {windowsPack?.timezone || "America/Bogota"}.
             </p>
             <div className="mb-4">
-              <label className="mb-1 block text-xs font-medium text-slate-600">Bodega a configurar</label>
+              <label htmlFor="admin-franja-warehouse-select" className="mb-1 block text-xs font-medium text-slate-600">
+                Bodega a configurar
+              </label>
               <select
+                id="admin-franja-warehouse-select"
                 className={input}
                 value={selectedWarehouseId ?? ""}
-                onChange={(e) => setSelectedWarehouseId(Number(e.target.value) || null)}
+                onChange={(e) => {
+                  setSelectedWarehouseId(Number(e.target.value) || null);
+                  setAdminFranjaUnloadTeamId("");
+                  setTeamHasWeeklyFranjas(false);
+                  setCalendarOverrideDays([]);
+                  setSpecialFranjaRows([]);
+                  setFranjaRows([]);
+                }}
               >
                 {warehouses.map((w) => (
                   <option key={w.id} value={w.id}>
@@ -3076,6 +3627,32 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="mb-4">
+              <label htmlFor="admin-franja-team-select" className="mb-1 block text-xs font-medium text-slate-600">
+                Equipo de descarga (horarios de este muelle)
+              </label>
+              <select
+                id="admin-franja-team-select"
+                className={input}
+                value={activeAdminFranjaTeamId || adminFranjaUnloadTeamId}
+                onChange={(e) => setAdminFranjaUnloadTeamId(e.target.value)}
+                disabled={warehouseUnloadTeams.length === 0}
+              >
+                {warehouseUnloadTeams.length === 0 && (
+                  <option value="">Sin equipos — configúralos en Bodegas</option>
+                )}
+                {warehouseUnloadTeams.map((t) => (
+                  <option key={`franja-team-${t.id}`} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Cada bodega tiene sus propios equipos (
+                {warehouses.find((w) => Number(w.id) === Number(selectedWarehouseId))?.unload_teams ?? 1}{" "}
+                en esta bodega). Cambia de equipo para definir horarios distintos; otra bodega es independiente.
+              </p>
             </div>
             <form className="space-y-3" onSubmit={onSaveFranjas}>
               <div>
@@ -3123,7 +3700,7 @@ export default function DashboardPage() {
                           className={`rounded-md border px-1 py-1.5 text-center text-xs ${
                             calendarOverrideDays.includes(cell.dateISO)
                               ? "border-emerald-500 bg-emerald-500 text-white"
-                              : cell.enabled
+                              : teamHasWeeklyFranjas
                                 ? "border-emerald-300 bg-emerald-100 text-emerald-900"
                                 : "border-slate-200 bg-white text-slate-500"
                           } ${cell.isToday ? "ring-2 ring-emerald-400/70" : ""} ${
@@ -3131,10 +3708,10 @@ export default function DashboardPage() {
                           }`}
                           title={
                             calendarOverrideDays.includes(cell.dateISO)
-                              ? "Día con franja especial (clic para editar)"
-                              : cell.enabled
-                                ? "Día con franja semanal (clic para gestionar)"
-                                : "Día no habilitado (clic para gestionar)"
+                              ? "Franja especial de este equipo en esta fecha"
+                              : teamHasWeeklyFranjas
+                                ? "Regla semanal de este equipo"
+                                : "Sin franja para este equipo"
                           }
                         >
                           {cell.day}
@@ -3145,7 +3722,8 @@ export default function DashboardPage() {
                     )}
                   </div>
                   <p className="mt-2 text-[11px] text-slate-500">
-                    Verde fuerte: franja especial por fecha. Verde claro: día habilitado por regla semanal.
+                    Verde fuerte: franja especial de <strong>este equipo</strong> en esa fecha. Verde claro: regla semanal de{" "}
+                    <strong>este equipo</strong>. Gris: sin horario para el equipo seleccionado.
                   </p>
                 </div>
               </div>
@@ -3159,7 +3737,10 @@ export default function DashboardPage() {
                 {specialFranjaRows.length === 0 && (
                   <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                     <p className="text-xs font-medium text-amber-800">
-                      No hay franja horaria para este día.
+                      No hay franja horaria para este equipo en este día.
+                      {teamHasWeeklyFranjas && !calendarOverrideDays.includes(specialDay)
+                        ? " La regla semanal del equipo sigue activa; aquí puedes definir una excepción solo para esta fecha."
+                        : ""}
                       {isSpecialDayPast ? " No se puede agregar porque el día ya pasó." : ""}
                     </p>
                     {!isSpecialDayPast && (
@@ -3260,12 +3841,12 @@ export default function DashboardPage() {
               <form className="space-y-3" onSubmit={onSaveBulkDateFranjas}>
                 <div className="grid gap-2 md:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-600">Desde</label>
-                    <input type="date" min={todayValue} className={input} value={bulkStartDay} onChange={(e) => setBulkStartDay(e.target.value)} />
+                    <label htmlFor="admin-bulk-start-day" className="mb-1 block text-xs font-medium text-slate-600">Desde</label>
+                    <input id="admin-bulk-start-day" type="date" min={todayValue} className={input} value={bulkStartDay} onChange={(e) => setBulkStartDay(e.target.value)} />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-600">Hasta</label>
-                    <input type="date" min={bulkStartDay || todayValue} className={input} value={bulkEndDay} onChange={(e) => setBulkEndDay(e.target.value)} />
+                    <label htmlFor="admin-bulk-end-day" className="mb-1 block text-xs font-medium text-slate-600">Hasta</label>
+                    <input id="admin-bulk-end-day" type="date" min={bulkStartDay || todayValue} className={input} value={bulkEndDay} onChange={(e) => setBulkEndDay(e.target.value)} />
                   </div>
                 </div>
                 <p className="text-xs text-slate-600">Este lote aplica a todos los días dentro del rango seleccionado.</p>
@@ -3644,8 +4225,8 @@ export default function DashboardPage() {
             <p className="mb-3 text-xs text-slate-500">Acciones de Admin y Logística sobre citas, usuarios y proveedores.</p>
             <div className="mb-4 grid gap-2 md:grid-cols-2 lg:grid-cols-4">
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">Actor</label>
-                <select className={input} value={auditActorId} onChange={(e) => setAuditActorId(e.target.value)}>
+                <label htmlFor="audit-filter-actor" className="mb-1 block text-xs font-medium text-slate-600">Actor</label>
+                <select id="audit-filter-actor" className={input} value={auditActorId} onChange={(e) => setAuditActorId(e.target.value)}>
                   <option value="">Todos</option>
                   {staffUsersOnly.map((u) => (
                     <option key={u.document_id} value={u.document_id}>
@@ -3655,8 +4236,9 @@ export default function DashboardPage() {
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">ID cita</label>
+                <label htmlFor="audit-filter-appointment-id" className="mb-1 block text-xs font-medium text-slate-600">ID cita</label>
                 <input
+                  id="audit-filter-appointment-id"
                   className={input}
                   placeholder="Ej. 12"
                   inputMode="numeric"
@@ -3665,8 +4247,9 @@ export default function DashboardPage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">Buscar</label>
+                <label htmlFor="audit-filter-text" className="mb-1 block text-xs font-medium text-slate-600">Buscar</label>
                 <input
+                  id="audit-filter-text"
                   className={input}
                   placeholder="Filtrar por caracteres"
                   value={auditTextFilter}
@@ -3674,8 +4257,8 @@ export default function DashboardPage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">Rol</label>
-                <select className={input} value={auditRoleFilter} onChange={(e) => setAuditRoleFilter(e.target.value)}>
+                <label htmlFor="audit-filter-role" className="mb-1 block text-xs font-medium text-slate-600">Rol</label>
+                <select id="audit-filter-role" className={input} value={auditRoleFilter} onChange={(e) => setAuditRoleFilter(e.target.value)}>
                   <option value="">Todos los roles</option>
                   {auditRoleOptions.map((role) => (
                     <option key={role} value={role}>
@@ -3714,7 +4297,9 @@ export default function DashboardPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <div className={card}>
               <h2 className="mb-2 text-lg font-semibold text-slate-900">Datos del perfil</h2>
-              <p className="mb-3 text-xs text-slate-500">Actualiza nombre y correo de tu cuenta.</p>
+              <p className="mb-3 text-xs text-slate-500">
+                Actualiza nombre y correo. Si eres proveedor, indica cuántos equipos de descarga tienes (camiones/muelles propios en paralelo).
+              </p>
               <form className="space-y-2" onSubmit={onSaveProfile}>
                 <input
                   className={input}
@@ -3732,6 +4317,19 @@ export default function DashboardPage() {
                   onChange={(e) => setProfileEmail(e.target.value)}
                   required
                 />
+                {isProveedor && (
+                  <label className="block text-xs text-slate-600">
+                    Equipos de descarga (citas simultáneas a la misma hora)
+                    <input
+                      className={input + " mt-1"}
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={profileUnloadTeams}
+                      onChange={(e) => setProfileUnloadTeams(e.target.value)}
+                    />
+                  </label>
+                )}
                 <button type="submit" className={btnPrimary}>
                   Guardar perfil
                 </button>
@@ -3904,14 +4502,16 @@ export default function DashboardPage() {
         {showCitasSection && isAdmin && (
           <section className="space-y-5" aria-labelledby="admin-citas-title" data-tour="section-citas">
             <h2 id="admin-citas-title" className="sr-only">Gestión de citas</h2>
-            <AppointmentForm
-              onSubmit={onCreate}
-              windowsHint={windowsPack?.hint || ""}
-              windowsPack={windowsPack}
-              warehouses={warehouses}
-              warehouseId={selectedWarehouseId}
-              onWarehouseChange={setSelectedWarehouseId}
-            />
+            <Suspense fallback={appointmentSectionFallback}>
+              <AppointmentForm
+                onSubmit={onCreate}
+                windowsHint={windowsPack?.hint || ""}
+                windowsPack={windowsPack}
+                warehouses={warehouses}
+                warehouseId={selectedWarehouseId}
+                onWarehouseChange={setSelectedWarehouseId}
+              />
+            </Suspense>
           </section>
         )}
 
@@ -3935,25 +4535,27 @@ export default function DashboardPage() {
                 ))}
               </div>
             </div>
-            <AppointmentList
-              appointments={appointments}
-              role={session?.role}
-              onReview={onReview}
-              onChangeStatus={onChangeStatus}
-              onExtend={onExtend}
-              onReschedule={onStaffRescheduleAppointment}
-              warehouses={warehouses}
-              warehouseFilter={filterWarehouseId}
-              onWarehouseFilterChange={setFilterWarehouseId}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              filterDay={filterDay}
-              onFilterDayChange={setFilterDay}
-              filterMonth={filterMonth}
-              onFilterMonthChange={setFilterMonth}
-              filterYear={filterYear}
-              onFilterYearChange={setFilterYear}
-            />
+            <Suspense fallback={appointmentSectionFallback}>
+              <AppointmentList
+                appointments={appointments}
+                role={session?.role}
+                onReview={onReview}
+                onChangeStatus={onChangeStatus}
+                onExtend={onExtend}
+                onReschedule={onStaffRescheduleAppointment}
+                warehouses={warehouses}
+                warehouseFilter={filterWarehouseId}
+                onWarehouseFilterChange={setFilterWarehouseId}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                filterDay={filterDay}
+                onFilterDayChange={setFilterDay}
+                filterMonth={filterMonth}
+                onFilterMonthChange={setFilterMonth}
+                filterYear={filterYear}
+                onFilterYearChange={setFilterYear}
+              />
+            </Suspense>
           </section>
         )}
 
@@ -3982,28 +4584,30 @@ export default function DashboardPage() {
                 {warehouseFilterControl("revision-citas-warehouse", "Bodega")}
               </div>
             </div>
-            <AppointmentList
-              appointments={reviewAppointments}
-              role={session?.role}
-              onReview={onReview}
-              onChangeStatus={onChangeStatus}
-              onExtend={onExtend}
-              onReschedule={onStaffRescheduleAppointment}
-              warehouses={warehouses}
-              warehouseFilter={filterWarehouseId}
-              onWarehouseFilterChange={setFilterWarehouseId}
-              reviewMode
-              title="Revision de citas"
-              emptyMessage="No hay citas para revisar."
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              filterDay={filterDay}
-              onFilterDayChange={setFilterDay}
-              filterMonth={filterMonth}
-              onFilterMonthChange={setFilterMonth}
+            <Suspense fallback={appointmentSectionFallback}>
+              <AppointmentList
+                appointments={reviewAppointments}
+                role={session?.role}
+                onReview={onReview}
+                onChangeStatus={onChangeStatus}
+                onExtend={onExtend}
+                onReschedule={onStaffRescheduleAppointment}
+                warehouses={warehouses}
+                warehouseFilter={filterWarehouseId}
+                onWarehouseFilterChange={setFilterWarehouseId}
+                reviewMode
+                title="Revision de citas"
+                emptyMessage="No hay citas para revisar."
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                filterDay={filterDay}
+                onFilterDayChange={setFilterDay}
+                filterMonth={filterMonth}
+                onFilterMonthChange={setFilterMonth}
               filterYear={filterYear}
               onFilterYearChange={setFilterYear}
-            />
+              />
+            </Suspense>
           </section>
         )}
 
@@ -4016,8 +4620,8 @@ export default function DashboardPage() {
               {isLogistica ? "Registro de tus acciones sobre citas." : "Registro de acciones sobre citas."}
             </p>
             <div className="mb-3 w-full sm:max-w-xs">
-              <label className="mb-1 block text-xs font-medium text-slate-600">Filtrar por fecha</label>
-              <input type="date" className={input} value={historyDateFilter} onChange={(e) => setHistoryDateFilter(e.target.value)} />
+              <label htmlFor="history-date-filter" className="mb-1 block text-xs font-medium text-slate-600">Filtrar por fecha</label>
+              <input id="history-date-filter" type="date" className={input} value={historyDateFilter} onChange={(e) => setHistoryDateFilter(e.target.value)} />
             </div>
             <div className="max-h-[28rem] space-y-2 overflow-y-auto">
               {filteredLogisticaHistoryLogs.length === 0 && <p className="text-sm text-slate-500">Sin registros para la fecha seleccionada.</p>}
