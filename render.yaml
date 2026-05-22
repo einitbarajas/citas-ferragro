@@ -16,7 +16,7 @@ services:
     autoDeploy: true
     rootDir: backend
     # No ejecutar scripts de BD en build (si fallan, Render no publica). El arranque corrige el Admin.
-    buildCommand: pip install --upgrade pip && pip install -r requirements-prod.txt
+    buildCommand: bash build.sh
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:

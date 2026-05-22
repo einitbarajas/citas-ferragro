@@ -11,6 +11,7 @@ import {
   deriveWarehousesFromAppointments,
   isApiRouteMissing,
 } from "../api/apiCompatibility";
+import ApiStaleBanner from "../components/ApiStaleBanner";
 import ConfirmDialog from "../components/ConfirmDialog";
 import BrandLogo from "../components/BrandLogo";
 import NotificationCenter from "../components/NotificationCenter";
@@ -3220,6 +3221,7 @@ export default function DashboardPage() {
           </button>
         </div>
         {!isProveedor && mainHeader}
+        <ApiStaleBanner />
         {quickActions}
         {accionesRapidasCitas}
 
