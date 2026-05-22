@@ -61,6 +61,19 @@ Sin `-Seed`.
 4. Iniciar sesión de nuevo  
 5. **Equipo** → desplegable con **Administrador de bodega**
 
+### Usuario «Administrador de bodega» (ya incluido en el script)
+
+Tras `arreglar-esquema-produccion.ps1` queda un usuario listo para entrar:
+
+| Campo | Valor |
+|-------|--------|
+| Correo | `admin.bodega@ferragro.com` |
+| Contraseña | `FerragroPortal2026!` |
+| Documento | `90000002` |
+| Bodegas | Todas las activas en la BD |
+
+**Alternativa sin PowerShell:** Render → ferragro-db → PSQL → pegar todo `db/scripts/ARREGLAR-TODO-PRODUCCION.sql`.
+
 ### 4. Comprobar logs
 
 En Render → ferragro-db → **Logs**: ya no deben salir errores de `IdBodega`.

@@ -53,7 +53,8 @@ $migrations = @(
   "019_franjas_semanales_unique_por_equipo.sql",
   "020_admin_bodega.sql",
   "021_equipos_descarga_integridad.sql",
-  "022_fix_proveedor_ci_email.sql"
+  "022_fix_proveedor_ci_email.sql",
+  "023_admin_bodega_usuario.sql"
 )
 
 Write-Host ""
@@ -76,11 +77,25 @@ if ($LASTEXITCODE -ne 0) {
   throw "run-database-crud fallo con codigo $LASTEXITCODE"
 }
 
+$python = Join-Path $RepoRoot "backend\.venv\Scripts\python.exe"
+if (-not (Test-Path $python)) { $python = "python" }
+Write-Host ""
+Write-Host "[Usuario] ensure_admin_bodega_production.py" -ForegroundColor Green
+Push-Location (Join-Path $RepoRoot "backend")
+$env:PYTHONPATH = "."
+& $python scripts\ensure_admin_bodega_production.py
+$pyExit = $LASTEXITCODE
+Pop-Location
+if ($pyExit -ne 0) {
+  Write-Host "Script Python fallo; el SQL 023 ya creo el usuario si psql OK." -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "=== Esquema actualizado ===" -ForegroundColor Green
 Write-Host "1. Cierra sesion en https://frontend-ferragro.vercel.app"
 Write-Host "2. Ctrl+F5 y vuelve a entrar"
-Write-Host "3. Equipo -> debe salir Administrador de bodega"
+Write-Host "3. Equipo -> Administrador de bodega en el desplegable"
+Write-Host "4. Login admin bodega: admin.bodega@ferragro.com / FerragroPortal2026!"
 Write-Host ""
 Write-Host "Si quieres guardar la URL: copiala a $localEnv como RENDER_DATABASE_URL=..." -ForegroundColor DarkGray
 

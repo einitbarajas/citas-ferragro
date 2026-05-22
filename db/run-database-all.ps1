@@ -22,6 +22,7 @@
     15) init/016_equipos_descarga.sql — equipos de descarga en bodegas y proveedores
     16) init/020_admin_bodega.sql — rol AdminBodega y asignación por bodega
     17) init/021_equipos_descarga_integridad.sql — citas/franjas alineadas al muelle de su bodega
+    18) init/023_admin_bodega_usuario.sql — usuario AdminBodega de producción (opcional)
     16) run-database-crud.ps1 — funciones PL/pgSQL en database-crud/
     11) seeds/003_seed_data.sql — solo con -Seed (TRUNCATE + datos de ejemplo; solo desarrollo)
 
@@ -86,7 +87,8 @@ $initSteps = @(
   @{ Label = "019_franjas_semanales_equipo"; Rel = "init\019_franjas_semanales_unique_por_equipo.sql" },
   @{ Label = "020_admin_bodega"; Rel = "init\020_admin_bodega.sql" },
   @{ Label = "021_equipos_integridad"; Rel = "init\021_equipos_descarga_integridad.sql" },
-  @{ Label = "022_fix_proveedor_ci_email"; Rel = "init\022_fix_proveedor_ci_email.sql" }
+  @{ Label = "022_fix_proveedor_ci_email"; Rel = "init\022_fix_proveedor_ci_email.sql" },
+  @{ Label = "023_admin_bodega_user"; Rel = "init\023_admin_bodega_usuario.sql" }
 )
 
 $totalSteps = $initSteps.Count + 1
