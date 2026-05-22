@@ -501,9 +501,15 @@ Subir a GitHub **no** cambia el API si en **Events** el último deploy es de hac
 1. Panel: https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0  
 2. **Manual Deploy** → **Deploy latest commit** (no Rollback).  
 3. **Settings → Build & Deploy:** repo `citas-ferragro`, rama `main`, **Root Directory** `backend`, **Auto-Deploy** On.  
-4. Opcional: **Deploy Hook** → secreto `RENDER_DEPLOY_HOOK` en GitHub Actions (workflow `.github/workflows/deploy-render-api.yml`).
+4. **Deploy Hook** obligatorio para CI: secreto `RENDER_DEPLOY_HOOK` en GitHub (workflow `deploy-render-api.yml` falla si falta).
+5. Guía completa enlace Git: [`docs/CONECTAR_GIT_VERCEL_RENDER.md`](docs/CONECTAR_GIT_VERCEL_RENDER.md).
 
 Scripts en el repo:
+
+```powershell
+.\scripts\conectar-git-produccion.ps1      # paneles + checklist
+.\scripts\setup-github-deploy-secrets.ps1 # VERCEL_TOKEN y RENDER_DEPLOY_HOOK
+```
 
 ```powershell
 .\scripts\deploy-render-ahora.ps1      # requiere $env:RENDER_DEPLOY_HOOK o abre el panel
@@ -513,11 +519,12 @@ cd frontend; npx vercel deploy --prod --yes   # front sin depender del auto-depl
 
 ### 6.2) Vercel (frontend)
 
-1. Proyecto `frontend` en equipo `ferragro`; **Root Directory:** `frontend`.
-2. Variables **Production**:
+1. Proyecto `frontend` en equipo `ferragro`; **Root Directory:** `frontend` (al conectar Git).
+2. **Conectar GitHub:** [Settings → Git](https://vercel.com/ferragro/frontend/settings/git) → repo `einitbarajas/citas-ferragro`, rama `main`. Si el panel no deja conectar, usa el workflow Actions con secreto `VERCEL_TOKEN` (ver [`docs/CONECTAR_GIT_VERCEL_RENDER.md`](docs/CONECTAR_GIT_VERCEL_RENDER.md)).
+3. Variables **Production**:
    - `VITE_API_URL=https://ferragro-api.onrender.com` (sin `/` final)
    - `VITE_API_PREFIX=/api/v1`
-3. Tras cambiar variables: **Redeploy**. Tras `git push`, Vercel suele desplegar solo; si no ves cambios, redeploy manual o CLI arriba.
+4. Tras `git push` a `main` (cambios en `frontend/`), debe desplegar solo (Git o workflow `deploy-vercel-frontend.yml`).
 
 ### 6.3) Enlazar front y back
 

@@ -4,7 +4,7 @@
 
 Abre en el navegador: https://ferragro-api.onrender.com/health
 
-Debe decir `"build_id":"2026-05-19-live-v2"` (o más reciente).
+Debe decir un `build_id` reciente (el de `backend/app/main.py` → `API_BUILD_ID`, p. ej. `2026-05-22-calendar-per-team-v1`).
 
 Si dice `2026-05-15-orphan-cleanup-b` → **el API en Render NO está actualizado**.
 
@@ -42,7 +42,17 @@ Si Repository está vacío: **Settings** → conecta GitHub y el repo, guarda, l
 
 1. **ferragro-api** → **Settings** → **Deploy Hook** → **Create Hook** → copia la URL.  
 2. GitHub → repo → **Settings** → **Secrets** → **Actions** → `RENDER_DEPLOY_HOOK` = esa URL.  
-3. Cada push a `main` (carpeta `backend/`) disparará deploy.
+3. Cada push a `main` (carpeta `backend/`) disparará deploy (el workflow **falla** si el hook falta o el API no actualiza `build_id`).
+
+### Vercel sin «Connect Git» en el panel
+
+1. Secreto `VERCEL_TOKEN` en GitHub Actions.  
+2. Workflow `deploy-vercel-frontend.yml` despliega en cada push a `frontend/`.  
+3. Guía: [`docs/CONECTAR_GIT_VERCEL_RENDER.md`](docs/CONECTAR_GIT_VERCEL_RENDER.md)
+
+```powershell
+.\scripts\conectar-git-produccion.ps1
+```
 
 ---
 

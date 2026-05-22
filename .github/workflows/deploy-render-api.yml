@@ -1,7 +1,6 @@
-# Dispara deploy del API en Render al hacer push a main (backend o render.yaml).
-# Configura el secreto RENDER_DEPLOY_HOOK en GitHub:
-#   Render → ferragro-api → Settings → Deploy Hook → copiar URL
-#   GitHub → repo → Settings → Secrets → Actions → RENDER_DEPLOY_HOOK
+# Dispara deploy del API en Render en cada push a main que toque backend o render.yaml.
+# Requiere RENDER_DEPLOY_HOOK (Render → ferragro-api → Settings → Deploy Hook).
+# También activa Auto-Deploy y repo conectado en Render (ver docs/CONECTAR_GIT_VERCEL_RENDER.md).
 name: Deploy Render API
 
 on:
@@ -17,13 +16,52 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Read expected build_id
+        id: build
+        run: |
+          BUILD_ID=$(grep -E '^API_BUILD_ID\s*=' backend/app/main.py | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "expected=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "Expected API_BUILD_ID: $BUILD_ID"
+
       - name: Trigger Render deploy
         env:
           DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
           if [ -z "$DEPLOY_HOOK" ]; then
-            echo "RENDER_DEPLOY_HOOK no configurado. Usa Manual Deploy en Render."
-            exit 0
+            echo "::error::RENDER_DEPLOY_HOOK no configurado."
+            echo "Render → ferragro-api → Settings → Deploy Hook → Create Hook"
+            echo "GitHub → repo → Settings → Secrets → Actions → RENDER_DEPLOY_HOOK"
+            exit 1
           fi
-          curl -fsSL -X POST "$DEPLOY_HOOK"
-          echo "Deploy solicitado en Render."
+          HTTP_CODE=$(curl -sS -o /tmp/render-hook.out -w "%{http_code}" -X POST "$DEPLOY_HOOK")
+          cat /tmp/render-hook.out || true
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::Deploy Hook respondió HTTP $HTTP_CODE"
+            exit 1
+          fi
+          echo "Deploy solicitado en Render (HTTP $HTTP_CODE)."
+
+      - name: Wait for new build on /health
+        env:
+          EXPECTED: ${{ steps.build.outputs.expected }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          API="https://ferragro-api.onrender.com/health"
+          for i in $(seq 1 24); do
+            sleep 20
+            BODY=$(curl -fsS --max-time 90 "$API" || echo "{}")
+            BUILD_ID=$(echo "$BODY" | grep -o '"build_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+            GIT_COMMIT=$(echo "$BODY" | grep -o '"render_git_commit":"[^"]*"' | head -1 | cut -d'"' -f4)
+            echo "intento $i: build_id=$BUILD_ID render_git_commit=${GIT_COMMIT:-null}"
+            if [ "$BUILD_ID" = "$EXPECTED" ]; then
+              echo "API en producción con build_id=$EXPECTED"
+              exit 0
+            fi
+          done
+          echo "::warning::Tras 8 min el API aún no muestra build_id=$EXPECTED."
+          echo "Abre Render → Events: puede haber Build failed o Auto-Deploy apagado."
+          echo "Manual Deploy → Deploy latest commit en:"
+          echo "https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0"
+          exit 1
