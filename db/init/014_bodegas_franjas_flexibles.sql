@@ -12,9 +12,28 @@ CREATE TABLE IF NOT EXISTS "Bodegas" (
 
 COMMENT ON TABLE "Bodegas" IS 'Lugares de entrega donde se agendan citas; cada bodega tiene sus propias franjas horarias.';
 
-INSERT INTO "Bodegas" ("Nombre", "Direccion", "Activa", "Orden")
-SELECT 'Bodega principal', NULL, TRUE, 0
-WHERE NOT EXISTS (SELECT 1 FROM "Bodegas" LIMIT 1);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'Bodegas' AND column_name = 'EquiposDescarga'
+  ) THEN
+    UPDATE "Bodegas" SET "EquiposDescarga" = 1 WHERE "EquiposDescarga" IS NULL;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM "Bodegas" LIMIT 1) THEN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'Bodegas' AND column_name = 'EquiposDescarga'
+    ) THEN
+      INSERT INTO "Bodegas" ("Nombre", "Direccion", "Activa", "Orden", "EquiposDescarga")
+      VALUES ('Bodega principal', NULL, TRUE, 0, 1);
+    ELSE
+      INSERT INTO "Bodegas" ("Nombre", "Direccion", "Activa", "Orden")
+      VALUES ('Bodega principal', NULL, TRUE, 0);
+    END IF;
+  END IF;
+END $$;
 
 DO $$
 BEGIN
