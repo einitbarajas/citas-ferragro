@@ -38,7 +38,7 @@ Workflow: `.github/workflows/deploy-vercel-frontend.yml`
    - Valor: el token
 3. Cada push a `main` que cambie `frontend/**` desplegará a https://frontend-ferragro.vercel.app
 
-IDs del proyecto (referencia, no son secretos): `frontend/.vercel/project.json.example`
+IDs del proyecto (referencia, no son secretos): `frontend/vercel-project.ids.json`
 
 ---
 
