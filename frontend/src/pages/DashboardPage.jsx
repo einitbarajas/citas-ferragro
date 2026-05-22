@@ -527,9 +527,17 @@ export default function DashboardPage() {
   const isStaff = isLogistica || isAdminPanel;
   const adminNavEntries = isWarehouseAdmin ? ADMIN_BODEGA_NAV : ADMIN_NAV;
 
-  const internalRolesOnly = roles.filter((r) =>
-    ["Admin", "Logistica", "AdminBodega"].includes(r.name)
-  );
+  const internalRolesOnly = useMemo(() => {
+    const wanted = ["Admin", "Logistica", "AdminBodega"];
+    const seen = new Set();
+    const list = [];
+    for (const r of roles) {
+      if (!wanted.includes(r.name) || seen.has(r.name)) continue;
+      seen.add(r.name);
+      list.push(r);
+    }
+    return list;
+  }, [roles]);
   const staffUsersOnly = internalUsers.filter((u) =>
     ["Admin", "Logistica", "AdminBodega"].includes(u.role_name)
   );
