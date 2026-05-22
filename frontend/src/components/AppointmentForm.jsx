@@ -41,6 +41,8 @@ export default function AppointmentForm({
     status: "sin_revision",
   });
   const [resolvedWindows, setResolvedWindows] = useState([]);
+  const [unloadTeams, setUnloadTeams] = useState([]);
+  const [unloadTeamId, setUnloadTeamId] = useState("");
   const [conflict, setConflict] = useState(false);
   const [formError, setFormError] = useState("");
 
@@ -93,8 +95,35 @@ export default function AppointmentForm({
 
   useEffect(() => {
     const run = async () => {
+      if (!warehouseId) {
+        setUnloadTeams([]);
+        setUnloadTeamId("");
+        return;
+      }
+      try {
+        const response = await api.get(`${API_PREFIX}/appointments/unload-teams`, {
+          params: { warehouse_id: warehouseId },
+        });
+        const payload = parseApiResponse(response);
+        const teams = Array.isArray(payload.data) ? payload.data : [];
+        setUnloadTeams(teams);
+        setUnloadTeamId((prev) => {
+          if (prev && teams.some((t) => String(t.id) === String(prev))) return prev;
+          return teams.length === 1 ? String(teams[0].id) : teams[0]?.id ? String(teams[0].id) : "";
+        });
+      } catch {
+        setUnloadTeams([]);
+        setUnloadTeamId("");
+      }
+    };
+    run();
+  }, [warehouseId]);
+
+  useEffect(() => {
+    const run = async () => {
       const chosen = parseSlotKey(form.appointment_slot);
-      if (!form.appointment_date || !chosen || !warehouseId) {
+      const teamId = Number(unloadTeamId);
+      if (!form.appointment_date || !chosen || !warehouseId || !Number.isFinite(teamId) || teamId < 1) {
         setConflict(false);
         return;
       }
@@ -105,6 +134,7 @@ export default function AppointmentForm({
             start_time: iso,
             duration_minutes: chosen.duration_minutes,
             warehouse_id: warehouseId,
+            unload_team_id: teamId,
           },
         });
         const payload = parseApiResponse(response);
@@ -118,7 +148,7 @@ export default function AppointmentForm({
       }
     };
     run();
-  }, [form.appointment_date, form.appointment_slot, warehouseId]);
+  }, [form.appointment_date, form.appointment_slot, warehouseId, unloadTeamId]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -147,6 +177,11 @@ export default function AppointmentForm({
       setFormError("⚠ Selecciona una bodega.");
       return;
     }
+    const teamId = Number(unloadTeamId);
+    if (!Number.isFinite(teamId) || teamId < 1) {
+      setFormError("⚠ Selecciona el muelle / equipo de descarga de la bodega.");
+      return;
+    }
     if (!/^\d{10}$/.test(form.provider_id || "")) {
       setFormError("⚠ El NIT del proveedor debe tener exactamente 10 dígitos.");
       return;
@@ -173,6 +208,7 @@ export default function AppointmentForm({
     onSubmit({
       provider_id: Number(form.provider_id),
       warehouse_id: warehouseId,
+      warehouse_unload_team_id: teamId,
       material_description: form.material_description,
       start_time: `${form.appointment_date}T${chosen.start_local}`,
       duration_minutes: chosen.duration_minutes,
@@ -199,6 +235,27 @@ export default function AppointmentForm({
           </option>
         ))}
       </select>
+      {unloadTeams.length > 0 && (
+        <>
+          <label htmlFor="appointment-unload-team" className="text-sm font-medium text-[#121212]">
+            Muelle / equipo de descarga
+          </label>
+          <select
+            id="appointment-unload-team"
+            className={field}
+            value={unloadTeamId}
+            onChange={(e) => setUnloadTeamId(e.target.value)}
+            required
+          >
+            {unloadTeams.length > 1 && <option value="">Selecciona un muelle…</option>}
+            {unloadTeams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
       <label htmlFor="appointment-provider-id" className="text-sm font-medium text-[#121212]">
         NIT proveedor
       </label>

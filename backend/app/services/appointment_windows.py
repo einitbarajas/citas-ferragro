@@ -67,6 +67,24 @@ def list_warehouse_open_days_in_month(db: Session, year: int, month: int, wareho
     return open_days
 
 
+def list_team_open_days_in_month(
+    db: Session, year: int, month: int, warehouse_id: int, warehouse_unload_team_id: int
+) -> list[str]:
+    """Días del mes en los que el equipo tiene franja (semanal y/o excepción por fecha)."""
+    start_day = date(year, month, 1)
+    if month == 12:
+        end_day = date(year + 1, 1, 1)
+    else:
+        end_day = date(year, month + 1, 1)
+    open_days: list[str] = []
+    cursor = start_day
+    while cursor < end_day:
+        if day_has_team_schedule(db, cursor, warehouse_id, warehouse_unload_team_id):
+            open_days.append(str(cursor))
+        cursor += timedelta(days=1)
+    return open_days
+
+
 def get_active_warehouse_or_raise(db: Session, warehouse_id: int) -> Warehouse:
     warehouse = db.get(Warehouse, warehouse_id)
     if not warehouse or not warehouse.active:

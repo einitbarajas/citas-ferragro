@@ -144,6 +144,35 @@ def get_unload_team_or_raise(db: Session, warehouse_id: int, team_id: int) -> Wa
     return team
 
 
+def resolve_unload_team_id_for_warehouse(
+    db: Session,
+    warehouse_id: int,
+    team_id: int | None,
+    *,
+    strict: bool = False,
+) -> int | None:
+    """Resuelve el muelle de una bodega. En lecturas (strict=False) ignora IDs ajenos o inactivos."""
+    teams = list_active_unload_teams(db, warehouse_id)
+    if not teams:
+        if strict:
+            raise HTTPException(
+                status_code=400,
+                detail="La bodega no tiene equipos de descarga. Configúralos en Bodegas.",
+            )
+        return None
+    if team_id is None:
+        return teams[0].id
+    team = db.get(WarehouseUnloadTeam, team_id)
+    if team and team.warehouse_id == warehouse_id and team.active:
+        return team.id
+    if strict:
+        raise HTTPException(
+            status_code=400,
+            detail="El equipo de descarga no existe o no está activo en esta bodega.",
+        )
+    return teams[0].id
+
+
 def unload_team_to_dict(team: WarehouseUnloadTeam) -> dict:
     return {
         "id": team.id,

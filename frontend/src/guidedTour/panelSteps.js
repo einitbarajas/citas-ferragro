@@ -6,6 +6,13 @@
  * `scrollMainTop`: desplaza el área principal arriba al explicar el contenido.
  */
 
+import {
+  ADMIN_BODEGA_PANEL_TARGETS,
+  ADMIN_PANEL_TARGETS,
+  LOGISTICA_PANEL_TARGETS,
+  PROVEEDOR_PANEL_TARGETS,
+} from "./panelTargets";
+
 const adminSteps = [
   {
     title: "Inicio del manual (Admin)",
@@ -51,12 +58,36 @@ const adminSteps = [
   { title: "Sección del menú: Informes", description: "Agrupa la analítica: métricas y lectura de desempeño.", sidebarMobile: "open" },
   { title: "Ítem: Analítica", description: "Botón del menú para métricas y gráficos.", moduleTarget: "analitica", sidebarMobile: "open" },
   { title: "Contenido: Analítica", description: "Aquí interpretas indicadores para decisiones operativas.", moduleTarget: "analitica", scrollMainTop: true, sidebarMobile: "close" },
-  { title: "Sección del menú: Operación", description: "Configuración de franjas horarias en las que se permite agendar.", sidebarMobile: "open" },
-  { title: "Ítem: Franjas horarias", description: "Botón del menú para ventanas de agendamiento.", moduleTarget: "horarios", sidebarMobile: "open" },
-  { title: "Contenido: Franjas horarias", description: "Aquí defines cuándo se permite agendar citas.", moduleTarget: "horarios", scrollMainTop: true, sidebarMobile: "close" },
+  { title: "Sección del menú: Operación", description: "Bodegas (muelles y equipos) y franjas horarias por muelle.", sidebarMobile: "open" },
+  { title: "Ítem: Bodegas", description: "Botón del menú para equipos de descarga y nombres de muelles.", moduleTarget: "bodegas", sidebarMobile: "open" },
+  {
+    title: "Contenido: Bodegas",
+    description: "Configura cuántos muelles tiene cada bodega y sus nombres; pulsa Aplicar cambios en cada fila.",
+    bullets: [
+      "Admin global: puede crear bodegas nuevas y desactivarlas.",
+      "Cantidad de Equipos y Nombres de muelles se guardan al aplicar cambios.",
+    ],
+    moduleTarget: "bodegas",
+    scrollMainTop: true,
+    sidebarMobile: "close",
+  },
+  { title: "Ítem: Franjas horarias", description: "Botón del menú para turnos de agendamiento por muelle.", moduleTarget: "horarios", sidebarMobile: "open" },
+  {
+    title: "Contenido: Franjas horarias",
+    description: "Elige bodega y muelle; define franjas semanales o por fecha para ese equipo.",
+    moduleTarget: "horarios",
+    scrollMainTop: true,
+    sidebarMobile: "close",
+  },
   { title: "Sección del menú: Administración", description: "Equipo interno, auditoría de cambios y ajustes de tu cuenta.", sidebarMobile: "open" },
   { title: "Ítem: Equipo (Admin / Logística)", description: "Botón del menú para usuarios internos y roles.", moduleTarget: "equipo", sidebarMobile: "open" },
-  { title: "Contenido: Equipo", description: "Aquí creas, editas y gestionas roles de Admin/Logística.", moduleTarget: "equipo", scrollMainTop: true, sidebarMobile: "close" },
+  {
+    title: "Contenido: Equipo",
+    description: "Creas usuarios Admin, Logística o Administrador de bodega (con bodegas asignadas).",
+    moduleTarget: "equipo",
+    scrollMainTop: true,
+    sidebarMobile: "close",
+  },
   { title: "Ítem: Proveedores", description: "Listado, suspensión y eliminación de cuentas proveedor.", moduleTarget: "proveedores", sidebarMobile: "open" },
   { title: "Contenido: Proveedores", description: "Filtra por estado, edita datos y suspende o elimina según reglas del portal.", moduleTarget: "proveedores", scrollMainTop: true, sidebarMobile: "close" },
   { title: "Ítem: Auditoría", description: "Botón del menú para trazabilidad de cambios.", moduleTarget: "auditoria", sidebarMobile: "open" },
@@ -65,6 +96,71 @@ const adminSteps = [
   { title: "Contenido: Configuraciones", description: "Aquí actualizas contraseña, perfil y foto.", moduleTarget: "configuraciones", scrollMainTop: true, sidebarMobile: "close" },
   { title: "Pie del menú: tu perfil", description: "Nombre visible, rol y foto; se usa en auditoría y comunicación interna.", sidebarMobile: "open" },
   { title: "Pie del menú: Cerrar sesión", description: "Salida segura del panel. Vuelve a iniciar sesión cuando lo necesites.", sidebarMobile: "open" },
+];
+
+/** Admin de bodega: solo bodegas asignadas (sin analítica, proveedores ni auditoría global). */
+const adminBodegaSteps = [
+  {
+    title: "Inicio del manual (Admin de bodega)",
+    subtitle: "Tu alcance por bodega",
+    description: "Solo ves y configuras las bodegas que te asignó el administrador global.",
+    bullets: [
+      "No puedes crear bodegas nuevas ni desactivarlas.",
+      "Sí puedes ajustar muelles, nombres y franjas de tus bodegas.",
+    ],
+    sidebarMobile: "close",
+  },
+  {
+    title: "Cómo usar el menú",
+    subtitle: "Misma idea que el panel general",
+    description: "Elige el módulo a la izquierda; el detalle aparece al centro.",
+    bullets: ["En móvil, abre «Menú» primero.", "Citas, búsqueda y revisión son el día a día."],
+    sidebarMobile: "open",
+  },
+  {
+    title: "Centro de notificaciones",
+    subtitle: "Campana arriba a la derecha",
+    description: "Avisos de citas nuevas o cambios en tus bodegas.",
+    bullets: [
+      "El número ámbar indica no leídas.",
+      "Pulsa un aviso para ir a Revisión de citas.",
+    ],
+    sidebarMobile: "close",
+    ahora: "Mira arriba a la derecha del panel central: icono de campana junto a «Manual guiado».",
+  },
+  { title: "Marca del panel", description: "Panel de administrador de bodega (alcance limitado).", sidebarMobile: "open" },
+  { title: "Sección del menú: Principal", description: "Citas, búsqueda y revisión operativa.", sidebarMobile: "open" },
+  { title: "Ítem: Citas", description: "Resumen del periodo.", moduleTarget: "citas", sidebarMobile: "open" },
+  { title: "Contenido: Citas", description: "Indicadores de citas en tus bodegas.", moduleTarget: "citas", scrollMainTop: true, sidebarMobile: "close" },
+  { title: "Ítem: Buscar citas", description: "Filtros y detalle.", moduleTarget: "buscar_citas", sidebarMobile: "open" },
+  { title: "Contenido: Buscar citas", description: "Consulta citas por fecha y bodega.", moduleTarget: "buscar_citas", scrollMainTop: true, sidebarMobile: "close" },
+  { title: "Ítem: Revisión de citas", description: "Cambio de estados.", moduleTarget: "revision_citas", sidebarMobile: "open" },
+  { title: "Contenido: Revisión de citas", description: "Revisada, finalizada, no presentada o cancelada.", moduleTarget: "revision_citas", scrollMainTop: true, sidebarMobile: "close" },
+  { title: "Sección del menú: Operación", description: "Bodegas y franjas de tus bodegas asignadas.", sidebarMobile: "open" },
+  { title: "Ítem: Bodegas", description: "Muelles y nombres.", moduleTarget: "bodegas", sidebarMobile: "open" },
+  {
+    title: "Contenido: Bodegas",
+    description: "Cambia Equipos (cantidad de muelles), abre Nombres de muelles y pulsa Aplicar cambios.",
+    bullets: [
+      "No puedes cambiar el nombre de la bodega ni crear otras bodegas.",
+      "Para reducir muelles, baja Equipos y aplica (si no hay citas activas en ese muelle).",
+    ],
+    moduleTarget: "bodegas",
+    scrollMainTop: true,
+    sidebarMobile: "close",
+  },
+  { title: "Ítem: Franjas horarias", description: "Turnos por muelle.", moduleTarget: "horarios", sidebarMobile: "open" },
+  {
+    title: "Contenido: Franjas horarias",
+    description: "Selecciona bodega y muelle; configura franjas semanales o por fecha.",
+    moduleTarget: "horarios",
+    scrollMainTop: true,
+    sidebarMobile: "close",
+  },
+  { title: "Ítem: Configuraciones", description: "Tu cuenta.", moduleTarget: "configuraciones", sidebarMobile: "open" },
+  { title: "Contenido: Configuraciones", description: "Contraseña, perfil y foto.", moduleTarget: "configuraciones", scrollMainTop: true, sidebarMobile: "close" },
+  { title: "Pie del menú: tu perfil", description: "Tu nombre y rol en el pie del menú.", sidebarMobile: "open" },
+  { title: "Pie del menú: Cerrar sesión", description: "Salida segura.", sidebarMobile: "open" },
 ];
 
 const logisticaSteps = [
@@ -140,7 +236,17 @@ const proveedorSteps = [
   { title: "Marca del panel", description: "Cabecera del menú: logotipo FERRAGRO y panel de proveedor.", sidebarMobile: "open" },
   { title: "Sección del menú: Principal", description: "Accesos a inicio, citas vigentes, historial y configuración de cuenta.", sidebarMobile: "open" },
   { title: "Ítem: Inicio", description: "Botón del menú para el panel principal del proveedor.", moduleTarget: "inicio", sidebarMobile: "open" },
-  { title: "Contenido: Inicio", description: "Estado general y disponibilidad.", moduleTarget: "inicio", scrollMainTop: true, sidebarMobile: "close" },
+  {
+    title: "Contenido: Inicio",
+    description: "Elige bodega y muelle, luego fecha y turno; describe el material a entregar.",
+    bullets: [
+      "Cada muelle tiene su propio calendario y turnos.",
+      "Debes seleccionar muelle antes de ver días disponibles.",
+    ],
+    moduleTarget: "inicio",
+    scrollMainTop: true,
+    sidebarMobile: "close",
+  },
   { title: "Ítem: Ver mis citas", description: "Botón del menú para consultar citas vigentes.", moduleTarget: "mis_citas", sidebarMobile: "open" },
   { title: "Contenido: Mis citas", description: "Aquí ves fecha, hora y estado de tus citas activas.", moduleTarget: "mis_citas", scrollMainTop: true, sidebarMobile: "close" },
   { title: "Ítem: Historial", description: "Botón del menú para revisar citas cerradas.", moduleTarget: "historial", sidebarMobile: "open" },
@@ -151,10 +257,20 @@ const proveedorSteps = [
   { title: "Pie del menú: Cerrar sesión", description: "Salida segura del panel.", sidebarMobile: "open" },
 ];
 
-import { ADMIN_PANEL_TARGETS, LOGISTICA_PANEL_TARGETS, PROVEEDOR_PANEL_TARGETS } from "./panelTargets";
-
-export function getPanelGuidedSteps(isAdmin, isLogistica, isProveedor) {
-  const steps = isAdmin ? adminSteps : isLogistica ? logisticaSteps : proveedorSteps;
-  const targets = isAdmin ? ADMIN_PANEL_TARGETS : isLogistica ? LOGISTICA_PANEL_TARGETS : PROVEEDOR_PANEL_TARGETS;
+export function getPanelGuidedSteps(isGlobalAdmin, isWarehouseAdmin, isLogistica, isProveedor) {
+  const steps = isWarehouseAdmin
+    ? adminBodegaSteps
+    : isGlobalAdmin
+      ? adminSteps
+      : isLogistica
+        ? logisticaSteps
+        : proveedorSteps;
+  const targets = isWarehouseAdmin
+    ? ADMIN_BODEGA_PANEL_TARGETS
+    : isGlobalAdmin
+      ? ADMIN_PANEL_TARGETS
+      : isLogistica
+        ? LOGISTICA_PANEL_TARGETS
+        : PROVEEDOR_PANEL_TARGETS;
   return steps.map((s, i) => ({ ...s, targetSelector: targets[i] || null }));
 }

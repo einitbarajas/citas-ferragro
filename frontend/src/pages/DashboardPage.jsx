@@ -6,7 +6,7 @@ import {
   scrollDashboardSidebarNavItemIntoView,
   TOUR_DASHBOARD_SIDEBAR_SELECTOR,
 } from "../guidedTour/panelUtils";
-import api, { API_PREFIX, parseApiError, parseApiResponse } from "../api/client";
+import api, { API_PREFIX, isAppointmentSlotConflict, parseApiError, parseApiResponse } from "../api/client";
 import {
   deriveWarehousesFromAppointments,
   isApiRouteMissing,
@@ -120,6 +120,26 @@ const ROLE_LABELS = {
 const card = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
 const inlay = "rounded-lg border border-slate-200 bg-slate-50/90 p-4";
 const TOAST_AUTO_DISMISS_MS = 5000;
+const WAREHOUSE_SAVE_FLASH_KEY = "ferragro_warehouse_save_flash_v1";
+
+function stashWarehouseSaveFlash(message) {
+  if (!message) return;
+  try {
+    sessionStorage.setItem(WAREHOUSE_SAVE_FLASH_KEY, message);
+  } catch {
+    /* ignore */
+  }
+}
+
+function consumeWarehouseSaveFlash() {
+  try {
+    const message = sessionStorage.getItem(WAREHOUSE_SAVE_FLASH_KEY);
+    if (message) sessionStorage.removeItem(WAREHOUSE_SAVE_FLASH_KEY);
+    return message || "";
+  } catch {
+    return "";
+  }
+}
 const input =
   "w-full rounded-lg border border-slate-400 bg-white px-3 py-2 text-sm text-[#121212] placeholder:text-slate-500 focus:border-[#35783C] focus:outline-none focus:ring-2 focus:ring-[#35783C]/30";
 const btnPrimary =
@@ -177,11 +197,12 @@ function formatLongEsDateFromISO(isoDate) {
 }
 
 /** Evita enviar unload_team_id de otra bodega tras cambiar de bodega en el selector. */
-function resolveUnloadTeamIdForWarehouse(teamId, teams) {
-  if (teamId == null || teamId === "") return "";
+function resolveUnloadTeamIdForWarehouse(teamId, teams, warehouseId) {
+  if (teamId == null || teamId === "" || warehouseId == null || warehouseId === "") return "";
   const id = Number(teamId);
-  if (!Number.isFinite(id) || id < 1) return "";
-  if (teams.some((t) => Number(t.id) === id)) return String(id);
+  const whId = Number(warehouseId);
+  if (!Number.isFinite(id) || id < 1 || !Number.isFinite(whId) || whId < 1) return "";
+  if (teams.some((t) => Number(t.id) === id && Number(t.warehouse_id) === whId)) return String(id);
   return "";
 }
 
@@ -365,6 +386,7 @@ export default function DashboardPage() {
   const [providerSlotUnavailableReason, setProviderSlotUnavailableReason] = useState("");
   const [providerMinimumNoticeHours, setProviderMinimumNoticeHours] = useState(24);
   const [providerDayAvailabilityLoading, setProviderDayAvailabilityLoading] = useState(false);
+  const [providerCreateSubmitting, setProviderCreateSubmitting] = useState(false);
   const [providerDayAvailabilityError, setProviderDayAvailabilityError] = useState("");
   const [warehouses, setWarehouses] = useState([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState(null);
@@ -409,16 +431,27 @@ export default function DashboardPage() {
   const [bulkMessage, setBulkMessage] = useState("");
   const [calendarOverrideDays, setCalendarOverrideDays] = useState([]);
   const [teamHasWeeklyFranjas, setTeamHasWeeklyFranjas] = useState(false);
+  const [unloadTeamsReadyWarehouseId, setUnloadTeamsReadyWarehouseId] = useState(null);
 
   const activeAdminFranjaTeamId = useMemo(
-    () => resolveUnloadTeamIdForWarehouse(adminFranjaUnloadTeamId, warehouseUnloadTeams),
-    [adminFranjaUnloadTeamId, warehouseUnloadTeams]
+    () =>
+      resolveUnloadTeamIdForWarehouse(
+        adminFranjaUnloadTeamId,
+        warehouseUnloadTeams,
+        selectedWarehouseId
+      ),
+    [adminFranjaUnloadTeamId, warehouseUnloadTeams, selectedWarehouseId]
   );
 
   const activeProviderUnloadTeamId = useMemo(() => {
-    const resolved = resolveUnloadTeamIdForWarehouse(selectedWarehouseUnloadTeamId, warehouseUnloadTeams);
+    const resolved = resolveUnloadTeamIdForWarehouse(
+      selectedWarehouseUnloadTeamId,
+      warehouseUnloadTeams,
+      selectedWarehouseId
+    );
     return resolved ? Number(resolved) : null;
-  }, [selectedWarehouseUnloadTeamId, warehouseUnloadTeams]);
+  }, [selectedWarehouseUnloadTeamId, warehouseUnloadTeams, selectedWarehouseId]);
+
   const [calendarMonthOffset, setCalendarMonthOffset] = useState(0);
   const [analytics, setAnalytics] = useState(null);
   const [auditActorId, setAuditActorId] = useState("");
@@ -463,6 +496,9 @@ export default function DashboardPage() {
   const isAdminPanel = isGlobalAdmin || isWarehouseAdmin;
   const isLogistica = session?.role === "Logistica";
   const isProveedor = session?.role === "Proveedor";
+
+  /** Recarga calendario/franjas solo cuando cambia el muelle relevante al rol actual. */
+  const warehouseSchedulingTeamKey = isProveedor ? activeProviderUnloadTeamId : activeAdminFranjaTeamId;
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
@@ -611,7 +647,7 @@ export default function DashboardPage() {
     const bootDelayMs = manualTourBootDelayMs();
     window.setTimeout(async () => {
       const { getPanelGuidedSteps } = await import("../guidedTour/panelSteps");
-      const steps = getPanelGuidedSteps(isAdmin, isLogistica, isProveedor);
+      const steps = getPanelGuidedSteps(isGlobalAdmin, isWarehouseAdmin, isLogistica, isProveedor);
       setPanelGuidedSteps(steps);
       setPanelGuidedIndex(0);
       if (!narrow) setPanelTourLayout(true);
@@ -771,24 +807,27 @@ export default function DashboardPage() {
 
   const loadWindows = useCallback(async () => {
     if (!session || !selectedWarehouseId) return;
-    const params = new URLSearchParams({ warehouse_id: String(selectedWarehouseId) });
-    if (activeAdminFranjaTeamId) {
-      params.set("unload_team_id", activeAdminFranjaTeamId);
-    }
-    const response = await api.get(`${API_PREFIX}/crud/appointment-franjas?${params.toString()}`);
-    const payload = parseApiResponse(response);
-    if (!payload.success) {
-      throw new Error(payload.message);
-    }
-    setWindowsPack(payload.data || null);
-    const f = payload.data?.franjas;
-    if (Array.isArray(f) && f.length > 0) {
-      setFranjaRows(f.map((w) => ({ start_local: w.start_local, end_local: w.end_local })));
-      setTeamHasWeeklyFranjas(true);
-    } else {
-      setFranjaRows([]);
+    const whId = Number(selectedWarehouseId);
+    if (!isProveedor) {
+      const params = new URLSearchParams({ warehouse_id: String(whId) });
       if (activeAdminFranjaTeamId) {
-        setTeamHasWeeklyFranjas(false);
+        params.set("unload_team_id", activeAdminFranjaTeamId);
+      }
+      const response = await api.get(`${API_PREFIX}/crud/appointment-franjas?${params.toString()}`);
+      const payload = parseApiResponse(response);
+      if (!payload.success) {
+        throw new Error(payload.message);
+      }
+      setWindowsPack(payload.data || null);
+      const f = payload.data?.franjas;
+      if (Array.isArray(f) && f.length > 0) {
+        setFranjaRows(f.map((w) => ({ start_local: w.start_local, end_local: w.end_local })));
+        setTeamHasWeeklyFranjas(true);
+      } else {
+        setFranjaRows([]);
+        if (activeAdminFranjaTeamId) {
+          setTeamHasWeeklyFranjas(false);
+        }
       }
     }
     const today = todayISO();
@@ -796,18 +835,23 @@ export default function DashboardPage() {
       day: today,
       warehouse_id: String(selectedWarehouseId),
     });
-    if (activeAdminFranjaTeamId) {
-      resolvedParams.set("unload_team_id", activeAdminFranjaTeamId);
+    const hintUnloadTeamId = isProveedor
+      ? activeProviderUnloadTeamId
+      : activeAdminFranjaTeamId
+        ? Number(activeAdminFranjaTeamId)
+        : null;
+    if (hintUnloadTeamId) {
+      resolvedParams.set("unload_team_id", String(hintUnloadTeamId));
     }
     const resolvedResponse = await api.get(
       `${API_PREFIX}/crud/appointment-franjas/resolved?${resolvedParams.toString()}`
     );
     const resolvedPayload = parseApiResponse(resolvedResponse);
     let availability = null;
-    if (isProveedor) {
+    if (isProveedor && activeProviderUnloadTeamId) {
       try {
         const availabilityResponse = await api.get(
-          `${API_PREFIX}/appointments/available-slots?day=${today}&warehouse_id=${selectedWarehouseId}`
+          `${API_PREFIX}/appointments/available-slots?day=${today}&warehouse_id=${selectedWarehouseId}&unload_team_id=${activeProviderUnloadTeamId}`
         );
         const sourceData = unwrapProviderDayAvailability(availabilityResponse);
         const slots = normalizeAvailableSlots(sourceData);
@@ -824,10 +868,14 @@ export default function DashboardPage() {
     }
     if (resolvedPayload.success) {
       setTodayWindowsHint(formatTodayWindowsHint(today, resolvedPayload.data || null, availability));
+      if (isProveedor) {
+        const tz = resolvedPayload.data?.timezone || DEFAULT_BUSINESS_TZ;
+        setWindowsPack((prev) => ({ ...(prev && typeof prev === "object" ? prev : {}), warehouse_id: whId, timezone: tz }));
+      }
     } else {
       setTodayWindowsHint("");
     }
-  }, [session, isProveedor, selectedWarehouseId, activeAdminFranjaTeamId]);
+  }, [session, isProveedor, selectedWarehouseId, warehouseSchedulingTeamKey]);
 
   const loadSpecialDayWindows = useCallback(
     async (day) => {
@@ -908,19 +956,23 @@ export default function DashboardPage() {
         .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || Number(a.id) - Number(b.id))
         .slice(0, configuredMax);
       setWarehouseUnloadTeams(teams);
+      setUnloadTeamsReadyWarehouseId(whId);
       setSelectedWarehouseUnloadTeamId((prev) => {
-        if (prev && teams.some((t) => t.id === prev)) return prev;
+        if (prev && teams.some((t) => Number(t.id) === Number(prev))) return prev;
         return teams.length === 1 ? teams[0]?.id ?? null : null;
       });
-      setAdminFranjaUnloadTeamId((prev) => {
-        if (prev && teams.some((t) => String(t.id) === String(prev))) return prev;
-        return teams[0]?.id ? String(teams[0].id) : "";
-      });
+      if (!isProveedor) {
+        setAdminFranjaUnloadTeamId((prev) => {
+          if (prev && teams.some((t) => String(t.id) === String(prev))) return prev;
+          return teams[0]?.id ? String(teams[0].id) : "";
+        });
+      }
     } catch {
       setWarehouseUnloadTeams([]);
       setSelectedWarehouseUnloadTeamId(null);
+      setUnloadTeamsReadyWarehouseId(null);
     }
-  }, [session, selectedWarehouseId, warehouses]);
+  }, [session, selectedWarehouseId, warehouses, isProveedor]);
 
   const fetchProviderDayAvailability = useCallback(
     async (dayIso, excludeAppointmentId = null, overrideUnloadTeamId = null) => {
@@ -948,6 +1000,7 @@ export default function DashboardPage() {
   );
 
   useEffect(() => {
+    setUnloadTeamsReadyWarehouseId(null);
     setWarehouseUnloadTeams([]);
     setSelectedWarehouseUnloadTeamId(null);
     setAdminFranjaUnloadTeamId("");
@@ -996,10 +1049,20 @@ export default function DashboardPage() {
   const loadProviderMonthAvailability = useCallback(
     async (targetDate) => {
       if (!session || !isProveedor || !targetDate || !selectedWarehouseId) return;
+      if (!activeProviderUnloadTeamId) {
+        setProviderAvailableDays([]);
+        return;
+      }
       const year = targetDate.getFullYear();
       const month = targetDate.getMonth() + 1;
+      const params = new URLSearchParams({
+        year: String(year),
+        month: String(month),
+        warehouse_id: String(selectedWarehouseId),
+        unload_team_id: String(activeProviderUnloadTeamId),
+      });
       const response = await api.get(
-        `${API_PREFIX}/crud/appointment-franjas/fecha/resumen?year=${year}&month=${month}&warehouse_id=${selectedWarehouseId}`
+        `${API_PREFIX}/crud/appointment-franjas/fecha/resumen?${params.toString()}`
       );
       const payload = parseApiResponse(response);
       if (!payload.success) {
@@ -1013,7 +1076,7 @@ export default function DashboardPage() {
         (Array.isArray(openDays) ? openDays : []).filter((d) => String(d) >= today)
       );
     },
-    [session, isProveedor, selectedWarehouseId]
+    [session, isProveedor, selectedWarehouseId, activeProviderUnloadTeamId]
   );
 
   const loadCalendarOverrideSummary = useCallback(
@@ -1133,6 +1196,12 @@ export default function DashboardPage() {
   }, [success, pushToast]);
 
   useEffect(() => {
+    if (!session || !authReady) return;
+    const flash = consumeWarehouseSaveFlash();
+    if (flash) pushToast(flash, "success");
+  }, [session, authReady, pushToast]);
+
+  useEffect(() => {
     if (!session || !authReady) {
       initialBootstrapDoneRef.current = false;
       return;
@@ -1186,6 +1255,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!session || !authReady || !selectedWarehouseId) return;
+    if (unloadTeamsReadyWarehouseId !== selectedWarehouseId) return;
     const run = async () => {
       try {
         await loadWindows();
@@ -1210,7 +1280,8 @@ export default function DashboardPage() {
     session,
     authReady,
     selectedWarehouseId,
-    activeAdminFranjaTeamId,
+    unloadTeamsReadyWarehouseId,
+    warehouseSchedulingTeamKey,
     loadWindows,
     isProveedor,
     isAdmin,
@@ -1352,10 +1423,17 @@ export default function DashboardPage() {
       }
     };
     run();
-  }, [isProveedor, proveedorTab, providerCalendarMonthOffset, loadProviderMonthAvailability]);
+  }, [
+    isProveedor,
+    proveedorTab,
+    providerCalendarMonthOffset,
+    loadProviderMonthAvailability,
+    activeProviderUnloadTeamId,
+    selectedWarehouseId,
+  ]);
 
   useEffect(() => {
-    if (!isProveedor || proveedorTab !== "inicio") return;
+    if (!isProveedor || proveedorTab !== "inicio" || !providerSelectedDay || !activeProviderUnloadTeamId) return;
     const run = async () => {
       try {
         await loadProviderDayAvailability(providerSelectedDay);
@@ -1364,7 +1442,14 @@ export default function DashboardPage() {
       }
     };
     run();
-  }, [isProveedor, proveedorTab, providerSelectedDay, session, loadProviderDayAvailability]);
+  }, [
+    isProveedor,
+    proveedorTab,
+    providerSelectedDay,
+    activeProviderUnloadTeamId,
+    session,
+    loadProviderDayAvailability,
+  ]);
 
   useEffect(() => {
     if (!isProveedor) return;
@@ -2215,13 +2300,14 @@ export default function DashboardPage() {
         return next;
       });
       const savedNames = namesPanelOpen && savedNamesPayload.length > 0;
-      setSuccess(
+      const successMessage =
         savedNames && willSaveCount
-          ? "Cambios guardados (muelles y nombres). Al recargar F5 se mantienen."
+          ? "Se guardaron los cambios de la bodega y los muelles."
           : savedNames
-            ? "Nombres guardados. Al recargar F5 se mantienen en Bodegas y Franjas horarias."
-            : "Cantidad de equipos de descarga actualizada."
-      );
+            ? "Se guardaron los nombres de los muelles de la bodega."
+            : "Se guardó la configuración de equipos de descarga de la bodega.";
+      stashWarehouseSaveFlash(successMessage);
+      setSuccess(successMessage);
     } catch (err) {
       const msg = parseApiError(err);
       setError(msg);
@@ -2475,11 +2561,19 @@ export default function DashboardPage() {
     const tz = String(windowsPack?.timezone || DEFAULT_BUSINESS_TZ);
     providerAppointments.forEach((a) => {
       if (a.status === "cancelado") return;
+      if (selectedWarehouseId && Number(a.warehouse_id) !== Number(selectedWarehouseId)) return;
+      if (
+        activeProviderUnloadTeamId &&
+        a.warehouse_unload_team_id != null &&
+        Number(a.warehouse_unload_team_id) !== Number(activeProviderUnloadTeamId)
+      ) {
+        return;
+      }
       const iso = calendarDayISOInTimeZone(a.start_time, tz);
       if (iso) set.add(iso);
     });
     return set;
-  }, [providerAppointments, windowsPack?.timezone]);
+  }, [providerAppointments, windowsPack?.timezone, selectedWarehouseId, activeProviderUnloadTeamId]);
   const providerAvailableSlotKeys = useMemo(
     () => (Array.isArray(providerSelectedSlots) ? providerSelectedSlots : []).map((s) => slotKey(s)),
     [providerSelectedSlots]
@@ -2493,15 +2587,24 @@ export default function DashboardPage() {
     return Array.from({ length: n }, (_, i) => i + 1);
   }, [profileUnloadTeams]);
 
+  const providerNeedsTeamForCalendar = Boolean(
+    isProveedor && selectedWarehouseId && warehouseUnloadTeams.length > 0 && !activeProviderUnloadTeamId
+  );
   const providerNeedsTeamForSlots = Boolean(
     isProveedor && providerSelectedDay && selectedWarehouseId && !activeProviderUnloadTeamId
   );
+  const activeProviderUnloadTeamName = useMemo(() => {
+    if (!activeProviderUnloadTeamId) return "";
+    const t = warehouseUnloadTeams.find((x) => Number(x.id) === Number(activeProviderUnloadTeamId));
+    return t?.name || `Equipo ${activeProviderUnloadTeamId}`;
+  }, [activeProviderUnloadTeamId, warehouseUnloadTeams]);
 
   const providerCannotScheduleSlot = useMemo(() => {
     if (!selectedWarehouseId) return true;
     if (!activeProviderUnloadTeamId) return true;
     if (!providerSelectedDay) return true;
     if (providerDayAvailabilityLoading) return true;
+    if (providerCreateSubmitting) return true;
     if (providerAvailableSlotKeys.length === 0) return true;
     if (!providerTimeChoice || !providerAvailableSlotKeys.includes(providerTimeChoice)) return true;
     return false;
@@ -2510,6 +2613,7 @@ export default function DashboardPage() {
     activeProviderUnloadTeamId,
     providerSelectedDay,
     providerDayAvailabilityLoading,
+    providerCreateSubmitting,
     providerAvailableSlotKeys,
     providerTimeChoice,
   ]);
@@ -2522,7 +2626,7 @@ export default function DashboardPage() {
         message: providerSlotUnavailableMessage,
         minimumNoticeHours: providerMinimumNoticeHours,
         selectedDayOpen: providerAvailableDays.includes(providerSelectedDay),
-        needsTeamSelection: providerNeedsTeamForSlots,
+        needsTeamSelection: providerNeedsTeamForSlots || providerNeedsTeamForCalendar,
       }),
     [
       providerDayAvailabilityLoading,
@@ -2533,6 +2637,7 @@ export default function DashboardPage() {
       providerMinimumNoticeHours,
       providerAvailableDays,
       providerNeedsTeamForSlots,
+      providerNeedsTeamForCalendar,
     ]
   );
   const providerSlotAvailabilityNoticeClass =
@@ -2564,6 +2669,7 @@ export default function DashboardPage() {
   }, [isProveedor, proveedorTab, providerAvailableDays, providerSelectedDay]);
 
   const onProviderCreateAppointment = useCallback(async () => {
+    if (providerCreateSubmitting) return;
     try {
       setError("");
       setSuccess("");
@@ -2584,6 +2690,7 @@ export default function DashboardPage() {
       const [y, m, d] = providerSelectedDay.split("-").map(Number);
       const [hh, mm] = chosen.start_local.split(":").map(Number);
       const localDate = new Date(y, m - 1, d, hh, mm, 0);
+      setProviderCreateSubmitting(true);
       await api.post(`${API_PREFIX}/appointments`, {
         title: "Entrega de material",
         material_description: desc,
@@ -2599,7 +2706,22 @@ export default function DashboardPage() {
       await loadProviderDayAvailability(providerSelectedDay);
       setSuccess("Cita agendada exitosamente.");
     } catch (err) {
-      setError(parseApiError(err));
+      const message = parseApiError(err);
+      setError(
+        isAppointmentSlotConflict(err)
+          ? `${message} Actualizamos los turnos disponibles; elige otro horario si sigue ocupado.`
+          : message
+      );
+      if (isAppointmentSlotConflict(err) && providerSelectedDay) {
+        try {
+          await loadProviderDayAvailability(providerSelectedDay);
+          await loadProviderMonthAvailability(providerCalendarBase);
+        } catch {
+          // El toast ya muestra el conflicto; no tapar con error de refresco.
+        }
+      }
+    } finally {
+      setProviderCreateSubmitting(false);
     }
   }, [
     providerSelectedDay,
@@ -2615,6 +2737,7 @@ export default function DashboardPage() {
     loadProviderAppointments,
     loadProviderMonthAvailability,
     loadProviderDayAvailability,
+    providerCreateSubmitting,
   ]);
 
   const providerAppointmentsSorted = useMemo(
@@ -3106,8 +3229,8 @@ export default function DashboardPage() {
               <p className="text-xs font-medium uppercase tracking-wide text-emerald-600">Proveedor</p>
               <h1 id="proveedor-inicio-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-900">{saludoHorario()}</h1>
               <p className="mt-2 text-sm text-slate-600">
-                Primero elige la bodega y un día en el calendario general (verde = algún equipo tiene franja abierta).
-                Después selecciona el muelle y verás solo los horarios de ese equipo.
+                Elige bodega y muelle (equipo de descarga). El calendario muestra solo los días con franja de{" "}
+                <strong>ese equipo</strong>; otra bodega u otro muelle en la misma bodega tienen calendarios distintos.
               </p>
             </header>
             <div className={card}>
@@ -3116,7 +3239,13 @@ export default function DashboardPage() {
                 id="provider-warehouse-select"
                 className={input}
                 value={selectedWarehouseId ?? ""}
-                onChange={(e) => setSelectedWarehouseId(Number(e.target.value) || null)}
+                onChange={(e) => {
+                  setSelectedWarehouseId(Number(e.target.value) || null);
+                  setProviderSelectedDay(null);
+                  setProviderAvailableDays([]);
+                  setAdminFranjaUnloadTeamId("");
+                  setProviderDayAvailabilityError("");
+                }}
               >
                 {warehouses.length === 0 && <option value="">Sin bodegas activas</option>}
                 {warehouses.map((w) => (
@@ -3128,8 +3257,43 @@ export default function DashboardPage() {
               </select>
             </div>
             <div className={card}>
+              <label htmlFor="provider-unload-team-select" className="mb-1 block text-xs font-medium text-slate-600">
+                Muelle / equipo de descarga en la bodega
+              </label>
+              <select
+                id="provider-unload-team-select"
+                className={input}
+                value={activeProviderUnloadTeamId ?? selectedWarehouseUnloadTeamId ?? ""}
+                onChange={(e) => {
+                  setSelectedWarehouseUnloadTeamId(Number(e.target.value) || null);
+                  setProviderSelectedDay(null);
+                  setProviderDayAvailabilityError("");
+                }}
+                disabled={warehouseUnloadTeams.length === 0}
+              >
+                {warehouseUnloadTeams.length === 0 && <option value="">Sin equipos en esta bodega</option>}
+                {warehouseUnloadTeams.length > 1 && <option value="">Selecciona un muelle…</option>}
+                {warehouseUnloadTeams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Cada muelle tiene su propio calendario y turnos en esta bodega.
+              </p>
+            </div>
+            <div className={card}>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="min-w-0 text-xs font-medium uppercase text-slate-500">Días con turnos abiertos (empresa)</p>
+                <p className="min-w-0 text-xs font-medium uppercase text-slate-500">
+                  Calendario
+                  {activeProviderUnloadTeamName ? (
+                    <span className="normal-case text-slate-600">
+                      {" "}
+                      — {activeProviderUnloadTeamName}
+                    </span>
+                  ) : null}
+                </p>
                 <div className="flex shrink-0 items-center gap-2">
                   <button type="button" className={btnGhost + " px-2 py-1 text-xs"} onClick={() => setProviderCalendarMonthOffset((v) => v - 1)} aria-label="Ir al mes anterior del calendario">
                     ◀
@@ -3146,7 +3310,8 @@ export default function DashboardPage() {
               <div className="grid grid-cols-7 gap-1">
                 {providerCalendar.cells.map((cell, idx) => {
                   if (!cell) return <div key={`prov-empty-${idx}`} />;
-                  const canPickDay = providerAvailableDays.includes(cell.dateISO);
+                  const teamReady = Boolean(activeProviderUnloadTeamId);
+                  const canPickDay = teamReady && providerAvailableDays.includes(cell.dateISO);
                   return (
                     <button
                       type="button"
@@ -3157,20 +3322,22 @@ export default function DashboardPage() {
                         setProviderSelectedDay(cell.dateISO);
                       }}
                       className={`rounded-md border px-1 py-1.5 text-center text-xs ${
-                        !canPickDay
+                        !teamReady
                           ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
-                          : providerDaysWithAppointments.has(cell.dateISO)
-                            ? "border-emerald-700 bg-emerald-600 text-white"
-                            : providerAvailableDays.includes(cell.dateISO)
-                              ? "border-emerald-300 bg-emerald-100 text-emerald-900"
-                              : "border-slate-200 bg-white text-slate-400"
+                          : !canPickDay
+                            ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
+                            : providerDaysWithAppointments.has(cell.dateISO)
+                              ? "border-emerald-700 bg-emerald-600 text-white"
+                              : "border-emerald-300 bg-emerald-100 text-emerald-900"
                       } ${providerSelectedDay === cell.dateISO ? "ring-2 ring-blue-400/80" : ""}`}
                       title={
-                        !canPickDay
-                          ? "Sin franja abierta este día: la empresa no habilitó citas en esta fecha"
-                          : providerDaysWithAppointments.has(cell.dateISO)
-                            ? "Tienes citas ese día; puedes agendar otro turno si hay cupo"
-                            : "Franja habilitada: puedes agendar"
+                        !teamReady
+                          ? "Selecciona un muelle para ver el calendario de ese equipo"
+                          : !canPickDay
+                            ? "Sin franja para este muelle en esta fecha"
+                            : providerDaysWithAppointments.has(cell.dateISO)
+                              ? "Tienes cita ese día en este muelle; puedes agendar otro turno si hay cupo"
+                              : "Franja habilitada para este muelle: puedes agendar"
                       }
                     >
                       {cell.day}
@@ -3179,40 +3346,20 @@ export default function DashboardPage() {
                 })}
               </div>
               <p className="mt-2 text-[11px] text-slate-600">
-                Verde claro: la bodega tiene franja ese día (algún equipo). Verde oscuro: ya tienes cita ese día. Blanco: sin franja en la bodega.
+                Verde claro: franja abierta para el muelle seleccionado. Verde oscuro: ya tienes cita ese día en ese muelle.
+                Gris: sin franja para este equipo (otro muelle de la misma bodega puede estar abierto).
               </p>
             </div>
             <div className={card}>
-              <p className="text-xs font-medium uppercase text-slate-500">Equipo y turno</p>
+              <p className="text-xs font-medium uppercase text-slate-500">Día y turno</p>
               <p className="mt-1 text-xs text-slate-600">
-                Día: <strong>{formatLongEsDateFromISO(providerSelectedDay)}</strong> ({providerSelectedDay})
+                Bodega: <strong>{warehouses.find((w) => Number(w.id) === Number(selectedWarehouseId))?.name || "—"}</strong>
+                {" · "}
+                Muelle: <strong>{activeProviderUnloadTeamName || "—"}</strong>
+                {" · "}
+                Día: <strong>{providerSelectedDay ? formatLongEsDateFromISO(providerSelectedDay) : "sin elegir"}</strong>
               </p>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div>
-                  <label htmlFor="provider-unload-team-select" className="mb-1 block text-xs font-medium text-slate-600">
-                    Muelle en la bodega
-                  </label>
-                  <select
-                    id="provider-unload-team-select"
-                    className={input}
-                    value={activeProviderUnloadTeamId ?? selectedWarehouseUnloadTeamId ?? ""}
-                    onChange={(e) => setSelectedWarehouseUnloadTeamId(Number(e.target.value) || null)}
-                    disabled={warehouseUnloadTeams.length === 0 || !providerSelectedDay}
-                  >
-                    {warehouseUnloadTeams.length === 0 && <option value="">Sin equipos en bodega</option>}
-                    {!providerSelectedDay && warehouseUnloadTeams.length > 0 && (
-                      <option value="">Primero elige un día en el calendario</option>
-                    )}
-                    {warehouseUnloadTeams.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    Cada muelle tiene horarios distintos en la misma bodega.
-                  </p>
-                </div>
                 <div>
                   <label htmlFor="provider-own-team-select" className="mb-1 block text-xs font-medium text-slate-600">
                     Tu equipo (camión / descarga)
@@ -3297,8 +3444,9 @@ export default function DashboardPage() {
                   void onProviderCreateAppointment();
                 }}
                 disabled={providerCannotScheduleSlot}
+                aria-busy={providerCreateSubmitting}
               >
-                Agendar cita
+                {providerCreateSubmitting ? "Guardando cita…" : "Agendar cita"}
               </button>
             </div>
           </section>
@@ -3618,14 +3766,16 @@ export default function DashboardPage() {
                           {warehouseTeamNamesEditId === w.id ? "Ocultar nombres" : "Nombres de muelles"}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className="text-xs text-rose-700 underline hover:text-rose-800 disabled:opacity-40"
-                        disabled={warehouses.filter((x) => x.active).length <= 1}
-                        onClick={() => void onDeactivateWarehouse(w.id)}
-                      >
-                        Desactivar
-                      </button>
+                      {isGlobalAdmin && (
+                        <button
+                          type="button"
+                          className="text-xs text-rose-700 underline hover:text-rose-800 disabled:opacity-40"
+                          disabled={warehouses.filter((x) => x.active).length <= 1}
+                          onClick={() => void onDeactivateWarehouse(w.id)}
+                        >
+                          Desactivar
+                        </button>
+                      )}
                     </div>
                   </div>
                   {warehouseRowError[w.id] && (
@@ -3636,8 +3786,8 @@ export default function DashboardPage() {
                   {warehouseTeamNamesEditId === w.id && (
                     <div className="mt-3 border-t border-slate-200 pt-3">
                       <p className="mb-2 text-xs text-slate-600">
-                        Asigna un nombre a cada muelle (ej. Carlos, Rubén), pulsa <strong>Aplicar cambios</strong> y
-                        luego F5: el nombre queda guardado en la base de datos. Para <strong>quitar muelles</strong>,
+                        Asigna un nombre a cada muelle (ej. Carlos, Rubén) y pulsa <strong>Aplicar cambios</strong> en
+                        esa fila; verás un mensaje de confirmación. Para <strong>quitar muelles</strong>,
                         baja <em>Equipos</em> y aplica (no si ese muelle tiene citas activas).
                       </p>
                       {warehouseTeamNamesLoading && (

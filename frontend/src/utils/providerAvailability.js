@@ -48,9 +48,9 @@ export function describeProviderSlotAvailability({
   if (needsTeamSelection) {
     return {
       optionLabel: "Selecciona muelle",
-      title: "Elige el equipo de descarga",
+      title: "Elige el muelle (equipo de descarga)",
       detail:
-        "Primero selecciona el día en el calendario general. Luego elige el muelle para ver los horarios disponibles de ese equipo.",
+        "Selecciona el muelle en la bodega. El calendario y los turnos son distintos por equipo; después elige el día en el calendario de ese muelle.",
       tone: "info",
     };
   }

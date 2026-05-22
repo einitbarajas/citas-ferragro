@@ -1,5 +1,19 @@
 # Ferragro - Gestión de Citas de Entrega
 
+Portal web para agendar y operar citas de entrega en bodegas Ferragro: proveedores, logística, administración global y **administradores de bodega** (alcance por bodegas asignadas).
+
+| Entorno | URL |
+|---------|-----|
+| Frontend (producción) | https://frontend-ferragro.vercel.app |
+| API (producción) | https://ferragro-api.onrender.com |
+| Health / versión API | https://ferragro-api.onrender.com/health |
+| Swagger (producción) | https://ferragro-api.onrender.com/docs |
+| Repositorio | https://github.com/einitbarajas/citas-ferragro |
+
+Guía operativa detallada (SMTP, credenciales admin, diagnóstico): [`docs/GUIA_OPERACION_PRODUCCION.md`](docs/GUIA_OPERACION_PRODUCCION.md). Checklist rápido Render: [`PASOS-ENTRAR-PORTAL.md`](PASOS-ENTRAR-PORTAL.md).
+
+**CI:** en cada push/PR a `main` se ejecutan pruebas del API (sin BD y con PostgreSQL), `npm run build` del frontend (ver [`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Preparar BD local para pytest: `db/ci-prepare-database.sh` (requiere `psql` y variables `PG*`).
+
 ## 1) Estructura del proyecto
 
 ```txt
@@ -11,6 +25,7 @@
 │       ├── api
 │       │   ├── auth.py
 │       │   ├── appointments.py
+│       │   ├── crud.py
 │       │   └── admin.py
 │       ├── core
 │       │   ├── config.py
@@ -28,16 +43,16 @@
 │       │   ├── appointment.py
 │       │   └── audit.py
 │       └── services
-│           └── appointment_service.py
+│           ├── appointment_service.py
+│           └── warehouse_scope.py
 ├── db
 │   ├── README.md
 │   ├── PsqlDb.ps1
 │   ├── run-database-all.ps1
 │   ├── run-database-crud.ps1
 │   ├── init
-│   │   ├── 001_schema.sql
-│   │   ├── 002_audit_triggers.sql
-│   │   └── 003_historial_id_actor_drop_fk.sql
+│   │   ├── 001_schema.sql … 019_*.sql
+│   │   └── 020_admin_bodega.sql
 │   ├── seeds
 │   │   └── 003_seed_data.sql
 │   └── database-crud
@@ -64,12 +79,14 @@
 Tablas principales (nombres en español en BD; el backend mapea a modelos Python):
 
 - **`Credenciales`**: correo y hash de contraseña (login unificado).
-- **`Usuarios`**: personal interno (`Admin`, `Logistica` en `Rol`); PK `IdDocumento`; enlazan `IdCredencial`.
+- **`Usuarios`**: personal interno; roles en `Rol`: `Admin`, `Logistica`, **`AdminBodega`**; PK `IdDocumento`; enlazan `IdCredencial`.
+- **`UsuariosBodegas`**: bodegas asignadas a un usuario `AdminBodega` (migración `020_admin_bodega.sql`).
+- **`Bodegas`** / equipos de descarga: franjas y citas por muelle (`016`–`019` en `db/init/`).
 - **`Proveedores`**: empresa; PK `IdNit`; correo de contacto y `IdCredencial`; el JWT de proveedor usa `sub` = NIT.
-- **`Citas`**: cita de entrega (material, ventana horaria, estado).
+- **`Citas`**: cita de entrega (material, ventana horaria, estado, bodega y equipo).
 - **`HistorialCambios`**: auditoría (actor = documento interno o NIT en texto, sin FK estricta a usuarios).
 
-Detalle y scripts: carpeta `db/` y `db/README.md`. Orquestación en Windows: `db\run-database-all.ps1`.
+Detalle y scripts: carpeta `db/` y `db/README.md`. Orquestación en Windows: `db\run-database-all.ps1`. Tras clonar o actualizar, revisa migraciones pendientes en `db/init/` (p. ej. `020` para Admin de bodega).
 
 ## 3) Endpoints backend
 
@@ -79,7 +96,11 @@ Detalle y scripts: carpeta `db/` y `db/README.md`. Orquestación en Windows: `db
 - `POST /api/auth/refresh`
 - `POST /api/auth/logout`
 
-### Citas (`/api/appointments` si el router está montado en `main.py`)
+### Citas y operación (`/api/crud/...` — contrato principal del frontend)
+- Citas, bodegas, franjas, usuarios, proveedores, historial, etc.
+- Roles de staff: **Admin**, **Logistica**, **AdminBodega** (este último filtrado por bodegas asignadas).
+
+### Citas legacy (`/api/appointments` si el router está montado en `main.py`)
 - `POST` (rol **Proveedor**): validación de anticipación y conflicto horario
 - `GET` con `mode=list|day|month`
 - `PATCH .../status` y `PATCH .../extend` (**Admin** / **Logistica**)
@@ -122,10 +143,11 @@ Detalle y scripts: carpeta `db/` y `db/README.md`. Orquestación en Windows: `db
 ## 4) Componentes principales frontend
 
 - `LoginPage`: registro/inicio de sesión
-- `DashboardPage`: tablero por rol
-- `AppointmentForm`: agendar cita (proveedor)
-- `AppointmentList`: visualizar y gestionar citas (Admin / Logistica)
-- Panel de auditoría para `admin` con logs de cambios
+- `DashboardPage`: tablero por rol (`Admin`, `Logistica`, **`AdminBodega`**, `Proveedor`)
+- `AppointmentForm`: agendar cita (proveedor; elige bodega, muelle y franja)
+- `AppointmentList` / paneles CRUD: citas, bodegas, franjas, usuarios (según permisos)
+- **AdminBodega**: mismo panel operativo que logística, limitado a las bodegas en `UsuariosBodegas` (sin administración global de usuarios/roles)
+- Panel de auditoría y configuraciones para `Admin`
 
 ## 5) Flujo completo de ejemplo
 
@@ -225,15 +247,23 @@ Trabaja siempre **desde la carpeta `backend`**. El punto de entrada es `main.py`
 Con `DATABASE_URL` válido en el `.env` de la raíz y esquema + CRUD aplicados (`db\run-database-all.ps1`):
 
 ```powershell
-# Backend (56 tests: API, reglas logística, franjas, citas con equipos, CRUD PL/pgSQL)
+# Desde la raíz del repo (carpeta "trabajo ferragro")
 cd backend
 $env:PYTHONPATH="."
 .\.venv\Scripts\python.exe -m pytest tests/ -v
 .\.venv\Scripts\python.exe scripts\system_check.py
+# operational_check: arranca el API en OTRA terminal (py main.py) y luego:
 .\.venv\Scripts\python.exe scripts\operational_check.py
 
-# Frontend (build + accesibilidad)
-cd ..\frontend
+cd ..\frontend   # solo si sigues en backend\; si estás en la raíz, usa: cd frontend
+npm run lint:a11y
+npm run build
+```
+
+Si ya estás en la **raíz** del repo y no en `backend\`, el front se prueba así:
+
+```powershell
+cd frontend
 npm run lint:a11y
 npm run build
 ```
@@ -244,7 +274,9 @@ En **Windows**, si `python` no existe en el PATH (mensaje de Microsoft Store), u
 
 Las pruebas de BD usan transacciones que se revierten al terminar (no dejan datos de prueba).
 
-**Equipos de descarga por bodega:** migraciones `016`–`019` en `db/init/`. Tras actualizar SQL en `database-crud/`, ejecutar `db\run-database-crud.ps1` (o `scripts\apply_migration_019.py` / `fix_franjas_constraint.py` si aplica). En el panel **Admin → Bodegas**, usa **Nombres de muelles** para etiquetar cada equipo (ej. Carlos, Rubén) en lugar de «Equipo 1», «Equipo 2».
+**Equipos de descarga por bodega:** migraciones `016`–`019` en `db/init/`. Tras actualizar SQL en `database-crud/`, ejecutar `db\run-database-crud.ps1` (o scripts en `backend/scripts/` si aplica). En el panel **Admin → Bodegas**, usa **Nombres de muelles** para etiquetar cada equipo (ej. Carlos, Rubén) en lugar de «Equipo 1», «Equipo 2».
+
+**Administrador de bodega (`AdminBodega`):** aplicar `db/init/020_admin_bodega.sql` (incluido en `run-database-all.ps1` cuando esté en el manifiesto del script, o manualmente / `backend/scripts/apply_migration_020.py` con `DATABASE_URL` apuntando a la BD).
 
 **Comprobación operativa al 100%** (esquema BD + API en marcha):
 
@@ -413,54 +445,91 @@ Para validar cambios con ZAP o herramientas similares:
 
 Documentación operativa (RPO/RTO, backups, roles DB): `docs/operacion_continuidad.md`. Índice completo: `docs/README.md`.
 
-## 5) Despliegue en la nube (Vercel + Render)
+## 6) Despliegue en la nube (Vercel + Render)
 
-La documentación funcional y técnica permanece en este repositorio de GitHub (`README.md`, `docs/`, `db/README.md`). El contrato del API en producción se consulta en `https://<tu-api>.onrender.com/docs`.
+La documentación funcional permanece en este repo (`README.md`, `docs/`, `db/README.md`). Producción Ferragro:
 
-### 5.1) Render (PostgreSQL + backend)
+| Servicio | Nombre | URL / panel |
+|----------|--------|-------------|
+| Frontend | `frontend` (Vercel) | https://frontend-ferragro.vercel.app |
+| API | `ferragro-api` (Render) | https://ferragro-api.onrender.com |
+| PostgreSQL | `ferragro-db` (Render) | Panel BD en [Render](https://dashboard.render.com/) |
 
-1. En [Render](https://render.com), conecta el repositorio de GitHub.
-2. Crea un **Blueprint** desde `render.yaml` (recomendado) o crea manualmente:
-   - **PostgreSQL** (plan Free o superior).
-   - **Web Service** Python con **Root Directory** `backend`.
-   - **Build command:** `pip install -r requirements.txt`
-   - **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - **Health check path:** `/health`
-3. Variables de entorno del servicio (además de `DATABASE_URL` enlazada a la BD):
-   - `ENVIRONMENT=production`
-   - `SECRET_KEY` (valor largo y aleatorio; Render puede generarlo en el Blueprint)
-   - `CORS_ORIGINS` (se completa en el paso 5.3)
-   - Opcional: SMTP y Cloudinary (mismas claves que en `.env.example`)
-4. Cuando la BD esté **Available**, aplica el esquema desde tu máquina con la **External Database URL** de Render:
+### 6.1) Render (PostgreSQL + backend)
 
-   ```bash
-   export DATABASE_URL="postgresql://..."
-   bash db/run-database-all.sh
+1. En [Render](https://render.com), conecta el repositorio `einitbarajas/citas-ferragro` (rama `main`).
+2. Crea un **Blueprint** desde `render.yaml` (recomendado) o servicios manuales:
+   - **PostgreSQL** (`ferragro-db`).
+   - **Web Service** Python (`ferragro-api`) con **Root Directory** `backend`.
+   - **Build:** `pip install -r requirements.txt`
+   - **Start:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - **Health check:** `/health`
+3. Variables en `ferragro-api` (ver `.env.example` y [`docs/GUIA_OPERACION_PRODUCCION.md`](docs/GUIA_OPERACION_PRODUCCION.md)):
+   - Obligatorias: `ENVIRONMENT`, `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, cookies refresh en HTTPS.
+   - **SMTP** en Render (no lee tu `.env` local): sin ellas no hay correos de bienvenida ni recuperación de contraseña.
+4. Con la BD **Available**, aplica esquema y CRUD desde tu PC con la **External Database URL**:
+
+   ```powershell
+   cd db
+   $env:DATABASE_URL = "postgresql://..."   # External URL de ferragro-db
+   .\run-database-all.ps1                   # sin -Seed en producción
+   .\run-database-crud.ps1
    ```
 
-   No uses `--seed` en producción salvo que quieras datos de demostración.
+   Migraciones nuevas (p. ej. `020_admin_bodega.sql`) en bases ya existentes:
 
-5. Comprueba `https://<tu-api>.onrender.com/health` y `/docs`.
+   ```powershell
+   cd backend
+   $env:DATABASE_URL = "postgresql://..."
+   $env:PYTHONPATH = "."
+   .\.venv\Scripts\python.exe scripts\apply_migration_020.py
+   ```
 
-### 5.2) Vercel (frontend)
+5. Comprueba versión desplegada:
 
-1. En [Vercel](https://vercel.com), importa el mismo repositorio de GitHub.
-2. **Root Directory:** `frontend`
-3. **Framework Preset:** Vite (o deja que detecte `vercel.json`).
-4. Variables de entorno de **Production** (y Preview si quieres):
-   - `VITE_API_URL=https://<tu-api>.onrender.com` (sin barra final)
+   ```text
+   GET https://ferragro-api.onrender.com/health
+   → "build_id": "2026-05-21-admin-bodega-v1"   (o el valor actual en backend/app/main.py → API_BUILD_ID)
+   ```
+
+   Si sigue un `build_id` antiguo (p. ej. `2026-05-15-orphan-cleanup-b`), el servicio **no** tiene el último código aunque GitHub sí.
+
+#### Render no se actualiza solo (muy frecuente)
+
+Subir a GitHub **no** cambia el API si en **Events** el último deploy es de hace días (commit viejo, p. ej. `10fe606`):
+
+1. Panel: https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0  
+2. **Manual Deploy** → **Deploy latest commit** (no Rollback).  
+3. **Settings → Build & Deploy:** repo `citas-ferragro`, rama `main`, **Root Directory** `backend`, **Auto-Deploy** On.  
+4. Opcional: **Deploy Hook** → secreto `RENDER_DEPLOY_HOOK` en GitHub Actions (workflow `.github/workflows/deploy-render-api.yml`).
+
+Scripts en el repo:
+
+```powershell
+.\scripts\deploy-render-ahora.ps1      # requiere $env:RENDER_DEPLOY_HOOK o abre el panel
+.\scripts\deploy-produccion.ps1        # push + hook + espera /health
+cd frontend; npx vercel deploy --prod --yes   # front sin depender del auto-deploy de Vercel
+```
+
+### 6.2) Vercel (frontend)
+
+1. Proyecto `frontend` en equipo `ferragro`; **Root Directory:** `frontend`.
+2. Variables **Production**:
+   - `VITE_API_URL=https://ferragro-api.onrender.com` (sin `/` final)
    - `VITE_API_PREFIX=/api/v1`
-5. Despliega y anota la URL HTTPS del sitio (por ejemplo `https://tu-proyecto.vercel.app`).
+3. Tras cambiar variables: **Redeploy**. Tras `git push`, Vercel suele desplegar solo; si no ves cambios, redeploy manual o CLI arriba.
 
-### 5.3) Enlazar front y back
+### 6.3) Enlazar front y back
 
-1. En Render, edita el Web Service y define `CORS_ORIGINS` con la URL HTTPS de Vercel (varias separadas por coma si tienes dominio custom y preview).
-2. Redespliega el backend.
-3. En Vercel, **Redeploy** el frontend si cambiaste `VITE_API_URL`.
-4. Prueba login, refresh de sesión, logout y el panel con la URL de Vercel.
+1. En Render, `CORS_ORIGINS=https://frontend-ferragro.vercel.app` (y otros dominios si aplica).
+2. Redespliega el API tras cambiar CORS.
+3. Redespliega Vercel si cambiaste `VITE_API_URL`.
+4. Prueba login, refresh, logout y panel (recarga forzada Ctrl+F5 si el navegador cachea el JS).
 
-### 5.4) Notas
+### 6.4) Notas
 
-- El plan Free de Render puede **dormir** el API; la primera petición tras inactividad tarda más.
-- Entre dominios distintos (Vercel + Render) la cookie de refresh usa `Secure` y `SameSite=None` en producción.
-- Los scripts SQL viven en `db/`; el backend también ejecuta `create_all` al arrancar, pero el flujo recomendado es aplicar `db/run-database-all.sh` contra la BD de Render.
+- Plan Free de Render: el API puede **dormir** (~15 min sin tráfico); la primera petición tarda 30–90 s.
+- Front (Vercel) y BD suelen responder al instante; lo lento suele ser el cold start del API.
+- Cookie refresh en producción: `Secure` + `SameSite=None` (dominios distintos Vercel/Render).
+- Fuente de verdad del esquema: `db/init/` + `database-crud/`; `create_all` al arrancar no sustituye triggers ni funciones PL/pgSQL.
+- Checklist portal y admin producción: [`PASOS-ENTRAR-PORTAL.md`](PASOS-ENTRAR-PORTAL.md).

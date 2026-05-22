@@ -30,7 +30,7 @@ from app.services.provider_purge_scheduler import provider_purge_scheduler_loop
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-21-admin-bodega-v1"
+API_BUILD_ID = "2026-05-22-calendar-per-team-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 

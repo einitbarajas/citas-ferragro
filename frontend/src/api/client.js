@@ -163,6 +163,11 @@ export function parseApiResponse(response) {
   return payload;
 }
 
+/** True si el API rechazó la reserva por turno ocupado o capacidad del proveedor (HTTP 409). */
+export function isAppointmentSlotConflict(error) {
+  return Number(error?.response?.status) === 409;
+}
+
 export function parseApiError(error) {
   const status = error?.response?.status;
   const payload = error?.response?.data;

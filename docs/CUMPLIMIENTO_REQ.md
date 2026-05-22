@@ -18,7 +18,7 @@ Documento de seguimiento frente a `ESPECIFICACION_REQUISITOS_IEEE830_FERRAGRO.do
 | Despliegue Vercel + Render | Operativo | Guía operación |
 | Pruebas automatizadas BD | Implementado | `test_db_crud_functions.py` (12 tests) |
 | Pruebas reglas logística | Implementado | `test_logistics_business_rules.py` |
-| CI en cada PR | Pendiente | Recomendado workflow pytest + build |
+| CI en cada PR | Implementado | `.github/workflows/ci.yml` (pytest sin BD, pytest+PostgreSQL, build Vite) |
 
 ---
 

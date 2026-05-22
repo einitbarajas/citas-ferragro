@@ -20,6 +20,7 @@ export const MODULE_TO_NAV_TOUR_ID = {
   buscar_citas: "nav-buscar_citas",
   revision_citas: "nav-revision_citas",
   analitica: "nav-analitica",
+  bodegas: "nav-bodegas",
   horarios: "nav-horarios",
   equipo: "nav-equipo",
   proveedores: "nav-proveedores",

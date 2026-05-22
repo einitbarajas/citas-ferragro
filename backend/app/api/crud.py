@@ -74,6 +74,7 @@ from app.services.appointment_windows import (
     get_active_warehouse_or_raise,
     iter_bookable_slots,
     list_date_windows_ordered,
+    list_team_open_days_in_month,
     list_warehouse_open_days_in_month,
     replace_date_windows,
     list_windows_ordered,
@@ -200,7 +201,7 @@ def _time_allowed_in_windows(local_time, duration_minutes: int, windows: list[tu
 def _resolve_franja_unload_team_id(
     db: Session, warehouse_id: int, unload_team_id: int | None, *, required: bool = False
 ) -> int | None:
-    from app.services.unload_teams import get_unload_team_or_raise, list_active_unload_teams
+    from app.services.unload_teams import list_active_unload_teams, resolve_unload_team_id_for_warehouse
 
     teams = list_active_unload_teams(db, warehouse_id)
     if not teams:
@@ -210,14 +211,13 @@ def _resolve_franja_unload_team_id(
                 detail="La bodega no tiene equipos de descarga. Configúralos en Bodegas.",
             )
         return None
-    team_id = unload_team_id if unload_team_id is not None else teams[0].id
     if required and unload_team_id is None and len(teams) > 1:
         raise HTTPException(
             status_code=400,
             detail="Selecciona el equipo de descarga de la bodega para configurar sus horarios.",
         )
-    get_unload_team_or_raise(db, warehouse_id, team_id)
-    return team_id
+    strict = required and unload_team_id is not None
+    return resolve_unload_team_id_for_warehouse(db, warehouse_id, unload_team_id, strict=strict)
 
 
 def _assert_weekly_windows_do_not_break_existing_appointments(
@@ -1564,11 +1564,12 @@ def list_appointment_franjas_date_summary(
     )
     override_days = [str(d) for d in rows]
     has_weekly = bool(list_windows_ordered(db, warehouse_id, team_id))
+    open_days = list_team_open_days_in_month(db, year, month, warehouse_id, team_id)
     return ok_response(
         {
             "warehouse_id": warehouse_id,
             "unload_team_id": team_id,
-            "open_days": override_days if not has_weekly else None,
+            "open_days": open_days,
             "override_days": override_days,
             "has_weekly_franjas": has_weekly,
         },
