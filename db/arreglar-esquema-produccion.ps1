@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
-  Aplica en la BD de Render las migraciones que faltan (014-022) + funciones CRUD.
-  Corrige: "column Citas.IdBodega does not exist" y rol AdminBodega.
+  Aplica en la BD de Render las migraciones que faltan (013-023) + funciones CRUD.
+  Corrige IdBodega, Proveedores.Estado, AdminBodega, etc.
 
   Uso (desde carpeta db):
     .\arreglar-esquema-produccion.ps1
@@ -45,6 +45,7 @@ $env:DATABASE_URL = $DatabaseUrl.Trim()
 $psqlExe = Resolve-PsqlExecutable
 
 $migrations = @(
+  "013_provider_account_status.sql",
   "014_bodegas_franjas_flexibles.sql",
   "015_performance_indexes.sql",
   "016_equipos_descarga.sql",
@@ -58,7 +59,7 @@ $migrations = @(
 )
 
 Write-Host ""
-Write-Host "=== Migraciones produccion Render (014-022) ===" -ForegroundColor Cyan
+Write-Host "=== Migraciones produccion Render (013-023) ===" -ForegroundColor Cyan
 Write-Host "NO usa -Seed: no borra datos de citas/proveedores." -ForegroundColor DarkGray
 Write-Host ""
 

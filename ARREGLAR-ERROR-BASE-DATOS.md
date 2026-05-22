@@ -12,7 +12,7 @@ ERROR: column Citas.IdBodega does not exist
 |-------|--------|
 | **API (Render)** | Código nuevo (pide columna `IdBodega`) |
 | **Front (Vercel)** | Actualizado |
-| **PostgreSQL (Render)** | Esquema **viejo** (sin migraciones 014–022) |
+| **PostgreSQL (Render)** | Esquema **viejo** (faltan migraciones 013–023) |
 
 Por eso en Vercel:
 - Toast **«Error de base de datos»**
