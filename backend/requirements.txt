@@ -1,14 +1,3 @@
-fastapi
-uvicorn[standard]
-sqlalchemy
-psycopg[binary]
-pydantic-settings
-python-jose[cryptography]
-bcrypt
-python-multipart
-email-validator
+-r requirements-prod.txt
 pytest>=8.0
 httpx>=0.27.0
-cloudinary
-slowapi>=0.1.9
-openpyxl
