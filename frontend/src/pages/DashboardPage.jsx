@@ -185,7 +185,52 @@ const btnPrimary =
   "min-h-11 rounded-lg bg-[#35783C] px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/10 transition hover:bg-[#2d6532] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60";
 const btnGhost =
   "min-h-11 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-[#121212] shadow-sm transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40";
-const BULK_ALL_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
+const DEFAULT_WEEKLY_ISO_WEEKDAYS = [1, 2, 3, 4, 5];
+const ISO_WEEKDAY_OPTIONS = [
+  { iso: 1, short: "LU" },
+  { iso: 2, short: "MA" },
+  { iso: 3, short: "MI" },
+  { iso: 4, short: "JU" },
+  { iso: 5, short: "VI" },
+  { iso: 6, short: "SA" },
+  { iso: 7, short: "DO" },
+];
+
+function toggleIsoWeekdaySelection(current, iso) {
+  const set = new Set(Array.isArray(current) ? current : []);
+  if (set.has(iso)) {
+    if (set.size <= 1) return [...set].sort((a, b) => a - b);
+    set.delete(iso);
+  } else {
+    set.add(iso);
+  }
+  return [...set].sort((a, b) => a - b);
+}
+
+function IsoWeekdayPicker({ selected, onChange, idPrefix = "iso-wd" }) {
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Días de la semana">
+      {ISO_WEEKDAY_OPTIONS.map((opt) => {
+        const active = selected.includes(opt.iso);
+        return (
+          <button
+            key={`${idPrefix}-${opt.iso}`}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(toggleIsoWeekdaySelection(selected, opt.iso))}
+            className={`min-w-[2.25rem] rounded-md border px-2 py-1 text-xs font-semibold ${
+              active
+                ? "border-emerald-600 bg-emerald-600 text-white"
+                : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            {opt.short}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function analyticsStatusSummary(byStatus) {
   const source = byStatus || {};
@@ -469,6 +514,9 @@ export default function DashboardPage() {
   const [bulkMessage, setBulkMessage] = useState("");
   const [calendarOverrideDays, setCalendarOverrideDays] = useState([]);
   const [teamHasWeeklyFranjas, setTeamHasWeeklyFranjas] = useState(false);
+  const [teamWeeklyIsoWeekdays, setTeamWeeklyIsoWeekdays] = useState([]);
+  const [weeklyIsoWeekdays, setWeeklyIsoWeekdays] = useState(DEFAULT_WEEKLY_ISO_WEEKDAYS);
+  const [bulkIsoWeekdays, setBulkIsoWeekdays] = useState(DEFAULT_WEEKLY_ISO_WEEKDAYS);
   const [unloadTeamsReadyWarehouseId, setUnloadTeamsReadyWarehouseId] = useState(null);
 
   const activeAdminFranjaTeamId = useMemo(
@@ -907,10 +955,16 @@ export default function DashboardPage() {
       if (Array.isArray(f) && f.length > 0) {
         setFranjaRows(f.map((w) => ({ start_local: w.start_local, end_local: w.end_local })));
         setTeamHasWeeklyFranjas(true);
+        const wd = payload.data?.iso_weekdays;
+        if (Array.isArray(wd) && wd.length > 0) {
+          setWeeklyIsoWeekdays(wd.map(Number).filter((n) => n >= 1 && n <= 7).sort((a, b) => a - b));
+        }
       } else {
         setFranjaRows([]);
         if (activeAdminFranjaTeamId) {
           setTeamHasWeeklyFranjas(false);
+    setTeamWeeklyIsoWeekdays([]);
+    setWeeklyIsoWeekdays(DEFAULT_WEEKLY_ISO_WEEKDAYS);
         }
       }
     }
@@ -1089,6 +1143,8 @@ export default function DashboardPage() {
     setSelectedWarehouseUnloadTeamId(null);
     setAdminFranjaUnloadTeamId("");
     setTeamHasWeeklyFranjas(false);
+    setTeamWeeklyIsoWeekdays([]);
+    setWeeklyIsoWeekdays(DEFAULT_WEEKLY_ISO_WEEKDAYS);
     setCalendarOverrideDays([]);
     void loadWarehouseUnloadTeams();
   }, [selectedWarehouseId, loadWarehouseUnloadTeams]);
@@ -1187,6 +1243,10 @@ export default function DashboardPage() {
         Array.isArray(payload.data?.override_days) ? payload.data.override_days : []
       );
       setTeamHasWeeklyFranjas(Boolean(payload.data?.has_weekly_franjas));
+      const weeklyWd = payload.data?.weekly_iso_weekdays;
+      setTeamWeeklyIsoWeekdays(
+        Array.isArray(weeklyWd) ? weeklyWd.map(Number).filter((n) => n >= 1 && n <= 7).sort((a, b) => a - b) : []
+      );
     },
     [session, isAdmin, selectedWarehouseId, activeAdminFranjaTeamId]
   );
@@ -2116,6 +2176,7 @@ export default function DashboardPage() {
       const response = await api.put(`${API_PREFIX}/crud/appointment-franjas`, {
         warehouse_id: selectedWarehouseId,
         unload_team_id: teamId,
+        iso_weekdays: weeklyIsoWeekdays,
         franjas: franjaRows,
       });
       const payload = parseApiResponse(response);
@@ -2126,6 +2187,12 @@ export default function DashboardPage() {
       if (payload.data?.franjas?.length) {
         setFranjaRows(payload.data.franjas.map((w) => ({ start_local: w.start_local, end_local: w.end_local })));
       }
+      if (Array.isArray(payload.data?.iso_weekdays) && payload.data.iso_weekdays.length > 0) {
+        setWeeklyIsoWeekdays(payload.data.iso_weekdays);
+        setTeamWeeklyIsoWeekdays(payload.data.iso_weekdays);
+      }
+      setTeamHasWeeklyFranjas(Boolean(payload.data?.franjas?.length));
+      await loadCalendarOverrideSummary(calendarBase);
       setSuccess("Franjas semanales guardadas exitosamente.");
     } catch (err) {
       setError(parseApiError(err));
@@ -2206,7 +2273,7 @@ export default function DashboardPage() {
         unload_team_id: teamId,
         start_day: bulkStartDay,
         end_day: bulkEndDay,
-        iso_weekdays: BULK_ALL_WEEKDAYS,
+        iso_weekdays: bulkIsoWeekdays,
         franjas: sortedRows,
       });
       const payload = parseApiResponse(response);
@@ -4065,6 +4132,8 @@ export default function DashboardPage() {
                   setSelectedWarehouseId(Number(e.target.value) || null);
                   setAdminFranjaUnloadTeamId("");
                   setTeamHasWeeklyFranjas(false);
+                  setTeamWeeklyIsoWeekdays([]);
+                  setWeeklyIsoWeekdays(DEFAULT_WEEKLY_ISO_WEEKDAYS);
                   setCalendarOverrideDays([]);
                   setSpecialFranjaRows([]);
                   setFranjaRows([]);
@@ -4104,6 +4173,42 @@ export default function DashboardPage() {
               </p>
             </div>
             <form className="space-y-3" onSubmit={onSaveFranjas}>
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <p className="text-sm font-semibold text-slate-800">Regla semanal del muelle</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Horarios que se repiten cada semana en los días marcados (por defecto lunes a viernes). Sábado y domingo
+                  quedan cerrados salvo que los habilites o agregues una excepción por fecha.
+                </p>
+                <p className="mt-3 mb-1 text-xs font-medium text-slate-600">Días de la semana</p>
+                <IsoWeekdayPicker
+                  idPrefix="weekly-iso"
+                  selected={weeklyIsoWeekdays}
+                  onChange={setWeeklyIsoWeekdays}
+                />
+                <div className="mt-3">
+                  <FranjaRowsTable
+                    rows={franjaRows}
+                    inputClass={input}
+                    idPrefix="weekly-franja"
+                    onChangeRow={(idx, field, value) => {
+                      setFranjaRows((prev) => prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r)));
+                    }}
+                    onRemoveRow={(idx) => setFranjaRows((prev) => prev.filter((_, i) => i !== idx))}
+                  />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={btnGhost}
+                    onClick={() => setFranjaRows((prev) => [...prev, { start_local: "09:00", end_local: "10:00" }])}
+                  >
+                    Añadir franja semanal
+                  </button>
+                  <button type="submit" className={btnPrimary}>
+                    Guardar regla semanal
+                  </button>
+                </div>
+              </div>
               <div>
                 <p className="mt-2 text-xs text-slate-500">Hoy es {formatLongEsDate(new Date())}.</p>
                 <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -4149,7 +4254,7 @@ export default function DashboardPage() {
                           className={`rounded-md border px-1 py-1.5 text-center text-xs ${
                             calendarOverrideDays.includes(cell.dateISO)
                               ? "border-emerald-500 bg-emerald-500 text-white"
-                              : teamHasWeeklyFranjas
+                              : teamWeeklyIsoWeekdays.includes(cell.isoWeekday)
                                 ? "border-emerald-300 bg-emerald-100 text-emerald-900"
                                 : "border-slate-200 bg-white text-slate-500"
                           } ${cell.isToday ? "ring-2 ring-emerald-400/70" : ""} ${
@@ -4158,8 +4263,8 @@ export default function DashboardPage() {
                           title={
                             calendarOverrideDays.includes(cell.dateISO)
                               ? "Franja especial de este equipo en esta fecha"
-                              : teamHasWeeklyFranjas
-                                ? "Regla semanal de este equipo"
+                              : teamWeeklyIsoWeekdays.includes(cell.isoWeekday)
+                                ? "Regla semanal de este equipo (día habilitado)"
                                 : "Sin franja para este equipo"
                           }
                         >
@@ -4171,8 +4276,8 @@ export default function DashboardPage() {
                     )}
                   </div>
                   <p className="mt-2 text-[11px] text-slate-500">
-                    Verde fuerte: franja especial de <strong>este equipo</strong> en esa fecha. Verde claro: regla semanal de{" "}
-                    <strong>este equipo</strong>. Gris: sin horario para el equipo seleccionado.
+                    Verde fuerte: franja especial de <strong>este equipo</strong> en esa fecha. Verde claro: regla semanal en ese
+                    día de la semana (LU–DO según configuración). Gris: sin horario para el equipo seleccionado.
                   </p>
                 </div>
               </div>
@@ -4187,8 +4292,8 @@ export default function DashboardPage() {
                   <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                     <p className="text-xs font-medium text-amber-800">
                       No hay franja horaria para este equipo en este día.
-                      {teamHasWeeklyFranjas && !calendarOverrideDays.includes(specialDay)
-                        ? " La regla semanal del equipo sigue activa; aquí puedes definir una excepción solo para esta fecha."
+                      {teamWeeklyIsoWeekdays.length > 0 && !calendarOverrideDays.includes(specialDay)
+                        ? " La regla semanal del equipo sigue activa en los días LU–DO que configuraste; aquí puedes definir una excepción solo para esta fecha."
                         : ""}
                       {isSpecialDayPast ? " No se puede agregar porque el día ya pasó." : ""}
                     </p>
@@ -4275,7 +4380,15 @@ export default function DashboardPage() {
                     <input id="admin-bulk-end-day" type="date" min={bulkStartDay || todayValue} className={input} value={bulkEndDay} onChange={(e) => setBulkEndDay(e.target.value)} />
                   </div>
                 </div>
-                <p className="text-xs text-slate-600">Este lote aplica a todos los días dentro del rango seleccionado.</p>
+                <p className="mb-2 text-xs font-medium text-slate-600">Días del lote (dentro del rango de fechas)</p>
+                <IsoWeekdayPicker
+                  idPrefix="bulk-iso"
+                  selected={bulkIsoWeekdays}
+                  onChange={setBulkIsoWeekdays}
+                />
+                <p className="mt-2 text-xs text-slate-600">
+                  Solo se actualizan las fechas del rango que caigan en los días marcados (ej. lunes a viernes).
+                </p>
                 <FranjaRowsTable
                   rows={bulkFranjaRows}
                   inputClass={input}

@@ -73,11 +73,14 @@ from app.services.appointment_windows import (
     format_schedule_hint,
     get_active_warehouse_or_raise,
     iter_bookable_slots,
+    list_canonical_weekly_windows,
     list_date_windows_ordered,
     list_team_open_days_in_month,
     list_warehouse_open_days_in_month,
+    list_weekly_iso_weekdays,
     replace_date_windows,
     list_windows_ordered,
+    normalize_iso_weekdays,
     replace_windows,
     slot_duration_minutes,
 )
@@ -230,6 +233,8 @@ def _assert_weekly_windows_do_not_break_existing_appointments(
     weekly_windows: list[tuple],
     warehouse_id: int,
     warehouse_unload_team_id: int | None = None,
+    *,
+    iso_weekdays: list[int] | None = None,
 ) -> None:
     tz = ZoneInfo(settings.business_timezone)
     local_today = datetime.now(tz).date()
@@ -258,12 +263,16 @@ def _assert_weekly_windows_do_not_break_existing_appointments(
         .all()
     )
 
+    allowed_weekdays = set(normalize_iso_weekdays(iso_weekdays or [1, 2, 3, 4, 5]))
     conflicts: list[str] = []
     for row in appointments:
         start_time, duration_minutes = row[0], row[1]
         aware_start = start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
         local_dt = aware_start.astimezone(tz)
         if local_dt.date() in override_days:
+            continue
+        if local_dt.isoweekday() not in allowed_weekdays:
+            conflicts.append(local_dt.strftime("%Y-%m-%d %H:%M"))
             continue
         if not _time_allowed_in_windows(local_dt.time(), int(duration_minutes), weekly_windows):
             conflicts.append(local_dt.strftime("%Y-%m-%d %H:%M"))
@@ -1493,13 +1502,15 @@ def list_appointment_franjas(
     get_active_warehouse_or_raise(db, warehouse_id)
     assert_warehouse_access(db, principal, warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, warehouse_id, unload_team_id)
-    wins = list_windows_ordered(db, warehouse_id, team_id)
+    wins = list_canonical_weekly_windows(db, warehouse_id, team_id)
+    iso_weekdays = list_weekly_iso_weekdays(db, warehouse_id, team_id)
     data = [_window_to_out(w) for w in wins]
     return ok_response(
         {
             "warehouse_id": warehouse_id,
             "unload_team_id": team_id,
             "franjas": data,
+            "iso_weekdays": iso_weekdays,
             "hint": format_schedule_hint(wins),
             "timezone": settings.business_timezone,
         },
@@ -1523,7 +1534,7 @@ def get_resolved_appointment_franjas(
         windows = date_windows
         source = "date_override"
     else:
-        windows = list_windows_ordered(db, warehouse_id, team_id)
+        windows = list_windows_ordered(db, warehouse_id, team_id, for_day=day)
         source = "weekly"
     data = [_window_to_out(w) for w in windows]
     return ok_response(
@@ -1549,16 +1560,20 @@ def replace_appointment_franjas(
     assert_warehouse_access(db, principal, payload.warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, payload.warehouse_id, payload.unload_team_id, required=True)
     parsed = _parse_and_validate_windows(payload.franjas, "Franjas semanales inválidas")
+    iso_weekdays = normalize_iso_weekdays(payload.iso_weekdays)
     _assert_weekly_windows_do_not_break_existing_appointments(
-        db, parsed, payload.warehouse_id, team_id
+        db, parsed, payload.warehouse_id, team_id, iso_weekdays=iso_weekdays
     )
-    wins = replace_windows(db, payload.warehouse_id, parsed, team_id)
+    wins = replace_windows(
+        db, payload.warehouse_id, parsed, team_id, iso_weekdays=iso_weekdays
+    )
     data = [_window_to_out(x) for x in wins]
     return ok_response(
         {
             "warehouse_id": payload.warehouse_id,
             "unload_team_id": team_id,
             "franjas": data,
+            "iso_weekdays": iso_weekdays,
             "hint": format_schedule_hint(wins),
             "timezone": settings.business_timezone,
         },
@@ -1644,7 +1659,8 @@ def list_appointment_franjas_date_summary(
         .all()
     )
     override_days = [str(d) for d in rows]
-    has_weekly = bool(list_windows_ordered(db, warehouse_id, team_id))
+    weekly_iso_weekdays = list_weekly_iso_weekdays(db, warehouse_id, team_id)
+    has_weekly = bool(weekly_iso_weekdays)
     open_days = list_team_open_days_in_month(db, year, month, warehouse_id, team_id)
     return ok_response(
         {
@@ -1653,6 +1669,7 @@ def list_appointment_franjas_date_summary(
             "open_days": open_days,
             "override_days": override_days,
             "has_weekly_franjas": has_weekly,
+            "weekly_iso_weekdays": weekly_iso_weekdays,
         },
         "Resumen de franjas por fecha consultado correctamente",
     )
