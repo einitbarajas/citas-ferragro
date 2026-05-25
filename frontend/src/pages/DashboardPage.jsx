@@ -52,7 +52,10 @@ const appointmentSectionFallback = (
 );
 
 function todayISO() {
-  const d = new Date();
+  return dateISOFrom(new Date());
+}
+
+function dateISOFrom(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -708,30 +711,55 @@ export default function DashboardPage() {
     if (!session || !authReady || !isStaff) return;
     const isRevisionTabActive =
       (isAdminPanel && adminTab === "revision_citas") || (isLogistica && logisticaTab === "revision_citas");
-    const requestMode = isRevisionTabActive ? "list" : viewMode;
-    const buildParams = (mode) => {
-      const effectiveMode = mode === "list" && !isRevisionTabActive ? "week" : mode;
+    const buildParams = (modeOverride) => {
       const params = new URLSearchParams();
-      params.set("mode", effectiveMode);
       params.set("page", "1");
-      params.set("page_size", "100");
-      if (effectiveMode === "day" && filterDay) {
-        params.set("day", filterDay);
+      params.set("page_size", isRevisionTabActive ? "200" : "100");
+
+      if (isRevisionTabActive) {
+        const apiMode = reviewRange === "today" ? "day" : reviewRange;
+        params.set("mode", apiMode);
+        if (apiMode === "day") {
+          params.set("day", dateISOFrom(reviewReferenceDate));
+        }
+        if (apiMode === "month") {
+          params.set("month", String(reviewReferenceDate.getMonth() + 1));
+          params.set("year", String(reviewReferenceDate.getFullYear()));
+        }
+        if (rangeNeedsPeriodSelector(reviewRange) && reviewPeriod != null) {
+          params.set("period", String(reviewPeriod));
+        }
+        params.append("status", "sin_revision");
+        params.append("status", "revisado");
+      } else {
+        const effectiveMode = modeOverride ?? (viewMode === "list" ? "week" : viewMode);
+        params.set("mode", effectiveMode);
+        if (effectiveMode === "day" && filterDay) {
+          params.set("day", filterDay);
+        }
+        if (effectiveMode === "month") {
+          params.set("month", String(filterMonth));
+          params.set("year", String(filterYear));
+        }
+        if (rangeNeedsPeriodSelector(effectiveMode) && viewPeriod != null) {
+          params.set("period", String(viewPeriod));
+        }
       }
-      if (effectiveMode === "month") {
-        params.set("month", String(filterMonth));
-        params.set("year", String(filterYear));
-      }
-      if (rangeNeedsPeriodSelector(effectiveMode) && viewPeriod != null) {
-        params.set("period", String(viewPeriod));
-      }
+
       if (filterWarehouseId) {
         params.set("warehouse_id", String(filterWarehouseId));
       }
       return params;
     };
+
+    const requestMode = isRevisionTabActive
+      ? reviewRange === "today"
+        ? "day"
+        : reviewRange
+      : viewMode;
+
     try {
-      const response = await api.get(`${API_PREFIX}/crud/appointments?${buildParams(requestMode).toString()}`);
+      const response = await api.get(`${API_PREFIX}/crud/appointments?${buildParams().toString()}`);
       const payload = parseApiResponse(response);
       if (!payload.success) {
         throw new Error(payload.message || "No se pudieron cargar las citas.");
@@ -764,6 +792,9 @@ export default function DashboardPage() {
     filterMonth,
     filterYear,
     filterWarehouseId,
+    reviewRange,
+    reviewPeriod,
+    reviewReferenceDate,
     isAdmin,
     isLogistica,
     adminTab,
@@ -1455,6 +1486,8 @@ export default function DashboardPage() {
     filterMonth,
     filterYear,
     filterWarehouseId,
+    reviewRange,
+    reviewPeriod,
     adminTab,
     logisticaTab,
   ]);

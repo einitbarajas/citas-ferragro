@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 
 const PRODUCTION_API = "https://ferragro-api.onrender.com";
-/** Mínimo build_id que el front actual necesita (actualizar al desplegar API). */
-const MIN_API_BUILD_PREFIX = "2026-05-21";
+/** Prefijos de build_id que indican API al día (no confundir con la fecha del deploy). */
+const OK_API_BUILD_PREFIXES = ["2026-05-21", "2026-05-22", "2026-05-25"];
+const OK_API_BUILD_MARKERS = ["admin-bodega", "prod-sync", "prod-v1", "calendar-per-team"];
 
 export default function ApiStaleBanner() {
   const [stale, setStale] = useState(false);
@@ -19,10 +20,8 @@ export default function ApiStaleBanner() {
         if (cancelled) return;
         setBuildId(bid);
         const ok =
-          bid.startsWith(MIN_API_BUILD_PREFIX) ||
-          bid.includes("admin-bodega") ||
-          bid.includes("prod-sync") ||
-          bid.includes("calendar-per-team");
+          OK_API_BUILD_PREFIXES.some((p) => bid.startsWith(p)) ||
+          OK_API_BUILD_MARKERS.some((m) => bid.includes(m));
         setStale(!ok && bid.length > 0);
       } catch {
         if (!cancelled) setStale(false);
@@ -61,7 +60,7 @@ export default function ApiStaleBanner() {
         >
           /health
         </a>{" "}
-        (debe mostrar un build_id de 2026-05-22).
+        (debe incluir <strong>prod-sync</strong> o un <strong>render_git_commit</strong> reciente).
       </p>
     </div>
   );
