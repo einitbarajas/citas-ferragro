@@ -44,12 +44,50 @@ def _assert_slot_duration_valid(start_local: time, end_local: time, error_prefix
     return minutes
 
 
+def get_team_scheduled_iso_weekdays(
+    db: Session, warehouse_id: int, warehouse_unload_team_id: int
+) -> set[int]:
+    """Días ISO (1=lun..7=dom) presentes en franjas por fecha futuras del equipo."""
+    tz = ZoneInfo(settings.business_timezone)
+    local_today = datetime.now(tz).date()
+    rows = (
+        db.execute(
+            select(AppointmentDateWindow.day)
+            .where(
+                AppointmentDateWindow.warehouse_id == warehouse_id,
+                AppointmentDateWindow.warehouse_unload_team_id == warehouse_unload_team_id,
+                AppointmentDateWindow.day >= local_today,
+            )
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
+    return {d.isoweekday() for d in rows}
+
+
+def resolve_team_windows_for_day(
+    db: Session, day: date, warehouse_id: int, warehouse_unload_team_id: int | None
+) -> tuple[list, str]:
+    """Franjas efectivas del día: excepción por fecha, o semanal con tope por días ya configurados."""
+    date_windows = list_date_windows_ordered(db, day, warehouse_id, warehouse_unload_team_id)
+    if date_windows:
+        return date_windows, "date_override"
+    weekly = list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
+    if not weekly:
+        return [], "none"
+    if warehouse_unload_team_id is not None:
+        scheduled_weekdays = get_team_scheduled_iso_weekdays(db, warehouse_id, warehouse_unload_team_id)
+        if scheduled_weekdays and day.isoweekday() not in scheduled_weekdays:
+            return [], "none"
+    return weekly, "weekly"
+
+
 def day_has_team_schedule(
     db: Session, day: date, warehouse_id: int, warehouse_unload_team_id: int
 ) -> bool:
-    if list_date_windows_ordered(db, day, warehouse_id, warehouse_unload_team_id):
-        return True
-    return bool(list_windows_ordered(db, warehouse_id, warehouse_unload_team_id))
+    windows, _ = resolve_team_windows_for_day(db, day, warehouse_id, warehouse_unload_team_id)
+    return bool(windows)
 
 
 def list_warehouse_open_days_in_month(db: Session, year: int, month: int, warehouse_id: int) -> list[str]:
@@ -250,11 +288,8 @@ def start_time_allowed(
     tz = ZoneInfo(settings.business_timezone)
     aware = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
     local_dt = aware.astimezone(tz)
-    date_windows = list_date_windows_ordered(
+    windows_for_eval, _ = resolve_team_windows_for_day(
         db, local_dt.date(), warehouse_id, warehouse_unload_team_id
-    )
-    windows_for_eval = date_windows or list_windows_ordered(
-        db, warehouse_id, warehouse_unload_team_id
     )
     if not windows_for_eval:
         return False
@@ -275,10 +310,9 @@ def assert_appointment_fits_windows(
     tz = ZoneInfo(settings.business_timezone)
     aware = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
     local_dt = aware.astimezone(tz)
-    date_windows = list_date_windows_ordered(
+    windows, _ = resolve_team_windows_for_day(
         db, local_dt.date(), warehouse_id, warehouse_unload_team_id
     )
-    windows = date_windows or list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
     if not appointment_fits_in_windows(local_dt.time(), duration_minutes, windows):
         raise HTTPException(
             status_code=400,
@@ -300,10 +334,9 @@ def assert_appointment_slot(
         tz = ZoneInfo(settings.business_timezone)
         aware = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
         local_dt = aware.astimezone(tz)
-        date_windows = list_date_windows_ordered(
+        windows, _ = resolve_team_windows_for_day(
             db, local_dt.date(), warehouse_id, warehouse_unload_team_id
         )
-        windows = date_windows or list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
         raise HTTPException(
             status_code=400,
             detail=(

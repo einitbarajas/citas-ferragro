@@ -185,7 +185,16 @@ const btnPrimary =
   "min-h-11 rounded-lg bg-[#35783C] px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/10 transition hover:bg-[#2d6532] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60";
 const btnGhost =
   "min-h-11 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-[#121212] shadow-sm transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40";
-const BULK_ALL_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
+const BULK_WEEKDAY_OPTIONS = [
+  { iso: 1, label: "Lun" },
+  { iso: 2, label: "Mar" },
+  { iso: 3, label: "Mié" },
+  { iso: 4, label: "Jue" },
+  { iso: 5, label: "Vie" },
+  { iso: 6, label: "Sáb" },
+  { iso: 7, label: "Dom" },
+];
+const DEFAULT_BULK_ISO_WEEKDAYS = [1, 2, 3, 4, 5];
 
 function analyticsStatusSummary(byStatus) {
   const source = byStatus || {};
@@ -467,8 +476,10 @@ export default function DashboardPage() {
     { start_local: "13:00", end_local: "16:00" },
   ]);
   const [bulkMessage, setBulkMessage] = useState("");
+  const [bulkIsoWeekdays, setBulkIsoWeekdays] = useState(DEFAULT_BULK_ISO_WEEKDAYS);
   const [calendarOverrideDays, setCalendarOverrideDays] = useState([]);
   const [teamHasWeeklyFranjas, setTeamHasWeeklyFranjas] = useState(false);
+  const [scheduledIsoWeekdays, setScheduledIsoWeekdays] = useState([]);
   const [unloadTeamsReadyWarehouseId, setUnloadTeamsReadyWarehouseId] = useState(null);
 
   const activeAdminFranjaTeamId = useMemo(
@@ -1187,8 +1198,11 @@ export default function DashboardPage() {
         Array.isArray(payload.data?.override_days) ? payload.data.override_days : []
       );
       setTeamHasWeeklyFranjas(Boolean(payload.data?.has_weekly_franjas));
+      setScheduledIsoWeekdays(
+        Array.isArray(payload.data?.scheduled_iso_weekdays) ? payload.data.scheduled_iso_weekdays : []
+      );
     },
-    [session, isAdmin, selectedWarehouseId, activeAdminFranjaTeamId]
+    [session, isAdminPanel, selectedWarehouseId, activeAdminFranjaTeamId]
   );
 
   const loadAnalytics = useCallback(async () => {
@@ -1371,7 +1385,7 @@ export default function DashboardPage() {
     warehouseSchedulingTeamKey,
     loadWindows,
     isProveedor,
-    isAdmin,
+    isAdminPanel,
     adminTab,
     loadProviderMonthAvailability,
     loadProviderDayAvailability,
@@ -2201,12 +2215,17 @@ export default function DashboardPage() {
         setError("Selecciona un equipo de descarga de la bodega.");
         return;
       }
+      const isoWeekdays = [...bulkIsoWeekdays].map(Number).filter((d) => d >= 1 && d <= 7).sort((a, b) => a - b);
+      if (isoWeekdays.length === 0) {
+        setError("Selecciona al menos un día de la semana para el lote.");
+        return;
+      }
       const response = await api.put(`${API_PREFIX}/crud/appointment-franjas/fecha/lote`, {
         warehouse_id: selectedWarehouseId,
         unload_team_id: teamId,
         start_day: bulkStartDay,
         end_day: bulkEndDay,
-        iso_weekdays: BULK_ALL_WEEKDAYS,
+        iso_weekdays: isoWeekdays,
         franjas: sortedRows,
       });
       const payload = parseApiResponse(response);
@@ -4137,8 +4156,17 @@ export default function DashboardPage() {
                     <span>DO</span>
                   </div>
                   <div className="grid grid-cols-7 gap-1">
-                    {workCalendar.cells.map((cell, idx) =>
-                      cell ? (
+                    {workCalendar.cells.map((cell, idx) => {
+                      if (!cell) {
+                        return (
+                        <div key={`e-${idx}`} />
+                        );
+                      }
+                      const hasOverride = calendarOverrideDays.includes(cell.dateISO);
+                      const weeklyCoversDay =
+                        teamHasWeeklyFranjas &&
+                        (!scheduledIsoWeekdays.length || scheduledIsoWeekdays.includes(cell.isoWeekday));
+                      return (
                         <button
                           type="button"
                           key={`d-${idx}`}
@@ -4147,28 +4175,26 @@ export default function DashboardPage() {
                             setSpecialDayMessage("");
                           }}
                           className={`rounded-md border px-1 py-1.5 text-center text-xs ${
-                            calendarOverrideDays.includes(cell.dateISO)
+                            hasOverride
                               ? "border-emerald-500 bg-emerald-500 text-white"
-                              : teamHasWeeklyFranjas
+                              : weeklyCoversDay
                                 ? "border-emerald-300 bg-emerald-100 text-emerald-900"
                                 : "border-slate-200 bg-white text-slate-500"
                           } ${cell.isToday ? "ring-2 ring-emerald-400/70" : ""} ${
                             specialDay === cell.dateISO ? "ring-2 ring-blue-400/80" : ""
                           }`}
                           title={
-                            calendarOverrideDays.includes(cell.dateISO)
+                            hasOverride
                               ? "Franja especial de este equipo en esta fecha"
-                              : teamHasWeeklyFranjas
+                              : weeklyCoversDay
                                 ? "Regla semanal de este equipo"
                                 : "Sin franja para este equipo"
                           }
                         >
                           {cell.day}
                         </button>
-                      ) : (
-                        <div key={`e-${idx}`} />
-                      )
-                    )}
+                      );
+                    })}
                   </div>
                   <p className="mt-2 text-[11px] text-slate-500">
                     Verde fuerte: franja especial de <strong>este equipo</strong> en esa fecha. Verde claro: regla semanal de{" "}
@@ -4187,8 +4213,15 @@ export default function DashboardPage() {
                   <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                     <p className="text-xs font-medium text-amber-800">
                       No hay franja horaria para este equipo en este día.
-                      {teamHasWeeklyFranjas && !calendarOverrideDays.includes(specialDay)
-                        ? " La regla semanal del equipo sigue activa; aquí puedes definir una excepción solo para esta fecha."
+                      {teamHasWeeklyFranjas &&
+                      !calendarOverrideDays.includes(specialDay) &&
+                      (() => {
+                        const [y, m, d] = String(specialDay).split("-").map(Number);
+                        const iso =
+                          y && m && d ? getIsoWeekday(new Date(y, m - 1, d)) : 0;
+                        return !scheduledIsoWeekdays.length || scheduledIsoWeekdays.includes(iso);
+                      })()
+                        ? " La regla semanal del equipo sigue activa en este día de la semana; aquí puedes definir una excepción solo para esta fecha."
                         : ""}
                       {isSpecialDayPast ? " No se puede agregar porque el día ya pasó." : ""}
                     </p>
@@ -4275,7 +4308,40 @@ export default function DashboardPage() {
                     <input id="admin-bulk-end-day" type="date" min={bulkStartDay || todayValue} className={input} value={bulkEndDay} onChange={(e) => setBulkEndDay(e.target.value)} />
                   </div>
                 </div>
-                <p className="text-xs text-slate-600">Este lote aplica a todos los días dentro del rango seleccionado.</p>
+                <fieldset className="rounded-lg border border-slate-200 bg-white p-3">
+                  <legend className="px-1 text-xs font-medium text-slate-600">Días de la semana del lote</legend>
+                  <div className="flex flex-wrap gap-2">
+                    {BULK_WEEKDAY_OPTIONS.map((opt) => {
+                      const checked = bulkIsoWeekdays.includes(opt.iso);
+                      return (
+                        <label
+                          key={`bulk-wd-${opt.iso}`}
+                          className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${
+                            checked
+                              ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                              : "border-slate-200 bg-slate-50 text-slate-600"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500/40"
+                            checked={checked}
+                            onChange={() => {
+                              setBulkIsoWeekdays((prev) =>
+                                checked ? prev.filter((d) => d !== opt.iso) : [...prev, opt.iso].sort((a, b) => a - b)
+                              );
+                            }}
+                          />
+                          {opt.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Por defecto lunes a viernes. El proveedor solo verá abiertos los días que configures (y la regla semanal
+                    solo aplica en esos mismos días de la semana si existe).
+                  </p>
+                </fieldset>
                 <FranjaRowsTable
                   rows={bulkFranjaRows}
                   inputClass={input}

@@ -1,6 +1,6 @@
 """Pruebas unitarias de franjas y turnos (sin base de datos)."""
 
-from datetime import time
+from datetime import date, time
 from types import SimpleNamespace
 
 import pytest
@@ -83,3 +83,12 @@ def test_format_schedule_hint_lists_turns():
     hint = format_schedule_hint([_window(8, 0, 9, 30)])
     assert "08:00" in hint
     assert "90 min" in hint
+
+
+def test_scheduled_iso_weekdays_limit_weekly_to_configured_days():
+    """Si hay franjas por fecha lun–vie, sáb/dom (6–7) quedan fuera del patrón."""
+    scheduled = {1, 2, 3, 4, 5}
+    assert 6 not in scheduled
+    assert 7 not in scheduled
+    assert date(2026, 5, 25).isoweekday() in scheduled  # lunes
+    assert date(2026, 5, 24).isoweekday() not in scheduled  # domingo

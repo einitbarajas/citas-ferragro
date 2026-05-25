@@ -37,8 +37,7 @@ from app.services.appointment_windows import (
     assert_appointment_slot,
     get_active_warehouse_or_raise,
     iter_bookable_slots,
-    list_date_windows_ordered,
-    list_windows_ordered,
+    resolve_team_windows_for_day,
 )
 from app.services.notification_service import (
     notify_provider_appointment_updated,
@@ -181,11 +180,8 @@ def create_appointment(
     day_local = payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).date()
     get_active_warehouse_or_raise(db, payload.warehouse_id)
     team = get_unload_team_or_raise(db, payload.warehouse_id, payload.warehouse_unload_team_id)
-    date_windows = list_date_windows_ordered(
-        db, day_local, payload.warehouse_id, team.id
-    )
-    weekly_windows = list_windows_ordered(db, payload.warehouse_id, team.id)
-    if not date_windows and not weekly_windows:
+    windows, _ = resolve_team_windows_for_day(db, day_local, payload.warehouse_id, team.id)
+    if not windows:
         raise HTTPException(
             status_code=400,
             detail="Este día no tiene turnos habilitados para el equipo seleccionado.",
@@ -405,10 +401,7 @@ def list_available_slots_for_provider_day(
     if principal.role_name != UserRole.proveedor:
         assert_warehouse_access(db, principal, warehouse_id)
     team = get_unload_team_or_raise(db, warehouse_id, unload_team_id)
-    date_windows = list_date_windows_ordered(db, day, warehouse_id, team.id)
-    weekly_windows = list_windows_ordered(db, warehouse_id, team.id)
-    windows = date_windows or weekly_windows
-    source = "date_override" if date_windows else ("weekly" if weekly_windows else "none")
+    windows, source = resolve_team_windows_for_day(db, day, warehouse_id, team.id)
     if not windows:
         return ok_response(
             {
@@ -610,9 +603,8 @@ def provider_reschedule_appointment(
     provider_team_index = payload.provider_team_index or appt.provider_team_index
     team = get_unload_team_or_raise(db, appt.warehouse_id, team_id)
     day_local = payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).date()
-    date_windows = list_date_windows_ordered(db, day_local, appt.warehouse_id, team.id)
-    weekly_windows = list_windows_ordered(db, appt.warehouse_id, team.id)
-    if not date_windows and not weekly_windows:
+    windows, _ = resolve_team_windows_for_day(db, day_local, appt.warehouse_id, team.id)
+    if not windows:
         raise HTTPException(
             status_code=400,
             detail="Este día no tiene turnos habilitados para el equipo seleccionado.",

@@ -72,11 +72,13 @@ from app.services.appointment_windows import (
     clear_date_windows,
     format_schedule_hint,
     get_active_warehouse_or_raise,
+    get_team_scheduled_iso_weekdays,
     iter_bookable_slots,
     list_date_windows_ordered,
     list_team_open_days_in_month,
     list_warehouse_open_days_in_month,
     replace_date_windows,
+    resolve_team_windows_for_day,
     list_windows_ordered,
     replace_windows,
     slot_duration_minutes,
@@ -1518,13 +1520,7 @@ def get_resolved_appointment_franjas(
     get_active_warehouse_or_raise(db, warehouse_id)
     assert_warehouse_access(db, principal, warehouse_id)
     team_id = _resolve_franja_unload_team_id(db, warehouse_id, unload_team_id)
-    date_windows = list_date_windows_ordered(db, day, warehouse_id, team_id)
-    if date_windows:
-        windows = date_windows
-        source = "date_override"
-    else:
-        windows = list_windows_ordered(db, warehouse_id, team_id)
-        source = "weekly"
+    windows, source = resolve_team_windows_for_day(db, day, warehouse_id, team_id)
     data = [_window_to_out(w) for w in windows]
     return ok_response(
         {
@@ -1646,6 +1642,7 @@ def list_appointment_franjas_date_summary(
     override_days = [str(d) for d in rows]
     has_weekly = bool(list_windows_ordered(db, warehouse_id, team_id))
     open_days = list_team_open_days_in_month(db, year, month, warehouse_id, team_id)
+    scheduled_iso_weekdays = sorted(get_team_scheduled_iso_weekdays(db, warehouse_id, team_id))
     return ok_response(
         {
             "warehouse_id": warehouse_id,
@@ -1653,6 +1650,7 @@ def list_appointment_franjas_date_summary(
             "open_days": open_days,
             "override_days": override_days,
             "has_weekly_franjas": has_weekly,
+            "scheduled_iso_weekdays": scheduled_iso_weekdays,
         },
         "Resumen de franjas por fecha consultado correctamente",
     )
