@@ -21,7 +21,6 @@ class AppointmentWindow(Base):
         nullable=True,
         index=True,
     )
-    iso_weekday: Mapped[int] = mapped_column("DiaSemanaIso", Integer, nullable=False, default=1)
     start_local: Mapped[time] = mapped_column("HoraInicio", Time, nullable=False)
     end_local: Mapped[time] = mapped_column("HoraFin", Time, nullable=False)
     sort_order: Mapped[int] = mapped_column("Orden", Integer, nullable=False, default=0)

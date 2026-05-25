@@ -30,7 +30,7 @@ from app.services.provider_purge_scheduler import provider_purge_scheduler_loop
 from app.services.reminder_scheduler import reminder_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-25-iso-weekday-v1"
+API_BUILD_ID = "2026-05-25-prod-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -80,23 +80,9 @@ def _ensure_production_admin_on_startup() -> None:
         logger.exception("No se pudo asegurar el Admin de producción al arranque")
 
 
-def _apply_schema_patches_on_startup() -> None:
-    if not settings.is_production:
-        return
-    try:
-        from app.db.schema_patches import apply_patch_024_franjas_iso_weekday
-
-        with SessionLocal() as db:
-            apply_patch_024_franjas_iso_weekday(db)
-            logger.info("Parche 024 franjas ISO weekday aplicado o ya presente")
-    except Exception:
-        logger.exception("No se pudo aplicar parche de esquema 024 al arranque")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _warn_if_smtp_missing_in_production()
-    _apply_schema_patches_on_startup()
     _purge_orphan_credentials_on_startup()
     _ensure_production_admin_on_startup()
     stop_event = asyncio.Event()

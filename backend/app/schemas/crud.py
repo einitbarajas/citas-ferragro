@@ -195,12 +195,6 @@ class AppointmentWindowItem(BaseModel):
 class AppointmentWindowsReplace(BaseModel):
     warehouse_id: int = Field(ge=1)
     unload_team_id: int | None = Field(default=None, ge=1)
-    iso_weekdays: list[int] = Field(
-        default_factory=lambda: [1, 2, 3, 4, 5],
-        min_length=1,
-        max_length=7,
-        description="Días ISO: 1=lunes … 7=domingo",
-    )
     franjas: list[AppointmentWindowItem] = Field(min_length=1, max_length=32)
 
 

@@ -184,7 +184,7 @@ def create_appointment(
     date_windows = list_date_windows_ordered(
         db, day_local, payload.warehouse_id, team.id
     )
-    weekly_windows = list_windows_ordered(db, payload.warehouse_id, team.id, for_day=day_local)
+    weekly_windows = list_windows_ordered(db, payload.warehouse_id, team.id)
     if not date_windows and not weekly_windows:
         raise HTTPException(
             status_code=400,
@@ -406,7 +406,7 @@ def list_available_slots_for_provider_day(
         assert_warehouse_access(db, principal, warehouse_id)
     team = get_unload_team_or_raise(db, warehouse_id, unload_team_id)
     date_windows = list_date_windows_ordered(db, day, warehouse_id, team.id)
-    weekly_windows = list_windows_ordered(db, warehouse_id, team.id, for_day=day)
+    weekly_windows = list_windows_ordered(db, warehouse_id, team.id)
     windows = date_windows or weekly_windows
     source = "date_override" if date_windows else ("weekly" if weekly_windows else "none")
     if not windows:
@@ -611,7 +611,7 @@ def provider_reschedule_appointment(
     team = get_unload_team_or_raise(db, appt.warehouse_id, team_id)
     day_local = payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).date()
     date_windows = list_date_windows_ordered(db, day_local, appt.warehouse_id, team.id)
-    weekly_windows = list_windows_ordered(db, appt.warehouse_id, team.id, for_day=day_local)
+    weekly_windows = list_windows_ordered(db, appt.warehouse_id, team.id)
     if not date_windows and not weekly_windows:
         raise HTTPException(
             status_code=400,

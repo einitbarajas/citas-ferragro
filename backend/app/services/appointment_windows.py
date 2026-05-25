@@ -49,22 +49,7 @@ def day_has_team_schedule(
 ) -> bool:
     if list_date_windows_ordered(db, day, warehouse_id, warehouse_unload_team_id):
         return True
-    return bool(list_windows_ordered(db, warehouse_id, warehouse_unload_team_id, for_day=day))
-
-
-def list_weekly_iso_weekdays(
-    db: Session, warehouse_id: int, warehouse_unload_team_id: int | None = None
-) -> list[int]:
-    """Días ISO (1..7) con regla semanal para el equipo."""
-    base = select(AppointmentWindow.iso_weekday).where(
-        AppointmentWindow.warehouse_id == warehouse_id
-    )
-    if warehouse_unload_team_id is None:
-        base = base.where(AppointmentWindow.warehouse_unload_team_id.is_(None))
-    else:
-        base = base.where(AppointmentWindow.warehouse_unload_team_id == warehouse_unload_team_id)
-    rows = db.execute(base.distinct().order_by(AppointmentWindow.iso_weekday.asc())).scalars().all()
-    return [int(x) for x in rows if 1 <= int(x) <= 7]
+    return bool(list_windows_ordered(db, warehouse_id, warehouse_unload_team_id))
 
 
 def list_warehouse_open_days_in_month(db: Session, year: int, month: int, warehouse_id: int) -> list[str]:
@@ -151,39 +136,33 @@ def list_date_windows_ordered(
 
 
 def list_windows_ordered(
-    db: Session,
-    warehouse_id: int,
-    warehouse_unload_team_id: int | None = None,
-    *,
-    for_day: date | None = None,
-    for_iso_weekday: int | None = None,
-) -> list[AppointmentWindow]:
-    iso_filter = for_iso_weekday
-    if iso_filter is None and for_day is not None:
-        iso_filter = for_day.isoweekday()
-    stmt = select(AppointmentWindow).where(AppointmentWindow.warehouse_id == warehouse_id)
-    if warehouse_unload_team_id is None:
-        stmt = stmt.where(AppointmentWindow.warehouse_unload_team_id.is_(None))
-    else:
-        stmt = stmt.where(AppointmentWindow.warehouse_unload_team_id == warehouse_unload_team_id)
-    if iso_filter is not None:
-        stmt = stmt.where(AppointmentWindow.iso_weekday == int(iso_filter))
-    return (
-        db.execute(stmt.order_by(AppointmentWindow.sort_order, AppointmentWindow.id))
-        .scalars()
-        .all()
-    )
-
-
-def list_canonical_weekly_windows(
     db: Session, warehouse_id: int, warehouse_unload_team_id: int | None = None
 ) -> list[AppointmentWindow]:
-    """Horarios de referencia (primer día ISO configurado) para editar en el panel."""
-    weekdays = list_weekly_iso_weekdays(db, warehouse_id, warehouse_unload_team_id)
-    if not weekdays:
-        return []
-    return list_windows_ordered(
-        db, warehouse_id, warehouse_unload_team_id, for_iso_weekday=weekdays[0]
+    if warehouse_unload_team_id is not None:
+        team_rows = (
+            db.execute(
+                select(AppointmentWindow)
+                .where(
+                    AppointmentWindow.warehouse_id == warehouse_id,
+                    AppointmentWindow.warehouse_unload_team_id == warehouse_unload_team_id,
+                )
+                .order_by(AppointmentWindow.sort_order, AppointmentWindow.id)
+            )
+            .scalars()
+            .all()
+        )
+        return team_rows
+    return (
+        db.execute(
+            select(AppointmentWindow)
+            .where(
+                AppointmentWindow.warehouse_id == warehouse_id,
+                AppointmentWindow.warehouse_unload_team_id.is_(None),
+            )
+            .order_by(AppointmentWindow.sort_order, AppointmentWindow.id)
+        )
+        .scalars()
+        .all()
     )
 
 
@@ -275,7 +254,7 @@ def start_time_allowed(
         db, local_dt.date(), warehouse_id, warehouse_unload_team_id
     )
     windows_for_eval = date_windows or list_windows_ordered(
-        db, warehouse_id, warehouse_unload_team_id, for_day=local_dt.date()
+        db, warehouse_id, warehouse_unload_team_id
     )
     if not windows_for_eval:
         return False
@@ -299,9 +278,7 @@ def assert_appointment_fits_windows(
     date_windows = list_date_windows_ordered(
         db, local_dt.date(), warehouse_id, warehouse_unload_team_id
     )
-    windows = date_windows or list_windows_ordered(
-        db, warehouse_id, warehouse_unload_team_id, for_day=local_dt.date()
-    )
+    windows = date_windows or list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
     if not appointment_fits_in_windows(local_dt.time(), duration_minutes, windows):
         raise HTTPException(
             status_code=400,
@@ -326,9 +303,7 @@ def assert_appointment_slot(
         date_windows = list_date_windows_ordered(
             db, local_dt.date(), warehouse_id, warehouse_unload_team_id
         )
-        windows = date_windows or list_windows_ordered(
-            db, warehouse_id, warehouse_unload_team_id, for_day=local_dt.date()
-        )
+        windows = date_windows or list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
         raise HTTPException(
             status_code=400,
             detail=(
@@ -342,25 +317,12 @@ def assert_start_within_windows(db: Session, start: datetime, warehouse_id: int,
     assert_appointment_slot(db, start, duration_minutes, warehouse_id)
 
 
-def normalize_iso_weekdays(iso_weekdays: list[int]) -> list[int]:
-    cleaned = sorted({int(x) for x in iso_weekdays if 1 <= int(x) <= 7})
-    if not cleaned:
-        raise HTTPException(
-            status_code=400,
-            detail="Debes seleccionar al menos un día de la semana (lunes=1 … domingo=7).",
-        )
-    return cleaned
-
-
 def replace_windows(
     db: Session,
     warehouse_id: int,
     items: list[tuple[time, time]],
     warehouse_unload_team_id: int | None = None,
-    *,
-    iso_weekdays: list[int] | None = None,
 ) -> list[AppointmentWindow]:
-    weekdays = normalize_iso_weekdays(iso_weekdays or [1, 2, 3, 4, 5])
     stmt = delete(AppointmentWindow).where(AppointmentWindow.warehouse_id == warehouse_id)
     if warehouse_unload_team_id is None:
         stmt = stmt.where(AppointmentWindow.warehouse_unload_team_id.is_(None))
@@ -368,21 +330,19 @@ def replace_windows(
         stmt = stmt.where(AppointmentWindow.warehouse_unload_team_id == warehouse_unload_team_id)
     db.execute(stmt)
     db.flush()
-    for iso_day in weekdays:
-        for idx, (hi, hf) in enumerate(items):
-            _assert_slot_duration_valid(hi, hf, "Franja semanal")
-            db.add(
-                AppointmentWindow(
-                    warehouse_id=warehouse_id,
-                    warehouse_unload_team_id=warehouse_unload_team_id,
-                    iso_weekday=iso_day,
-                    start_local=hi,
-                    end_local=hf,
-                    sort_order=idx,
-                )
+    for idx, (hi, hf) in enumerate(items):
+        _assert_slot_duration_valid(hi, hf, "Franja semanal")
+        db.add(
+            AppointmentWindow(
+                warehouse_id=warehouse_id,
+                warehouse_unload_team_id=warehouse_unload_team_id,
+                start_local=hi,
+                end_local=hf,
+                sort_order=idx,
             )
+        )
     db.commit()
-    return list_canonical_weekly_windows(db, warehouse_id, warehouse_unload_team_id)
+    return list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
 
 
 def replace_date_windows(
