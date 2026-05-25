@@ -196,7 +196,7 @@ export function parseApiError(error) {
     const detail = payload.detail.trim();
     if (status === 404 && detail.toLowerCase() === "not found") {
       return import.meta.env.PROD
-        ? "El servidor del API en Render está desactualizado respecto al portal. El administrador debe hacer Manual Deploy del servicio ferragro-api (rama main) y esperar estado Live."
+        ? "Recurso no encontrado en el API. Comprueba https://ferragro-api.onrender.com/health (build_id y render_git_commit). Si faltan rutas nuevas, haz Manual Deploy en Render; si /health está bien, redeploy en Vercel y Ctrl+F5."
         : "No se encontró el recurso solicitado. Comprueba que el backend local esté en marcha y actualizado.";
     }
     return detail;

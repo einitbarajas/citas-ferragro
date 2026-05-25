@@ -413,6 +413,21 @@ def unhandled_exception_handler(_, __):
     )
 
 
+@app.get("/")
+def root():
+    """Raíz pública: versión desplegada (Render health check y navegador)."""
+    return ok_response(
+        {
+            "service": "ferragro-api",
+            "build_id": API_BUILD_ID,
+            "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
+            "docs": "/docs",
+            "health": "/health",
+        },
+        "Ferragro Appointments API",
+    )
+
+
 @app.get("/health")
 def health():
     admin_email: str | None = None

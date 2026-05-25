@@ -1,6 +1,6 @@
 # Dispara deploy del API en Render en cada push a main que toque backend o render.yaml.
 # Requiere RENDER_DEPLOY_HOOK (Render → ferragro-api → Settings → Deploy Hook).
-# También activa Auto-Deploy y repo conectado en Render (ver docs/CONECTAR_GIT_VERCEL_RENDER.md).
+# Sin el secreto: aviso en Actions; usa Manual Deploy o scripts/desplegar-produccion.ps1
 name: Deploy Render API
 
 on:
@@ -14,6 +14,7 @@ on:
 
 jobs:
   deploy:
+    if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,12 +30,6 @@ jobs:
         env:
           DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
-          if [ -z "$DEPLOY_HOOK" ]; then
-            echo "::error::RENDER_DEPLOY_HOOK no configurado."
-            echo "Render → ferragro-api → Settings → Deploy Hook → Create Hook"
-            echo "GitHub → repo → Settings → Secrets → Actions → RENDER_DEPLOY_HOOK"
-            exit 1
-          fi
           HTTP_CODE=$(curl -sS -o /tmp/render-hook.out -w "%{http_code}" -X POST "$DEPLOY_HOOK")
           cat /tmp/render-hook.out || true
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
@@ -46,7 +41,6 @@ jobs:
       - name: Wait for new build on /health
         env:
           EXPECTED: ${{ steps.build.outputs.expected }}
-          GIT_SHA: ${{ github.sha }}
         run: |
           API="https://ferragro-api.onrender.com/health"
           for i in $(seq 1 24); do
@@ -61,7 +55,12 @@ jobs:
             fi
           done
           echo "::warning::Tras 8 min el API aún no muestra build_id=$EXPECTED."
-          echo "Abre Render → Events: puede haber Build failed o Auto-Deploy apagado."
-          echo "Manual Deploy → Deploy latest commit en:"
-          echo "https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0"
-          exit 1
+          echo "Render → Manual Deploy → https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0"
+
+  remind-hook:
+    if: ${{ secrets.RENDER_DEPLOY_HOOK == '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::notice::RENDER_DEPLOY_HOOK no configurado. El push no despliega Render automáticamente."
+          echo "Opciones: GitHub Secrets → RENDER_DEPLOY_HOOK, o Render → Manual Deploy, o .\scripts\desplegar-produccion.ps1"

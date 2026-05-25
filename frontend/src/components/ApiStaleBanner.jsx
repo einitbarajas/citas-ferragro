@@ -19,9 +19,11 @@ export default function ApiStaleBanner() {
         const bid = String(json?.data?.build_id || "");
         if (cancelled) return;
         setBuildId(bid);
+        const git = String(json?.data?.render_git_commit || "");
         const ok =
           OK_API_BUILD_PREFIXES.some((p) => bid.startsWith(p)) ||
-          OK_API_BUILD_MARKERS.some((m) => bid.includes(m));
+          OK_API_BUILD_MARKERS.some((m) => bid.includes(m)) ||
+          (git.length >= 7 && bid.includes("prod"));
         setStale(!ok && bid.length > 0);
       } catch {
         if (!cancelled) setStale(false);
