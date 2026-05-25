@@ -12,10 +12,17 @@ from app.models.warehouse import Warehouse
 
 MIN_SLOT_MINUTES = 15
 MAX_SLOT_MINUTES = 480
+# Duración típica para turnos consecutivos dentro de una franja larga (ej. 10:01–11:01 y 11:01–12:00).
+CONSECUTIVE_BOOKING_MINUTES = 60
 
 
 def _time_to_minutes(t: time) -> int:
     return t.hour * 60 + t.minute
+
+
+def _minutes_to_time(total_minutes: int) -> time:
+    total_minutes = max(0, min(total_minutes, 23 * 60 + 59))
+    return time(total_minutes // 60, total_minutes % 60)
 
 
 def slot_duration_minutes(start_local: time, end_local: time) -> int:
@@ -160,14 +167,52 @@ def list_windows_ordered(
 
 
 def iter_bookable_slots(windows: list) -> list[tuple[time, time, int]]:
-    """Cada fila de franja es un turno agendable (inicio, fin, duración en minutos)."""
+    """Turnos agendables: franja completa y, si es larga, bloques consecutivos (p. ej. 60 min)."""
+    seen: set[tuple[str, str, int]] = set()
     out: list[tuple[time, time, int]] = []
+
+    def add_slot(slot_start: time, slot_end: time, minutes: int) -> None:
+        if minutes < MIN_SLOT_MINUTES or minutes > MAX_SLOT_MINUTES:
+            return
+        key = (slot_start.strftime("%H:%M"), slot_end.strftime("%H:%M"), minutes)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append((slot_start, slot_end, minutes))
+
     for w in windows:
         duration = slot_duration_minutes(w.start_local, w.end_local)
         if duration < MIN_SLOT_MINUTES or duration > MAX_SLOT_MINUTES:
             continue
-        out.append((w.start_local, w.end_local, duration))
+        add_slot(w.start_local, w.end_local, duration)
+        if duration > CONSECUTIVE_BOOKING_MINUTES:
+            cursor = _time_to_minutes(w.start_local)
+            end_bound = _time_to_minutes(w.end_local)
+            while cursor + CONSECUTIVE_BOOKING_MINUTES <= end_bound:
+                block_end = cursor + CONSECUTIVE_BOOKING_MINUTES
+                add_slot(_minutes_to_time(cursor), _minutes_to_time(block_end), CONSECUTIVE_BOOKING_MINUTES)
+                cursor = block_end
+            remainder = end_bound - cursor
+            if remainder >= MIN_SLOT_MINUTES:
+                add_slot(_minutes_to_time(cursor), w.end_local, remainder)
+    out.sort(key=lambda row: (_time_to_minutes(row[0]), row[2]))
     return out
+
+
+def appointment_fits_in_windows(
+    start_local: time, duration_minutes: int, windows: list
+) -> bool:
+    """La cita cabe dentro de alguna franja configurada (sin exigir coincidencia exacta de turno)."""
+    if duration_minutes < MIN_SLOT_MINUTES or duration_minutes > MAX_SLOT_MINUTES:
+        return False
+    start_m = _time_to_minutes(start_local)
+    end_m = start_m + duration_minutes
+    for w in windows:
+        w_start = _time_to_minutes(w.start_local)
+        w_end = _time_to_minutes(w.end_local)
+        if start_m >= w_start and end_m <= w_end:
+            return True
+    return False
 
 
 def format_schedule_hint(windows: list) -> str:
@@ -218,6 +263,30 @@ def start_time_allowed(
         if appointment_matches_slot(t, duration_minutes, slot_start, slot_end):
             return True
     return False
+
+
+def assert_appointment_fits_windows(
+    db: Session,
+    start: datetime,
+    duration_minutes: int,
+    warehouse_id: int,
+    warehouse_unload_team_id: int | None = None,
+) -> None:
+    tz = ZoneInfo(settings.business_timezone)
+    aware = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
+    local_dt = aware.astimezone(tz)
+    date_windows = list_date_windows_ordered(
+        db, local_dt.date(), warehouse_id, warehouse_unload_team_id
+    )
+    windows = date_windows or list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
+    if not appointment_fits_in_windows(local_dt.time(), duration_minutes, windows):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "La hora y duración deben quedar dentro de una franja habilitada. "
+                + format_schedule_hint(windows)
+            ),
+        )
 
 
 def assert_appointment_slot(

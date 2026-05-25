@@ -1,4 +1,4 @@
-"""Alcance por bodega para el rol AdminBodega."""
+"""Alcance por bodega para roles AdminBodega y Logística."""
 from __future__ import annotations
 
 from fastapi import HTTPException, status
@@ -11,9 +11,15 @@ from app.models.user_warehouse import UserWarehouse
 from app.models.warehouse import Warehouse
 
 ROLE_ADMIN_BODEGA = UserRole.admin_bodega
+ROLE_LOGISTICA = UserRole.logistica
 GLOBAL_ADMIN_ROLE = UserRole.admin
-INTERNAL_STAFF_ROLES = frozenset({UserRole.admin, UserRole.logistica, ROLE_ADMIN_BODEGA})
+INTERNAL_STAFF_ROLES = frozenset({UserRole.admin, ROLE_LOGISTICA, ROLE_ADMIN_BODEGA})
 WAREHOUSE_ADMIN_ROLES = frozenset({UserRole.admin, ROLE_ADMIN_BODEGA})
+WAREHOUSE_SCOPED_ROLES = frozenset({ROLE_ADMIN_BODEGA, ROLE_LOGISTICA})
+
+
+def role_requires_warehouse_assignments(role_name: str) -> bool:
+    return role_name in WAREHOUSE_SCOPED_ROLES
 
 
 def list_user_warehouse_ids(db: Session, document_id: str) -> list[int]:
@@ -36,7 +42,7 @@ def validate_warehouse_ids_exist(db: Session, warehouse_ids: list[int]) -> None:
     if not warehouse_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Debes asignar al menos una bodega al administrador de bodega.",
+            detail="Debes asignar al menos una bodega a este usuario.",
         )
     found = db.execute(
         select(Warehouse.id).where(Warehouse.id.in_(warehouse_ids))
@@ -48,9 +54,9 @@ def validate_warehouse_ids_exist(db: Session, warehouse_ids: list[int]) -> None:
 def resolve_allowed_warehouse_ids(db: Session, principal: SecurityPrincipal) -> list[int] | None:
     """
     None = acceso a todas las bodegas (Admin global).
-    Lista (posiblemente vacía) = solo esas bodegas (AdminBodega).
+    Lista (posiblemente vacía) = solo esas bodegas (AdminBodega, Logística).
     """
-    if principal.role_name != ROLE_ADMIN_BODEGA:
+    if principal.role_name not in WAREHOUSE_SCOPED_ROLES:
         return None
     if principal.user is None:
         return []

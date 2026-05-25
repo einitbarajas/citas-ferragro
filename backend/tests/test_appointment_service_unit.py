@@ -77,11 +77,8 @@ def test_finalize_elapsed_throttled(monkeypatch):
     db.execute.assert_not_called()
 
 
-def test_provider_capacity_allows_parallel_when_teams_gt_one():
+def test_provider_schedule_never_blocked_by_own_capacity():
     db = MagicMock()
-    provider = MagicMock()
-    provider.unload_teams = 2
-    db.get.return_value = provider
     start = datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
     other = Appointment(
         id=2,
@@ -94,50 +91,28 @@ def test_provider_capacity_allows_parallel_when_teams_gt_one():
     )
     db.execute.return_value.scalars.return_value = iter([other])
     assert svc.provider_schedule_conflicts(db, 99, start, 60) is False
-
-
-def test_provider_schedule_conflicts_detects_overlap():
-    db = MagicMock()
-    provider = MagicMock()
-    provider.unload_teams = 1
-    db.get.return_value = provider
-    start = datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
-    other = Appointment(
-        id=2,
-        provider_id=99,
-        warehouse_id=2,
-        material_description="y",
-        start_time=start + timedelta(minutes=30),
-        duration_minutes=60,
-        status=AppointmentStatus.sin_revision,
-    )
-    db.execute.return_value.scalars.return_value = iter([other])
-    assert svc.provider_schedule_conflicts(db, 99, start, 60) is True
-
-
-def test_provider_schedule_conflicts_ignores_non_overlapping():
-    db = MagicMock()
-    provider = MagicMock()
-    provider.unload_teams = 1
-    db.get.return_value = provider
-    start = datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
-    other = Appointment(
-        id=2,
-        provider_id=99,
-        warehouse_id=2,
-        material_description="y",
-        start_time=start + timedelta(hours=3),
-        duration_minutes=60,
-        status=AppointmentStatus.sin_revision,
-    )
-    db.execute.return_value.scalars.return_value = iter([other])
-    assert svc.provider_schedule_conflicts(db, 99, start, 60) is False
+    assert svc.provider_capacity_available(db, 99, start, 60) is True
 
 
 def test_slot_conflict_check_returns_true_when_team_busy(monkeypatch):
     monkeypatch.setattr(svc, "unload_team_slot_available", lambda *_a, **_k: False)
     monkeypatch.setattr(svc, "provider_capacity_available", lambda *_a, **_k: True)
     assert svc.slot_conflict_check(MagicMock(), datetime.now(timezone.utc), 60, 1) is True
+
+
+def test_count_schedule_overlaps_allows_back_to_back():
+    start = datetime(2026, 6, 1, 13, 0, tzinfo=timezone.utc)
+    first = Appointment(
+        id=1,
+        provider_id=1,
+        warehouse_id=1,
+        material_description="a",
+        start_time=start,
+        duration_minutes=60,
+        status=AppointmentStatus.sin_revision,
+    )
+    second_start = start + timedelta(minutes=60)
+    assert svc.count_schedule_overlaps([first], second_start, 60) == 0
 
 
 def test_slot_conflict_check_returns_false_when_free(monkeypatch):

@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import api, { API_PREFIX, parseApiResponse } from "../api/client";
+import api, {
+  API_PREFIX,
+  isAppointmentSlotWindowMismatch,
+  parseApiError,
+  parseApiResponse,
+} from "../api/client";
+import ConfirmDialog from "./ConfirmDialog";
+import StaffAppointmentChangeConfirm from "./StaffAppointmentChangeConfirm";
 import { describeProviderSlotAvailability } from "../utils/providerAvailability";
 import { formatSlotLabel, normalizeAvailableSlots, parseSlotKey, slotKey } from "../utils/appointmentSlots";
 import {
@@ -7,6 +14,7 @@ import {
   buildDateTimeIsoInTimeZone,
   formatDateInputInTimeZone,
   formatTimeInputInTimeZone,
+  getAppointmentSchedule,
 } from "../utils/businessTime";
 
 function toDateInputValue(isoString, timeZone = DEFAULT_BUSINESS_TZ) {
@@ -21,9 +29,16 @@ function buildLocalDateTimeIso(dateValue, timeValue, timeZone = DEFAULT_BUSINESS
   return buildDateTimeIsoInTimeZone(dateValue, timeValue, timeZone);
 }
 
+function teamLabel(team) {
+  if (!team) return "—";
+  return team.name?.trim() || `Equipo #${team.id}`;
+}
+
 export default function AppointmentReschedulePanel({
   appointment,
   variant,
+  staffRole,
+  warehouses = [],
   inputClass,
   buttonClass,
   onReschedule,
@@ -35,28 +50,93 @@ export default function AppointmentReschedulePanel({
     const start = toTimeInputValue(appointment.start_time, tz);
     return `${start}|${appointment.duration_minutes || 60}`;
   });
+  const [warehouseId, setWarehouseId] = useState(String(appointment.warehouse_id || ""));
+  const [unloadTeamId, setUnloadTeamId] = useState(
+    appointment.warehouse_unload_team_id ? String(appointment.warehouse_unload_team_id) : ""
+  );
+  const [unloadTeams, setUnloadTeams] = useState([]);
   const [slots, setSlots] = useState([]);
   const [slotReason, setSlotReason] = useState("");
   const [slotMessage, setSlotMessage] = useState("");
   const [minimumNoticeHours, setMinimumNoticeHours] = useState(24);
+  const [loadingTeams, setLoadingTeams] = useState(false);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slotError, setSlotError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
   const [businessTz, setBusinessTz] = useState(DEFAULT_BUSINESS_TZ);
+  const [saveConfirmOpen, setSaveConfirmOpen] = useState(false);
+  const [pendingSavePayload, setPendingSavePayload] = useState(null);
+  const [overrideConfirmOpen, setOverrideConfirmOpen] = useState(false);
+  const [overrideErrorMessage, setOverrideErrorMessage] = useState("");
+  const [pendingOverridePayload, setPendingOverridePayload] = useState(null);
+
   const usesSlotPicker = variant === "provider" || variant === "staff";
-  const warehouseId = appointment.warehouse_id;
-  const unloadTeamId = appointment.warehouse_unload_team_id;
+  const canChangeWarehouse = variant === "staff" && staffRole === "Admin";
+  const canChangeTeam = variant === "staff" && (staffRole === "Admin" || staffRole === "AdminBodega");
+  const effectiveWarehouseId = canChangeWarehouse ? warehouseId : String(appointment.warehouse_id || "");
+  const effectiveTeamId = canChangeTeam
+    ? unloadTeamId
+    : appointment.warehouse_unload_team_id
+      ? String(appointment.warehouse_unload_team_id)
+      : "";
 
   useEffect(() => {
     setDateValue(toDateInputValue(appointment.start_time, businessTz));
     const start = toTimeInputValue(appointment.start_time, businessTz);
     setTimeValue(`${start}|${appointment.duration_minutes || 60}`);
+    setWarehouseId(String(appointment.warehouse_id || ""));
+    setUnloadTeamId(appointment.warehouse_unload_team_id ? String(appointment.warehouse_unload_team_id) : "");
     setFormError("");
-  }, [appointment.id, appointment.start_time, appointment.duration_minutes, businessTz]);
+  }, [
+    appointment.id,
+    appointment.start_time,
+    appointment.duration_minutes,
+    appointment.warehouse_id,
+    appointment.warehouse_unload_team_id,
+    businessTz,
+  ]);
 
   useEffect(() => {
-    if (variant !== "staff" || !dateValue || !warehouseId || !unloadTeamId) return;
+    if (variant !== "staff" || (!canChangeTeam && !canChangeWarehouse)) return;
+    const whId = Number(effectiveWarehouseId);
+    if (!Number.isFinite(whId) || whId < 1) {
+      setUnloadTeams([]);
+      setUnloadTeamId("");
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      setLoadingTeams(true);
+      try {
+        const response = await api.get(`${API_PREFIX}/appointments/unload-teams`, {
+          params: { warehouse_id: whId },
+        });
+        const payload = parseApiResponse(response);
+        if (cancelled) return;
+        const teams = Array.isArray(payload.data) ? payload.data : [];
+        setUnloadTeams(teams);
+        setUnloadTeamId((prev) => {
+          if (prev && teams.some((t) => String(t.id) === String(prev))) return prev;
+          return teams[0]?.id ? String(teams[0].id) : "";
+        });
+      } catch {
+        if (!cancelled) {
+          setUnloadTeams([]);
+          setUnloadTeamId("");
+        }
+      } finally {
+        if (!cancelled) setLoadingTeams(false);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [variant, canChangeTeam, canChangeWarehouse, effectiveWarehouseId]);
+
+  useEffect(() => {
+    if (variant !== "staff" || !dateValue || !effectiveWarehouseId || !effectiveTeamId) return;
     let cancelled = false;
     const run = async () => {
       setLoadingSlots(true);
@@ -64,8 +144,8 @@ export default function AppointmentReschedulePanel({
       try {
         const params = new URLSearchParams({
           day: dateValue,
-          warehouse_id: String(warehouseId),
-          unload_team_id: String(unloadTeamId),
+          warehouse_id: String(effectiveWarehouseId),
+          unload_team_id: String(effectiveTeamId),
           exclude_appointment_id: String(appointment.id),
         });
         const response = await api.get(`${API_PREFIX}/appointments/available-slots?${params.toString()}`);
@@ -73,7 +153,7 @@ export default function AppointmentReschedulePanel({
         if (cancelled) return;
         if (!payload.success) {
           setSlots([]);
-          setSlotError(payload.message || "No se pudieron cargar los turnos del día.");
+          setSlotError(payload.message || "No se pudieron cargar las franjas del día.");
           return;
         }
         const resolvedTz = String(payload.data?.timezone || DEFAULT_BUSINESS_TZ);
@@ -86,7 +166,7 @@ export default function AppointmentReschedulePanel({
         if (availableSlots.length === 0) {
           setSlotError(
             payload.data?.unavailable_message ||
-              "Este día no tiene turnos disponibles en la bodega de la cita."
+              "Este día no tiene franjas disponibles para la bodega y el equipo seleccionados."
           );
         } else {
           setSlotError("");
@@ -103,7 +183,7 @@ export default function AppointmentReschedulePanel({
     return () => {
       cancelled = true;
     };
-  }, [variant, dateValue, appointment.id, appointment.duration_minutes, warehouseId, unloadTeamId]);
+  }, [variant, dateValue, appointment.id, effectiveWarehouseId, effectiveTeamId]);
 
   useEffect(() => {
     if (variant !== "provider" || !dateValue || !loadProviderDayAvailability) return;
@@ -112,11 +192,7 @@ export default function AppointmentReschedulePanel({
       setLoadingSlots(true);
       setSlotError("");
       try {
-        const result = await loadProviderDayAvailability(
-          dateValue,
-          appointment.id,
-          unloadTeamId
-        );
+        const result = await loadProviderDayAvailability(dateValue, appointment.id, effectiveTeamId);
         if (cancelled) return;
         const normalized = normalizeAvailableSlots({
           available_slots: result?.slots,
@@ -142,9 +218,21 @@ export default function AppointmentReschedulePanel({
     return () => {
       cancelled = true;
     };
-  }, [variant, dateValue, appointment.id, unloadTeamId, loadProviderDayAvailability]);
+  }, [variant, dateValue, appointment.id, effectiveTeamId, loadProviderDayAvailability]);
 
   const slotKeys = useMemo(() => slots.map((s) => slotKey(s)), [slots]);
+
+  const selectedWarehouseName = useMemo(() => {
+    const fromList = warehouses.find((w) => String(w.id) === String(effectiveWarehouseId))?.name;
+    if (fromList) return fromList;
+    return appointment.warehouse_name || "—";
+  }, [warehouses, effectiveWarehouseId, appointment.warehouse_name]);
+
+  const selectedTeamName = useMemo(() => {
+    const fromList = unloadTeams.find((t) => String(t.id) === String(effectiveTeamId));
+    if (fromList) return teamLabel(fromList);
+    return appointment.warehouse_unload_team_name || (effectiveTeamId ? `Equipo #${effectiveTeamId}` : "—");
+  }, [unloadTeams, effectiveTeamId, appointment.warehouse_unload_team_name]);
 
   const availabilityCopy = useMemo(
     () =>
@@ -160,65 +248,224 @@ export default function AppointmentReschedulePanel({
     [loadingSlots, slotError, slotReason, slotMessage, minimumNoticeHours]
   );
 
-  const onSubmit = async (event) => {
+  const buildStaffPayload = (chosen, { confirmOverride = false, staffChangeReason = "" } = {}) => {
+    const payload = {
+      appointmentId: appointment.id,
+      startTime: buildLocalDateTimeIso(dateValue, chosen.start_local, businessTz),
+      durationMinutes: chosen.duration_minutes,
+    };
+    if (canChangeWarehouse && effectiveWarehouseId) {
+      payload.warehouseId = Number(effectiveWarehouseId);
+    }
+    if (canChangeTeam && effectiveTeamId) {
+      payload.warehouseUnloadTeamId = Number(effectiveTeamId);
+    }
+    if (confirmOverride) {
+      payload.confirmNonStandardSlot = true;
+      payload.staffChangeReason = staffChangeReason;
+    }
+    return payload;
+  };
+
+  const proposedScheduleSummary = useMemo(() => {
+    const chosen = parseSlotKey(timeValue);
+    if (!chosen || !dateValue) return "";
+    const iso = buildLocalDateTimeIso(dateValue, chosen.start_local, businessTz);
+    if (!iso) return "";
+    const schedule = getAppointmentSchedule(iso, chosen.duration_minutes, businessTz);
+    return `${schedule.dateLine} · ${schedule.rangeLine} (${schedule.durationLabel})`;
+  }, [timeValue, dateValue, businessTz]);
+
+  const currentScheduleSummary = useMemo(() => {
+    const schedule = getAppointmentSchedule(
+      appointment.start_time,
+      appointment.duration_minutes,
+      businessTz
+    );
+    return `${schedule.dateLine} · ${schedule.rangeLine} (${schedule.durationLabel})`;
+  }, [appointment.start_time, appointment.duration_minutes, businessTz]);
+
+  const submitReschedule = async (payload) => {
+    await onReschedule(payload);
+    setSaveConfirmOpen(false);
+    setPendingSavePayload(null);
+    setOverrideConfirmOpen(false);
+    setPendingOverridePayload(null);
+    setOverrideErrorMessage("");
+  };
+
+  const executeSave = async (payload) => {
+    try {
+      setSubmitting(true);
+      await submitReschedule(payload);
+    } catch (err) {
+      if (variant === "staff" && isAppointmentSlotWindowMismatch(err)) {
+        setOverrideErrorMessage(parseApiError(err));
+        setPendingOverridePayload(payload);
+        setOverrideConfirmOpen(true);
+        setSaveConfirmOpen(false);
+        setFormError("");
+      } else {
+        setFormError(err?.message || "No se pudo reprogramar la cita.");
+        setSaveConfirmOpen(false);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const buildSavePayload = () => {
+    if (usesSlotPicker) {
+      const chosen = parseSlotKey(timeValue);
+      if (!chosen) return null;
+      if (variant === "staff") {
+        return buildStaffPayload(chosen);
+      }
+      return {
+        appointmentId: appointment.id,
+        startTime: buildLocalDateTimeIso(dateValue, chosen.start_local, businessTz),
+        durationMinutes: chosen.duration_minutes,
+      };
+    }
+    return {
+      appointmentId: appointment.id,
+      startTime: buildLocalDateTimeIso(dateValue, timeValue, businessTz),
+    };
+  };
+
+  const onSubmit = (event) => {
     event.preventDefault();
     setFormError("");
     if (!dateValue) {
       setFormError("Selecciona una fecha.");
       return;
     }
+    if (variant === "staff" && canChangeTeam && !effectiveTeamId) {
+      setFormError("Selecciona un equipo de descarga.");
+      return;
+    }
     if (!timeValue) {
-      setFormError(usesSlotPicker ? "Selecciona un turno disponible." : "Selecciona una hora.");
+      setFormError(usesSlotPicker ? "Selecciona una franja horaria disponible." : "Selecciona una hora.");
       return;
     }
-    if (usesSlotPicker) {
-      if (!slotKeys.includes(timeValue)) {
-        setFormError("El turno elegido ya no está disponible.");
-        return;
-      }
-      const chosen = parseSlotKey(timeValue);
-      if (!chosen) {
-        setFormError("Turno inválido.");
-        return;
-      }
-      try {
-        setSubmitting(true);
-        await onReschedule({
-          appointmentId: appointment.id,
-          startTime: buildLocalDateTimeIso(dateValue, chosen.start_local, businessTz),
-        });
-      } catch (err) {
-        setFormError(err?.message || "No se pudo reprogramar la cita.");
-      } finally {
-        setSubmitting(false);
-      }
+    if (usesSlotPicker && !slotKeys.includes(timeValue)) {
+      setFormError("La franja elegida ya no está disponible. Elige otra.");
       return;
     }
+    const payload = buildSavePayload();
+    if (!payload) {
+      setFormError("Franja horaria inválida.");
+      return;
+    }
+    setPendingSavePayload(payload);
+    setSaveConfirmOpen(true);
+  };
+
+  const onConfirmSave = () => {
+    if (!pendingSavePayload) return;
+    void executeSave(pendingSavePayload);
+  };
+
+  const onConfirmOverride = async (reason) => {
+    const chosen = parseSlotKey(timeValue);
+    if (!chosen) return;
+    const base = pendingOverridePayload || pendingSavePayload || buildStaffPayload(chosen);
+    if (!base) return;
     try {
       setSubmitting(true);
-      await onReschedule({
-        appointmentId: appointment.id,
-        startTime: buildLocalDateTimeIso(dateValue, timeValue, businessTz),
+      await submitReschedule({
+        ...base,
+        confirmNonStandardSlot: true,
+        staffChangeReason: reason,
       });
     } catch (err) {
-      setFormError(err?.message || "No se pudo reprogramar la cita.");
+      setFormError(err?.message || "No se pudo confirmar el cambio.");
+      setOverrideConfirmOpen(false);
     } finally {
       setSubmitting(false);
     }
   };
+
+  const staffGridCols = canChangeWarehouse && canChangeTeam ? "sm:grid-cols-2" : "";
 
   return (
     <form className="mt-4 rounded-lg border border-slate-200 bg-white p-3" onSubmit={onSubmit}>
       <p className="text-xs font-medium uppercase text-slate-500">Reprogramar cita</p>
       <p className="mt-1 text-xs text-slate-600">
         {variant === "provider"
-          ? "Elige otro día y turno dentro de los horarios abiertos en la bodega de tu cita."
-          : "Elige la nueva fecha y un turno habilitado en la bodega de la cita."}
+          ? "Elige otro día y franja dentro de los horarios abiertos en la bodega de tu cita."
+          : staffRole === "Admin"
+            ? "Puedes cambiar bodega, equipo, fecha y franja horaria. Los cambios se validan en el servidor."
+            : staffRole === "AdminBodega"
+              ? "Puedes cambiar equipo, fecha y franja horaria en tu bodega. Los cambios se validan en el servidor."
+              : "Elige la nueva fecha y una franja habilitada en la bodega y el equipo de la cita."}
       </p>
-      {appointment.warehouse_name && (
-        <p className="mt-1 text-xs text-slate-500">Bodega: {appointment.warehouse_name}</p>
+      {variant === "staff" && (
+        <p className="mt-1 text-xs text-slate-500">
+          Puedes agendar citas consecutivas en el mismo equipo (por ejemplo una de 1:00 a 2:00 y otra de 2:00 a 3:00)
+          si cada una usa su franja. Si el sistema advierte un horario distinto, podrás confirmar el cambio indicando el
+          motivo.
+        </p>
       )}
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+
+      {variant === "staff" && (
+        <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs text-slate-700">
+          <p>
+            <span className="font-medium text-slate-900">Cita #{appointment.id}</span>
+            {" · "}
+            Bodega: <span className="font-medium">{selectedWarehouseName}</span>
+            {" · "}
+            Equipo: <span className="font-medium">{selectedTeamName}</span>
+          </p>
+        </div>
+      )}
+
+      <div className={`mt-3 grid gap-2 ${staffGridCols}`}>
+        {variant === "staff" && canChangeWarehouse && warehouses.length > 0 && (
+          <div>
+            <label htmlFor={`reschedule-warehouse-${appointment.id}`} className="mb-1 block text-xs font-medium text-slate-600">
+              Bodega
+            </label>
+            <select
+              id={`reschedule-warehouse-${appointment.id}`}
+              className={inputClass}
+              value={warehouseId}
+              onChange={(event) => setWarehouseId(event.target.value)}
+              required
+            >
+              {warehouses.map((w) => (
+                <option key={w.id} value={String(w.id)}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {variant === "staff" && canChangeTeam && (
+          <div>
+            <label htmlFor={`reschedule-team-${appointment.id}`} className="mb-1 block text-xs font-medium text-slate-600">
+              Equipo de descarga
+            </label>
+            <select
+              id={`reschedule-team-${appointment.id}`}
+              className={inputClass}
+              value={unloadTeamId}
+              onChange={(event) => setUnloadTeamId(event.target.value)}
+              disabled={loadingTeams || unloadTeams.length === 0}
+              required
+            >
+              {unloadTeams.length === 0 ? (
+                <option value="">{loadingTeams ? "Cargando equipos…" : "Sin equipos en esta bodega"}</option>
+              ) : (
+                unloadTeams.map((team) => (
+                  <option key={team.id} value={String(team.id)}>
+                    {teamLabel(team)}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+        )}
         <div>
           <label htmlFor={`reschedule-date-${appointment.id}`} className="mb-1 block text-xs font-medium text-slate-600">
             Nueva fecha
@@ -234,7 +481,7 @@ export default function AppointmentReschedulePanel({
         </div>
         <div>
           <label htmlFor={`reschedule-slot-${appointment.id}`} className="mb-1 block text-xs font-medium text-slate-600">
-            Nuevo turno
+            Franja horaria
           </label>
           {usesSlotPicker ? (
             <select
@@ -242,11 +489,11 @@ export default function AppointmentReschedulePanel({
               className={inputClass}
               value={timeValue}
               onChange={(event) => setTimeValue(event.target.value)}
-              disabled={loadingSlots || slots.length === 0}
+              disabled={loadingSlots || slots.length === 0 || loadingTeams}
             >
               {slots.length === 0 ? (
                 <option value="">
-                  {variant === "provider" ? availabilityCopy.optionLabel : "Sin turnos disponibles"}
+                  {variant === "provider" ? availabilityCopy.optionLabel : "Sin franjas disponibles"}
                 </option>
               ) : (
                 slots.map((slot) => (
@@ -273,9 +520,61 @@ export default function AppointmentReschedulePanel({
       )}
       {variant === "staff" && slotError && <p className="mt-2 text-xs text-amber-800">{slotError}</p>}
       {formError && <p className="mt-2 text-xs text-rose-700">{formError}</p>}
-      <button type="submit" className={buttonClass + " mt-3"} disabled={submitting || loadingSlots}>
-        {submitting ? "Guardando..." : "Guardar nueva fecha"}
+      <button
+        type="submit"
+        className={buttonClass + " mt-3"}
+        disabled={submitting || loadingSlots || loadingTeams}
+      >
+        {submitting ? "Guardando..." : "Guardar cambios"}
       </button>
+
+      <ConfirmDialog
+        open={saveConfirmOpen}
+        title="¿Confirmar cambio de cita?"
+        confirmLabel="Sí, cambiar cita"
+        cancelLabel="Cancelar"
+        overlayZIndexClass="z-[110]"
+        onCancel={() => {
+          setSaveConfirmOpen(false);
+          setPendingSavePayload(null);
+        }}
+        onConfirm={onConfirmSave}
+      >
+        <p>
+          ¿Estás seguro de que deseas guardar los cambios en la <strong>cita #{appointment.id}</strong>?
+        </p>
+        <p className="mt-2 text-xs text-slate-500">
+          Bodega: <span className="font-medium text-slate-700">{selectedWarehouseName}</span>
+          {" · "}
+          Equipo: <span className="font-medium text-slate-700">{selectedTeamName}</span>
+        </p>
+        {currentScheduleSummary ? (
+          <p className="mt-2 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Horario actual:</span> {currentScheduleSummary}
+          </p>
+        ) : null}
+        {proposedScheduleSummary ? (
+          <p className="mt-1 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Horario nuevo:</span> {proposedScheduleSummary}
+          </p>
+        ) : null}
+      </ConfirmDialog>
+
+      <StaffAppointmentChangeConfirm
+        open={overrideConfirmOpen}
+        warningMessage={
+          overrideErrorMessage ||
+          "El horario elegido no coincide exactamente con un turno estándar. Si estás seguro (por ejemplo, citas con horarios distintos o consecutivos), confirma e indica el motivo."
+        }
+        currentSummary={currentScheduleSummary}
+        proposedSummary={proposedScheduleSummary}
+        onCancel={() => {
+          setOverrideConfirmOpen(false);
+          setPendingOverridePayload(null);
+          setOverrideErrorMessage("");
+        }}
+        onConfirm={onConfirmOverride}
+      />
     </form>
   );
 }

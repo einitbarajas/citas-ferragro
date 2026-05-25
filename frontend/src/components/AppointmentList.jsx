@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ConfirmDialog from "./ConfirmDialog";
 import AppointmentReschedulePanel from "./AppointmentReschedulePanel";
 import { getAppointmentSchedule } from "../utils/businessTime";
+import { getPeriodSelectorLabel, rangeNeedsPeriodSelector } from "../utils/reportRange";
 
 const field =
   "rounded-lg border border-slate-400 bg-white px-2 py-1.5 text-sm text-[#121212] focus:border-[#35783C] focus:outline-none focus:ring-2 focus:ring-[#35783C]/30";
@@ -21,6 +22,9 @@ export default function AppointmentList({
   onViewModeChange,
   filterDay,
   onFilterDayChange,
+  filterPeriod,
+  onFilterPeriodChange,
+  viewPeriodOptions = [],
   filterMonth,
   onFilterMonthChange,
   filterYear,
@@ -29,10 +33,17 @@ export default function AppointmentList({
   warehouseFilter = "",
   onWarehouseFilterChange,
   emptyMessage = "No hay citas para este filtro.",
+  openAppointmentId = null,
+  onOpenAppointmentHandled,
+  initialAppointmentIdFilter = "",
 }) {
-  const showStaffActions = role === "Logistica" || role === "Admin";
+  const isStaffRole = role === "Logistica" || role === "Admin" || role === "AdminBodega";
+  const canCancelAppointment = role === "Admin" || role === "AdminBodega";
+  const canMarkSinRevision = role === "Admin" || role === "AdminBodega";
+  const showStaffActions = isStaffRole;
   const [companyFilter, setCompanyFilter] = useState("");
   const [nitFilter, setNitFilter] = useState("");
+  const [appointmentIdFilter, setAppointmentIdFilter] = useState("");
   const [confirmCancelId, setConfirmCancelId] = useState(null);
   const [editAppointment, setEditAppointment] = useState(null);
   const editAppointmentId = editAppointment?.id ?? null;
@@ -43,18 +54,33 @@ export default function AppointmentList({
     if (fresh) setEditAppointment(fresh);
   }, [appointments, editAppointmentId]);
 
+  useEffect(() => {
+    if (!initialAppointmentIdFilter) return;
+    setAppointmentIdFilter(String(initialAppointmentIdFilter));
+  }, [initialAppointmentIdFilter]);
+
+  useEffect(() => {
+    if (openAppointmentId == null) return;
+    const found = appointments.find((a) => Number(a.id) === Number(openAppointmentId));
+    if (!found) return;
+    setEditAppointment(found);
+    onOpenAppointmentHandled?.();
+  }, [openAppointmentId, appointments, onOpenAppointmentHandled]);
+
   const filteredAppointments = useMemo(() => {
     const companyNeedle = companyFilter.trim().toLowerCase();
     const nitNeedle = nitFilter.replace(/\D/g, "");
+    const idNeedle = appointmentIdFilter.replace(/\D/g, "");
     return appointments.filter((a) => {
       const providerName = String(a.provider_name || "").toLowerCase();
       const providerNit = String(a.provider_id || "").replace(/\D/g, "");
       if (companyNeedle && !providerName.includes(companyNeedle)) return false;
       if (nitNeedle && !providerNit.includes(nitNeedle)) return false;
+      if (idNeedle && !String(a.id).includes(idNeedle)) return false;
       if (warehouseFilter && Number(a.warehouse_id) !== Number(warehouseFilter)) return false;
       return true;
     });
-  }, [appointments, companyFilter, nitFilter, warehouseFilter]);
+  }, [appointments, companyFilter, nitFilter, appointmentIdFilter, warehouseFilter]);
 
   const statusLabel = (status) => {
     if (status === "sin_revision") return "Sin revision";
@@ -96,7 +122,7 @@ export default function AppointmentList({
       <div className="mt-4 flex flex-wrap gap-2">
         {!(role === "Logistica" && a.status === "revisado") && (
           <>
-            {role === "Admin" && (
+            {canMarkSinRevision && (
               <button
                 className={`${actionButtonClass} border border-sky-300 bg-sky-50 text-sky-900 hover:bg-sky-100`}
                 disabled={a.status === "sin_revision"}
@@ -130,11 +156,15 @@ export default function AppointmentList({
             >
               Marcar no presentada
             </button>
-            {role === "Admin" && (
+            {canCancelAppointment && (
               <button
                 className={`${actionButtonClass} border border-rose-300 bg-rose-50 text-rose-900 hover:bg-rose-100`}
                 disabled={a.status === "cancelado"}
-                title="Cancelar la cita (administrador sin limite de anticipacion)"
+                title={
+                  role === "AdminBodega"
+                    ? "Cancelar la cita en tus bodegas asignadas"
+                    : "Cancelar la cita (administrador global)"
+                }
                 onClick={() => setConfirmCancelId(a.id)}
                 aria-label={`Cancelar la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
               >
@@ -200,20 +230,31 @@ export default function AppointmentList({
     );
   };
 
+  const teamDisplayName = (appointment) =>
+    appointment.warehouse_unload_team_name?.trim() ||
+    (appointment.warehouse_unload_team_id ? `Equipo #${appointment.warehouse_unload_team_id}` : "—");
+
   const renderAppointmentDetails = (appointment) => {
     const schedule = getAppointmentSchedule(appointment.start_time, appointment.duration_minutes);
     return (
       <>
-        <p className="text-sm text-slate-600">{appointment.material_description}</p>
+        <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ubicación de la cita</p>
+          <p className="mt-1 text-sm text-slate-800">
+            Cita <span className="font-semibold text-slate-900">#{appointment.id}</span>
+          </p>
+          <p className="text-sm text-slate-700">
+            Bodega: <span className="font-medium">{appointment.warehouse_name || "—"}</span>
+          </p>
+          <p className="text-sm text-slate-700">
+            Equipo: <span className="font-medium">{teamDisplayName(appointment)}</span>
+          </p>
+        </div>
+        <p className="mt-3 text-sm text-slate-600">{appointment.material_description}</p>
         <p className="mt-2 text-sm text-slate-700">
           Proveedor: <span className="font-medium">{appointment.provider_name || "—"}</span> (NIT{" "}
           {appointment.provider_id})
         </p>
-        {appointment.warehouse_name && (
-          <p className="text-sm text-slate-700">
-            Bodega: <span className="font-medium">{appointment.warehouse_name}</span>
-          </p>
-        )}
         <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">Horario de la cita</p>
           <p className="mt-1 text-sm capitalize text-slate-800">{schedule.dateLine}</p>
@@ -254,7 +295,7 @@ export default function AppointmentList({
       </ConfirmDialog>
       <h2 className="mb-3 text-lg font-semibold text-slate-900">{title}</h2>
 
-      {(role === "Logistica" || role === "Admin") && (
+      {isStaffRole && (
         <div className="mb-4 grid gap-3 border-b border-slate-100 pb-4 sm:grid-cols-2 lg:grid-cols-4">
           {!reviewMode && (
             <>
@@ -272,6 +313,25 @@ export default function AppointmentList({
                 <div className="sm:col-span-1">
                   <label htmlFor="appt-list-filter-day" className="mb-1 block text-xs font-medium text-slate-600">Día</label>
                   <input id="appt-list-filter-day" type="date" className={field + " w-full"} value={filterDay} onChange={(e) => onFilterDayChange(e.target.value)} />
+                </div>
+              )}
+              {rangeNeedsPeriodSelector(viewMode) && (
+                <div className="sm:col-span-1">
+                  <label htmlFor="appt-list-filter-period" className="mb-1 block text-xs font-medium text-slate-600">
+                    {getPeriodSelectorLabel(viewMode)}
+                  </label>
+                  <select
+                    id="appt-list-filter-period"
+                    className={field + " w-full"}
+                    value={filterPeriod ?? 1}
+                    onChange={(e) => onFilterPeriodChange(Number(e.target.value))}
+                  >
+                    {viewPeriodOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
               {viewMode === "month" && (
@@ -328,6 +388,22 @@ export default function AppointmentList({
               onChange={(e) => setNitFilter(e.target.value.replace(/\D/g, "").slice(0, 10))}
             />
           </div>
+          {reviewMode && (
+            <div className="sm:col-span-1">
+              <label htmlFor="appt-list-filter-id" className="mb-1 block text-xs font-medium text-slate-600">
+                Número de cita
+              </label>
+              <input
+                id="appt-list-filter-id"
+                type="text"
+                inputMode="numeric"
+                className={field + " w-full"}
+                placeholder="Ej. 432"
+                value={appointmentIdFilter}
+                onChange={(e) => setAppointmentIdFilter(e.target.value.replace(/\D/g, ""))}
+              />
+            </div>
+          )}
           {!reviewMode && onWarehouseFilterChange && warehouses.length > 0 && (
             <div className="sm:col-span-1">
               <label htmlFor="appt-list-filter-warehouse" className="mb-1 block text-xs font-medium text-slate-600">Bodega</label>
@@ -360,6 +436,9 @@ export default function AppointmentList({
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-slate-900">Cita #{a.id}</p>
                   <p className="truncate text-sm text-slate-600">{a.provider_name || "—"}</p>
+                  <p className="text-xs text-slate-600">
+                    {a.warehouse_name || "—"} · {teamDisplayName(a)}
+                  </p>
                   <p className="text-sm font-medium text-slate-800">{schedule.rangeLine}</p>
                   <p className="text-xs text-slate-600">
                     Termina {schedule.endLine} · {schedule.durationLabel}
@@ -427,6 +506,8 @@ export default function AppointmentList({
               <AppointmentReschedulePanel
                 appointment={editAppointment}
                 variant="staff"
+                staffRole={role}
+                warehouses={warehouses}
                 inputClass={field}
                 buttonClass={`${actionButtonClass} bg-[#35783C] text-white hover:bg-[#2d6532]`}
                 onReschedule={async (payload) => {

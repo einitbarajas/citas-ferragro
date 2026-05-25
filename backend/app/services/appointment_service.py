@@ -39,11 +39,9 @@ def get_provider_unload_capacity(db: Session, provider_id: int) -> int:
 
 
 def assert_provider_team_index(provider_id: int, provider_team_index: int, capacity: int) -> None:
-    if provider_team_index < 1 or provider_team_index > capacity:
-        raise HTTPException(
-            status_code=400,
-            detail=f"El equipo del proveedor debe estar entre 1 y {capacity}.",
-        )
+    del provider_id, capacity
+    if provider_team_index < 1:
+        raise HTTPException(status_code=400, detail="Índice de equipo del proveedor inválido.")
 
 
 def count_schedule_overlaps(
@@ -115,16 +113,9 @@ def provider_capacity_available(
     duration_minutes: int,
     exclude_appointment_id: int | None = None,
 ) -> bool:
-    capacity = get_provider_unload_capacity(db, provider_id)
-    rows = db.execute(
-        _overlapping_appointments_query(
-            start_time=start_time,
-            duration_minutes=duration_minutes,
-            provider_id=provider_id,
-            exclude_appointment_id=exclude_appointment_id,
-        )
-    ).scalars()
-    return count_schedule_overlaps(rows, start_time, duration_minutes) < capacity
+    """Sin límite global por proveedor; la bodega limita por muelle/equipo de descarga."""
+    del db, provider_id, start_time, duration_minutes, exclude_appointment_id
+    return True
 
 
 def assert_unload_team_slot(
@@ -151,18 +142,7 @@ def assert_provider_capacity(
     duration_minutes: int,
     exclude_appointment_id: int | None = None,
 ) -> None:
-    capacity = get_provider_unload_capacity(db, provider_id)
-    if provider_capacity_available(
-        db, provider_id, start_time, duration_minutes, exclude_appointment_id
-    ):
-        return
-    raise HTTPException(
-        status_code=409,
-        detail=(
-            f"Ya tienes {capacity} entrega(s) simultánea(s) en ese horario con tus equipos. "
-            "Elige otro turno, otro equipo tuyo u otro muelle de la bodega."
-        ),
-    )
+    del db, provider_id, start_time, duration_minutes, exclude_appointment_id
 
 
 def provider_schedule_conflicts(

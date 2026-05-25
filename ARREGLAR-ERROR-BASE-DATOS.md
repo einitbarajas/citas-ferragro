@@ -41,7 +41,9 @@ cd "c:\dev\trabajo ferragro\db"
 
 Pega la URL cuando lo pida.
 
-El script aplica **solo** migraciones `014`–`022` (idempotentes) y las funciones CRUD. **No borra** citas ni proveedores (no usa `-Seed`).
+El script aplica migraciones **013**–**023** (idempotentes) y las funciones CRUD. **No borra** citas ni proveedores (no usa `-Seed`).
+
+Solo error `Proveedores.Estado`: ejecutar `db/scripts/fix-proveedores-estado.sql` en PSQL de Render.
 
 ### Alternativa (todas las migraciones desde 001)
 
@@ -74,12 +76,34 @@ Tras `arreglar-esquema-produccion.ps1` queda un usuario listo para entrar:
 
 **Alternativa sin PowerShell:** Render → ferragro-db → PSQL → pegar todo `db/scripts/ARREGLAR-TODO-PRODUCCION.sql`.
 
-### 4. Comprobar logs
+### 4. Verificar que el esquema quedó bien
 
-En Render → ferragro-db → **Logs**: ya no deben salir errores de `IdBodega`.
+```powershell
+cd "c:\dev\trabajo ferragro\db"
+.\verificar-esquema-produccion.ps1
+```
+
+Todas las filas deben decir **OK** y `citas_join_ok` debe ser mayor que 0.
+
+También puedes comprobar el API (debe responder sin 500):
+
+```powershell
+curl.exe -s "https://ferragro-api.onrender.com/health"
+# build_id: 2026-05-22-prod-sync-v2
+```
+
+### 5. Si el portal sigue mostrando el toast
+
+1. **Cerrar sesión** y **Ctrl+F5** (obligatorio tras migrar).
+2. Revisar logs de **ferragro-api** (no solo ferragro-db): copia la línea `ERROR` más reciente.
+3. Si `verificar-esquema-produccion.ps1` muestra todo OK pero el toast persiste, suele ser caché del navegador o sesión antigua; prueba ventana de incógnito.
+
+### 6. Comprobar logs de PostgreSQL
+
+En Render → ferragro-db → **Logs**: ya no deben salir `column ... does not exist`.
 
 ---
 
 ## Resumen
 
-No es un fallo de Vercel ni del deploy del API: falta **actualizar el esquema de PostgreSQL en Render** con el script anterior.
+No es un fallo de Vercel ni del deploy del API: falta **actualizar el esquema de PostgreSQL en Render** con el script anterior. Tras ejecutarlo, el API y la BD deben coincidir; si no, usa `verificar-esquema-produccion.ps1`.

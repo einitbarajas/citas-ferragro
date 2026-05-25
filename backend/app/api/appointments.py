@@ -25,12 +25,9 @@ from app.schemas.appointment import (
     AppointmentUpdateStatus,
 )
 from app.services.appointment_service import (
-    assert_provider_team_index,
     can_extend_without_overlap,
-    count_schedule_overlaps,
     enforce_minimum_notice,
     finalize_elapsed_appointments,
-    get_provider_unload_capacity,
     reserve_slot_fifo_or_raise,
     slot_conflict_check,
     unload_team_slot_available,
@@ -184,8 +181,6 @@ def create_appointment(
     day_local = payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).date()
     get_active_warehouse_or_raise(db, payload.warehouse_id)
     team = get_unload_team_or_raise(db, payload.warehouse_id, payload.warehouse_unload_team_id)
-    provider_capacity = get_provider_unload_capacity(db, provider_id)
-    assert_provider_team_index(provider_id, payload.provider_team_index, provider_capacity)
     date_windows = list_date_windows_ordered(
         db, day_local, payload.warehouse_id, team.id
     )
@@ -262,6 +257,7 @@ def list_appointments(
     day: date | None = None,
     month: int | None = Query(default=None, ge=1, le=12),
     year: int | None = Query(default=None, ge=2000, le=2100),
+    period: int | None = Query(default=None, ge=1, le=6),
     status: list[str] | None = Query(default=None, description="Filtrar por uno o más estados de cita"),
     provider_id: int | None = Query(default=None, description="Filtrar por NIT proveedor (solo staff)"),
     warehouse_id: int | None = Query(default=None, ge=1, description="Filtrar por bodega (solo staff)"),
@@ -316,17 +312,13 @@ def list_appointments(
         start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
         end = start + timedelta(days=1)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
-    elif mode == "week":
+    elif mode in ("week", "biweekly"):
         tz = ZoneInfo(settings.business_timezone)
         local_now = datetime.now(tz)
-        start_local, end_local = business_local_range_bounds("week", local_now, tz)
-        start = start_local.astimezone(timezone.utc)
-        end = end_local.astimezone(timezone.utc)
-        stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
-    elif mode == "biweekly":
-        tz = ZoneInfo(settings.business_timezone)
-        local_now = datetime.now(tz)
-        start_local, end_local = business_local_range_bounds("biweekly", local_now, tz)
+        period_arg = period if mode in ("week", "biweekly") else None
+        start_local, end_local = business_local_range_bounds(
+            mode, local_now, tz, period=period_arg
+        )
         start = start_local.astimezone(timezone.utc)
         end = end_local.astimezone(timezone.utc)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
@@ -371,7 +363,7 @@ def check_slot_conflict(
         require_roles(*STAFF_ROLES, UserRole.proveedor)
     ),
 ):
-    """Indica si no hay cupo de equipos de descarga (muelle y/o equipos del proveedor)."""
+    """Indica si el muelle de descarga seleccionado ya tiene una cita en ese horario."""
     get_active_warehouse_or_raise(db, warehouse_id)
     if principal.role_name != UserRole.proveedor:
         assert_warehouse_access(db, principal, warehouse_id)
@@ -436,28 +428,6 @@ def list_available_slots_for_provider_day(
             "Disponibilidad obtenida",
         )
     start_utc, end_utc = _local_day_utc_bounds(day)
-    provider_capacity = 1
-    provider_id: int | None = None
-    provider_day_appointments: list[Appointment] = []
-    if not is_staff:
-        provider_id = int(principal.subject)
-        provider_capacity = get_provider_unload_capacity(db, provider_id)
-        provider_day_appointments = list(
-            db.execute(
-                select(Appointment).where(
-                    Appointment.provider_id == provider_id,
-                    Appointment.status != AppointmentStatus.cancelado,
-                    Appointment.start_time >= start_utc,
-                    Appointment.start_time < end_utc,
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if exclude_appointment_id is not None:
-            provider_day_appointments = [
-                a for a in provider_day_appointments if a.id != exclude_appointment_id
-            ]
     team_appointments = (
         db.execute(
             select(Appointment).where(
@@ -485,12 +455,7 @@ def list_available_slots_for_provider_day(
         team_free = unload_team_slot_available(
             db, team.id, cand_start_utc, duration, exclude_appointment_id
         )
-        prov_overlaps = 0
-        if provider_day_appointments:
-            prov_overlaps = count_schedule_overlaps(
-                provider_day_appointments, cand_start_utc, duration, exclude_appointment_id
-            )
-        if team_free and prov_overlaps < provider_capacity:
+        if team_free:
             available_slots.append(
                 {
                     "start_local": f"{hh:02d}:{mm:02d}",
@@ -508,7 +473,7 @@ def list_available_slots_for_provider_day(
         "available_slots": available_slots,
         "available_times": available_times,
         "minimum_notice_hours": minimum_hours,
-        "provider_unload_teams": provider_capacity if provider_id is not None else None,
+        "provider_unload_teams": None,
     }
     if not payload["available_times"]:
         earliest_local = minimum_start_utc.astimezone(tz)
@@ -644,8 +609,6 @@ def provider_reschedule_appointment(
     team_id = payload.warehouse_unload_team_id or appt.warehouse_unload_team_id
     provider_team_index = payload.provider_team_index or appt.provider_team_index
     team = get_unload_team_or_raise(db, appt.warehouse_id, team_id)
-    provider_capacity = get_provider_unload_capacity(db, provider_id)
-    assert_provider_team_index(provider_id, provider_team_index, provider_capacity)
     day_local = payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).date()
     date_windows = list_date_windows_ordered(db, day_local, appt.warehouse_id, team.id)
     weekly_windows = list_windows_ordered(db, appt.warehouse_id, team.id)

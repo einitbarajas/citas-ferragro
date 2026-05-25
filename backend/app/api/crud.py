@@ -82,13 +82,17 @@ from app.services.appointment_windows import (
     slot_duration_minutes,
 )
 from app.services.appointment_service import finalize_elapsed_appointments, reserve_slot_fifo_or_raise
-from app.services.range_bounds import business_local_range_bounds
+from app.services.range_bounds import (
+    build_daily_counts_in_range,
+    business_local_range_bounds,
+)
 from app.services.warehouse_scope import (
     ROLE_ADMIN_BODEGA,
     assert_warehouse_access,
     enforce_query_warehouse_id,
     list_user_warehouse_ids,
     resolve_allowed_warehouse_ids,
+    role_requires_warehouse_assignments,
     sync_user_warehouse_assignments,
     validate_warehouse_ids_exist,
 )
@@ -160,12 +164,13 @@ def _assert_non_overlapping_windows(parsed: list[tuple], error_prefix: str = "Fr
     for idx, (hi, hf) in enumerate(parsed, start=1):
         if hf <= hi:
             raise HTTPException(status_code=400, detail="En cada franja la hora fin debe ser mayor que la de inicio")
-        if prev_end is not None and hi <= prev_end:
+        if prev_end is not None and hi < prev_end:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"{error_prefix}: la franja #{idx} debe iniciar después de la franja anterior "
-                    f"(actual {hi.strftime('%H:%M')}, anterior termina {prev_end.strftime('%H:%M')})."
+                    f"{error_prefix}: la franja #{idx} se solapa con la anterior "
+                    f"(puede iniciar a las {prev_end.strftime('%H:%M')} o después; "
+                    f"recibido inicio {hi.strftime('%H:%M')})."
                 ),
             )
         prev_end = hf
@@ -293,12 +298,16 @@ def _appointment_ids_with_logistics_extend(db: Session, appointment_ids: list[in
 def _appointment_to_crud_out(appt: Appointment, *, logistics_extend_used: bool = False) -> dict:
     pname = appt.provider.company_name if appt.provider else ""
     wname = appt.warehouse.name if appt.warehouse else ""
+    team = getattr(appt, "warehouse_unload_team", None)
+    team_name = team.name if team else ""
     return AppointmentCrudOut(
         id=appt.id,
         provider_id=int(appt.provider_id),
         provider_name=pname,
         warehouse_id=appt.warehouse_id,
         warehouse_name=wname,
+        warehouse_unload_team_id=appt.warehouse_unload_team_id,
+        warehouse_unload_team_name=team_name,
         material_description=appt.material_description,
         start_time=appt.start_time,
         duration_minutes=appt.duration_minutes,
@@ -311,7 +320,9 @@ def _user_to_out(user: User, db: Session) -> UserCrudOut:
     email = user.credential.email if user.credential else ""
     role_name = user.role.name if user.role else ""
     warehouse_ids = (
-        list_user_warehouse_ids(db, user.document_id) if role_name == ROLE_ADMIN_BODEGA else []
+        list_user_warehouse_ids(db, user.document_id)
+        if role_requires_warehouse_assignments(role_name)
+        else []
     )
     return UserCrudOut(
         document_id=user.document_id,
@@ -340,14 +351,17 @@ def _resolve_appointment_warehouse_scope(
     return None, allowed
 
 
+def _warehouse_ids_for_role(role_name: str, warehouse_ids: list[int] | None) -> list[int]:
+    """Solo Logística y AdminBodega conservan bodegas; otros roles las ignoran."""
+    ids = [int(w) for w in (warehouse_ids or []) if int(w) > 0]
+    if role_requires_warehouse_assignments(role_name):
+        return ids
+    return []
+
+
 def _validate_user_role_and_warehouses(db: Session, role_name: str, warehouse_ids: list[int]) -> None:
-    if role_name == ROLE_ADMIN_BODEGA:
+    if role_requires_warehouse_assignments(role_name):
         validate_warehouse_ids_exist(db, warehouse_ids)
-    elif warehouse_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="Solo el rol AdminBodega puede tener bodegas asignadas.",
-        )
 
 
 def _actor_display(db: Session, actor_id: str) -> tuple[str, str]:
@@ -501,7 +515,7 @@ def create_user(
             status_code=400,
             detail="Solo se pueden crear usuarios internos con rol Admin, Logistica o AdminBodega",
         )
-    warehouse_ids = [int(w) for w in (payload.warehouse_ids or [])]
+    warehouse_ids = _warehouse_ids_for_role(role.name, payload.warehouse_ids)
     _validate_user_role_and_warehouses(db, role.name, warehouse_ids)
     if db.get(User, payload.document_id):
         raise HTTPException(status_code=400, detail="El documento ya está registrado")
@@ -520,7 +534,7 @@ def create_user(
     )
     db.add(user)
     db.flush()
-    if role.name == ROLE_ADMIN_BODEGA:
+    if role_requires_warehouse_assignments(role.name):
         sync_user_warehouse_assignments(db, user.document_id, warehouse_ids)
     _log_admin_event(
         db=db,
@@ -570,18 +584,19 @@ def update_user(
     db.flush()
     role_name = user.role.name if user.role else ""
     if warehouse_ids_update is not None:
-        wh_ids = [int(w) for w in warehouse_ids_update]
+        wh_ids = _warehouse_ids_for_role(role_name, warehouse_ids_update)
         _validate_user_role_and_warehouses(db, role_name, wh_ids)
-        if role_name == ROLE_ADMIN_BODEGA:
-            sync_user_warehouse_assignments(db, user.document_id, wh_ids)
-        else:
-            sync_user_warehouse_assignments(db, user.document_id, [])
-    elif role_name != ROLE_ADMIN_BODEGA:
+        sync_user_warehouse_assignments(
+            db,
+            user.document_id,
+            wh_ids if role_requires_warehouse_assignments(role_name) else [],
+        )
+    elif not role_requires_warehouse_assignments(role_name):
         sync_user_warehouse_assignments(db, user.document_id, [])
     elif not list_user_warehouse_ids(db, user.document_id):
         raise HTTPException(
             status_code=400,
-            detail="El administrador de bodega debe tener al menos una bodega asignada.",
+            detail="Este usuario debe tener al menos una bodega asignada.",
         )
     _log_admin_event(
         db=db,
@@ -936,6 +951,7 @@ def _staff_appointments_select(
     day: date | None,
     month: int | None,
     year: int | None,
+    period: int | None = None,
     status_list: list[str] | None,
     provider_id: int | None,
     warehouse_id: int | None,
@@ -948,6 +964,7 @@ def _staff_appointments_select(
     stmt = select(Appointment).options(
         joinedload(Appointment.provider),
         joinedload(Appointment.warehouse),
+        joinedload(Appointment.warehouse_unload_team),
     )
     if provider_id is not None:
         stmt = stmt.where(Appointment.provider_id == provider_id)
@@ -976,17 +993,13 @@ def _staff_appointments_select(
         start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
         end = start + timedelta(days=1)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
-    elif mode == "week":
+    elif mode in ("week", "biweekly"):
         tz = ZoneInfo(settings.business_timezone)
         local_now = datetime.now(tz)
-        start_local, end_local = business_local_range_bounds("week", local_now, tz)
-        start = start_local.astimezone(timezone.utc)
-        end = end_local.astimezone(timezone.utc)
-        stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
-    elif mode == "biweekly":
-        tz = ZoneInfo(settings.business_timezone)
-        local_now = datetime.now(tz)
-        start_local, end_local = business_local_range_bounds("biweekly", local_now, tz)
+        period_arg = period if mode in ("week", "biweekly") else None
+        start_local, end_local = business_local_range_bounds(
+            mode, local_now, tz, period=period_arg
+        )
         start = start_local.astimezone(timezone.utc)
         end = end_local.astimezone(timezone.utc)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
@@ -1009,6 +1022,7 @@ def list_appointments(
     day: date | None = None,
     month: int | None = Query(default=None, ge=1, le=12),
     year: int | None = Query(default=None, ge=2000, le=2100),
+    period: int | None = Query(default=None, ge=1, le=6),
     status: list[str] | None = Query(default=None),
     provider_id: int | None = Query(default=None),
     warehouse_id: int | None = Query(default=None, ge=1),
@@ -1026,6 +1040,7 @@ def list_appointments(
         day=day,
         month=month,
         year=year,
+        period=period,
         status_list=status,
         provider_id=provider_id,
         warehouse_id=wh_filter,
@@ -1061,6 +1076,7 @@ def export_appointments_xlsx(
     day: date | None = None,
     month: int | None = Query(default=None, ge=1, le=12),
     year: int | None = Query(default=None, ge=2000, le=2100),
+    period: int | None = Query(default=None, ge=1, le=6),
     status: list[str] | None = Query(default=None),
     provider_id: int | None = Query(default=None),
     warehouse_id: int | None = Query(default=None, ge=1),
@@ -1076,6 +1092,7 @@ def export_appointments_xlsx(
         day=day,
         month=month,
         year=year,
+        period=period,
         status_list=status,
         provider_id=provider_id,
         warehouse_id=wh_filter,
@@ -1135,7 +1152,11 @@ def get_appointment(
     finalize_elapsed_appointments(db)
     appointment = db.execute(
         select(Appointment)
-        .options(joinedload(Appointment.provider), joinedload(Appointment.warehouse))
+        .options(
+            joinedload(Appointment.provider),
+            joinedload(Appointment.warehouse),
+            joinedload(Appointment.warehouse_unload_team),
+        )
         .where(Appointment.id == appointment_id)
     ).unique().scalar_one_or_none()
     if not appointment:
@@ -1185,7 +1206,11 @@ def create_appointment(
     db.commit()
     appointment = db.execute(
         select(Appointment)
-        .options(joinedload(Appointment.provider), joinedload(Appointment.warehouse))
+        .options(
+            joinedload(Appointment.provider),
+            joinedload(Appointment.warehouse),
+            joinedload(Appointment.warehouse_unload_team),
+        )
         .where(Appointment.id == appointment.id)
     ).unique().scalar_one()
     return ok_response(_appointment_to_crud_out(appointment), "Cita creada correctamente")
@@ -1203,6 +1228,30 @@ def update_appointment(
         raise HTTPException(status_code=404, detail="Cita no encontrada")
     assert_warehouse_access(db, principal, appointment.warehouse_id)
     updates = payload.model_dump(exclude_unset=True)
+    from app.models.user import UserRole
+    from app.services.appointment_windows import assert_appointment_fits_windows
+
+    confirm_override = bool(updates.pop("confirm_non_standard_slot", False))
+    staff_reason = str(updates.pop("staff_change_reason", "") or "").strip()
+    if confirm_override:
+        if principal.role_name not in STAFF_APPOINTMENT_ROLES:
+            raise HTTPException(status_code=403, detail="No tiene permiso para confirmar este cambio")
+        if len(staff_reason) < 10:
+            raise HTTPException(
+                status_code=400,
+                detail="Debe indicar el motivo del cambio (mínimo 10 caracteres).",
+            )
+
+    if principal.role_name == UserRole.admin_bodega and "warehouse_id" in updates:
+        if int(updates["warehouse_id"]) != int(appointment.warehouse_id):
+            raise HTTPException(status_code=403, detail="No tiene permiso para cambiar la bodega de la cita")
+    if principal.role_name == UserRole.logistica:
+        if "warehouse_id" in updates and int(updates["warehouse_id"]) != int(appointment.warehouse_id):
+            raise HTTPException(status_code=403, detail="Logística no puede cambiar la bodega de la cita")
+        if "warehouse_unload_team_id" in updates and int(updates["warehouse_unload_team_id"]) != int(
+            appointment.warehouse_unload_team_id
+        ):
+            raise HTTPException(status_code=403, detail="Logística no puede cambiar el equipo de descarga de la cita")
     if "provider_id" in updates and not db.get(Provider, updates["provider_id"]):
         raise HTTPException(status_code=400, detail="El proveedor no existe")
     if "warehouse_id" in updates:
@@ -1212,9 +1261,16 @@ def update_appointment(
     next_duration = updates.get("duration_minutes", appointment.duration_minutes)
     next_warehouse = updates.get("warehouse_id", appointment.warehouse_id)
     next_team = updates.get("warehouse_unload_team_id", appointment.warehouse_unload_team_id)
-    if "start_time" in updates or "duration_minutes" in updates or "warehouse_id" in updates:
-        assert_appointment_slot(db, next_start, next_duration, next_warehouse, next_team)
-    if "start_time" in updates or "duration_minutes" in updates or "warehouse_id" in updates:
+    if "warehouse_unload_team_id" in updates or "warehouse_id" in updates:
+        from app.services.unload_teams import get_unload_team_or_raise
+
+        get_unload_team_or_raise(db, next_warehouse, int(next_team))
+    slot_fields = {"start_time", "duration_minutes", "warehouse_id", "warehouse_unload_team_id"}
+    if updates.keys() & slot_fields:
+        if confirm_override:
+            assert_appointment_fits_windows(db, next_start, next_duration, next_warehouse, next_team)
+        else:
+            assert_appointment_slot(db, next_start, next_duration, next_warehouse, next_team)
         reserve_slot_fifo_or_raise(
             db,
             start_time=next_start,
@@ -1224,7 +1280,14 @@ def update_appointment(
             provider_id=int(appointment.provider_id),
         )
     actor_id = principal.document_id
-    critical_keys = {"status", "start_time", "duration_minutes", "material_description", "warehouse_id"}
+    critical_keys = {
+        "status",
+        "start_time",
+        "duration_minutes",
+        "material_description",
+        "warehouse_id",
+        "warehouse_unload_team_id",
+    }
     snapshots: dict[str, object] = {}
     for key in updates:
         if key in critical_keys:
@@ -1239,6 +1302,7 @@ def update_appointment(
         "duration_minutes": "duración",
         "material_description": "descripción",
         "warehouse_id": "bodega",
+        "warehouse_unload_team_id": "equipo de descarga",
     }
     for key, old_val in snapshots.items():
         new_val = getattr(appointment, key)
@@ -1257,6 +1321,19 @@ def update_appointment(
                 new_value=str(new_val),
             )
         )
+    if confirm_override and (updates.keys() & slot_fields):
+        db.add(
+            ChangeLog(
+                actor_id=actor_id,
+                appointment_id=appointment.id,
+                action="staff_override_reschedule",
+                description=staff_reason,
+                created_at=now,
+                critical_field="reprogramacion_confirmada",
+                old_value=None,
+                new_value=staff_reason,
+            )
+        )
     if changed_labels:
         notify_provider_appointment_updated(
             db,
@@ -1266,7 +1343,11 @@ def update_appointment(
     db.commit()
     appointment = db.execute(
         select(Appointment)
-        .options(joinedload(Appointment.provider), joinedload(Appointment.warehouse))
+        .options(
+            joinedload(Appointment.provider),
+            joinedload(Appointment.warehouse),
+            joinedload(Appointment.warehouse_unload_team),
+        )
         .where(Appointment.id == appointment_id)
     ).unique().scalar_one()
     return ok_response(_appointment_to_crud_out(appointment), "Cita actualizada correctamente")
@@ -1691,6 +1772,7 @@ def _appointment_scope(warehouse_id: int | None):
 @router.get("/analytics/summary", dependencies=[Depends(require_roles("Admin"))])
 def analytics_summary(
     range_mode: str = Query(default="today", alias="range", pattern="^(today|week|biweekly|month)$"),
+    period: int | None = Query(default=None, ge=1, le=6),
     warehouse_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
@@ -1702,7 +1784,10 @@ def analytics_summary(
     local_now = datetime.now(tz)
     local_today_start = datetime(local_now.year, local_now.month, local_now.day, tzinfo=tz)
     local_today_end = local_today_start + timedelta(days=1)
-    local_range_start, local_range_end = business_local_range_bounds(range_mode, local_now, tz)
+    period_arg = period if range_mode in ("week", "biweekly") else None
+    local_range_start, local_range_end = business_local_range_bounds(
+        range_mode, local_now, tz, period=period_arg
+    )
     range_start_utc = local_range_start.astimezone(timezone.utc)
     range_end_utc = local_range_end.astimezone(timezone.utc)
 
@@ -1751,15 +1836,18 @@ def analytics_summary(
         .all()
     )
     citas_30 = [{"fecha": str(d), "cantidad": int(c)} for d, c in day_rows]
-    week_start_local, week_end_local = business_local_range_bounds("week", local_now, tz)
-    week_start = week_start_local.astimezone(timezone.utc)
-    week_end = week_end_local.astimezone(timezone.utc)
+    chart_start_local = local_range_start
+    chart_end_local = local_range_end
+    if range_mode not in ("week", "biweekly"):
+        chart_start_local, chart_end_local = business_local_range_bounds("week", local_now, tz)
+    chart_start = chart_start_local.astimezone(timezone.utc)
+    chart_end = chart_end_local.astimezone(timezone.utc)
     weekday_rows = (
         db.execute(
             scope(
                 select(day_col.label("d"), func.count()).where(
-                    Appointment.start_time >= week_start,
-                    Appointment.start_time < week_end,
+                    Appointment.start_time >= chart_start,
+                    Appointment.start_time < chart_end,
                 )
             )
             .group_by(day_col)
@@ -1768,18 +1856,9 @@ def analytics_summary(
         .all()
     )
     weekday_map = {str(d): int(c) for d, c in weekday_rows}
-    day_names = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
-    citas_por_dia_semana = []
-    for offset in range(7):
-        d = (week_start_local + timedelta(days=offset)).date()
-        iso = str(d)
-        citas_por_dia_semana.append(
-            {
-                "fecha": iso,
-                "dia": day_names[offset],
-                "cantidad": weekday_map.get(iso, 0),
-            }
-        )
+    citas_por_dia_semana = build_daily_counts_in_range(
+        chart_start_local, chart_end_local, weekday_map
+    )
     # Top proveedores: siempre del mes actual (hora local del negocio), top 10.
     local_month_start = datetime(local_now.year, local_now.month, 1, tzinfo=tz)
     if local_now.month == 12:

@@ -99,10 +99,13 @@ class AppointmentIn(BaseModel):
 class AppointmentUpdate(BaseModel):
     provider_id: int | None = Field(default=None, ge=1000000000, le=9999999999)
     warehouse_id: int | None = Field(default=None, ge=1)
+    warehouse_unload_team_id: int | None = Field(default=None, ge=1)
     material_description: str | None = Field(default=None, min_length=5)
     start_time: datetime | None = None
     duration_minutes: int | None = Field(default=None, ge=15, le=480)
     status: AppointmentStatus | None = None
+    confirm_non_standard_slot: bool = False
+    staff_change_reason: str | None = Field(default=None, max_length=500)
 
 
 class AppointmentCrudOut(BaseModel):
@@ -111,6 +114,8 @@ class AppointmentCrudOut(BaseModel):
     provider_name: str = ""
     warehouse_id: int
     warehouse_name: str = ""
+    warehouse_unload_team_id: int | None = None
+    warehouse_unload_team_name: str = ""
     material_description: str
     start_time: datetime
     duration_minutes: int

@@ -95,9 +95,19 @@ export function getAccessToken() {
   return accessToken;
 }
 
-api.interceptors.request.use((config) => {
+api.interceptors.request.use(async (config) => {
+  const url = String(config?.url || "");
+  const isRefreshRequest = url.includes("/auth/refresh");
+  if (refreshPromise && !isRefreshRequest) {
+    try {
+      await refreshPromise;
+    } catch {
+      /* el 401 del response interceptor gestionará la sesión */
+    }
+  }
   const token = getAccessToken();
   if (token) {
+    config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
@@ -212,6 +222,12 @@ export function parseApiError(error) {
     return error.message;
   }
   return "No se pudo completar la operación";
+}
+
+/** True si el horario no coincide con un turno habilitado (HTTP 400). */
+export function isAppointmentSlotWindowMismatch(error) {
+  const msg = String(parseApiError(error) || "").toLowerCase();
+  return msg.includes("no coinciden con un turno") || msg.includes("franja habilitada");
 }
 
 export function getRetryAfterSeconds(error) {

@@ -13,6 +13,7 @@ import {
 } from "../api/apiCompatibility";
 import ApiStaleBanner from "../components/ApiStaleBanner";
 import ConfirmDialog from "../components/ConfirmDialog";
+import FranjaRowsTable from "../components/FranjaRowsTable";
 import BrandLogo from "../components/BrandLogo";
 import NotificationCenter from "../components/NotificationCenter";
 import PasswordVisibilityButton from "../components/PasswordVisibilityButton";
@@ -27,7 +28,14 @@ import {
   describeProviderSlotAvailability,
   unwrapProviderDayAvailability,
 } from "../utils/providerAvailability";
-import { formatReportRangeLabel, getReportRangeBounds } from "../utils/reportRange";
+import {
+  formatReportRangeLabel,
+  getAnalyticsPeriodOptions,
+  getDefaultPeriodIndex,
+  getPeriodSelectorLabel,
+  getReportRangeBounds,
+  rangeNeedsPeriodSelector,
+} from "../utils/reportRange";
 import {
   buildSlotsFromFranjas,
   formatSlotLabel,
@@ -117,6 +125,33 @@ const ROLE_LABELS = {
   Logistica: "Logística",
   Proveedor: "Proveedor",
 };
+
+const roleNeedsWarehouses = (roleName) => roleName === "AdminBodega" || roleName === "Logistica";
+
+function resolveWarehouseIdsForRole(roleName, selectedIds) {
+  if (!roleNeedsWarehouses(roleName)) return [];
+  return (selectedIds || [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+}
+
+function warehouseScopeHint(roleName) {
+  if (roleName === "Logistica") {
+    return "Marca una o más bodegas. Logística solo opera en esas bodegas (citas, revisión, búsqueda e historial), sin configurar franjas ni administración global.";
+  }
+  if (roleName === "AdminBodega") {
+    return "Marca una o más bodegas. Puede cancelar y modificar citas, y gestionar franjas horarias, solo dentro de ese alcance.";
+  }
+  return "";
+}
+
+function formatUserWarehousesLabel(roleName, warehouseIds, warehouses) {
+  if (!roleNeedsWarehouses(roleName)) return "—";
+  if (!Array.isArray(warehouseIds) || warehouseIds.length === 0) return "Sin bodegas asignadas";
+  const names = warehouseIds.map((id) => warehouses.find((w) => w.id === id)?.name || id);
+  if (names.length === 1) return names[0];
+  return `${names.length} bodegas: ${names.join(", ")}`;
+}
 
 const card = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
 const inlay = "rounded-lg border border-slate-200 bg-slate-50/90 p-4";
@@ -319,8 +354,8 @@ function getFranjaValidationError(rows, context = "franja") {
     if (duration > 480) {
       return `La ${context} #${i + 1} no puede durar más de 480 minutos.`;
     }
-    if (i > 0 && row.start_local <= ordered[i - 1].end_local) {
-      return `La ${context} #${i + 1} se cruza con la anterior (debe iniciar después de ${ordered[i - 1].end_local}).`;
+    if (i > 0 && row.start_local < ordered[i - 1].end_local) {
+      return `La ${context} #${i + 1} se solapa con la anterior (debe iniciar a las ${ordered[i - 1].end_local} o después).`;
     }
   }
   return "";
@@ -337,6 +372,7 @@ export default function DashboardPage() {
   const [success, setSuccess] = useState("");
   const [toasts, setToasts] = useState([]);
   const [viewMode, setViewMode] = useState("list");
+  const [viewPeriod, setViewPeriod] = useState(() => getDefaultPeriodIndex("today"));
   const [filterDay, setFilterDay] = useState(todayISO());
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth() + 1);
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
@@ -403,10 +439,8 @@ export default function DashboardPage() {
   const [warehouseConfigApplyingId, setWarehouseConfigApplyingId] = useState(null);
   const [warehouseTeamNamesBaseline, setWarehouseTeamNamesBaseline] = useState([]);
   const [warehouseRowError, setWarehouseRowError] = useState({});
-  const [profileUnloadTeams, setProfileUnloadTeams] = useState(1);
   const [warehouseUnloadTeams, setWarehouseUnloadTeams] = useState([]);
   const [selectedWarehouseUnloadTeamId, setSelectedWarehouseUnloadTeamId] = useState(null);
-  const [selectedProviderTeamIndex, setSelectedProviderTeamIndex] = useState(1);
   const [adminFranjaUnloadTeamId, setAdminFranjaUnloadTeamId] = useState("");
   const [providerTimeChoice, setProviderTimeChoice] = useState("");
   const [providerMaterialDescription, setProviderMaterialDescription] = useState("");
@@ -461,8 +495,14 @@ export default function DashboardPage() {
   const [auditRoleFilter, setAuditRoleFilter] = useState("");
   const [historyDateFilter, setHistoryDateFilter] = useState("");
   const [analyticsRange, setAnalyticsRange] = useState("today");
+  const [analyticsPeriod, setAnalyticsPeriod] = useState(() => getDefaultPeriodIndex("today"));
   const [citasRange, setCitasRange] = useState("today");
+  const [citasPeriod, setCitasPeriod] = useState(() => getDefaultPeriodIndex("today"));
   const [reviewRange, setReviewRange] = useState("today");
+  const [reviewPeriod, setReviewPeriod] = useState(() => getDefaultPeriodIndex("today"));
+  const [reviewReferenceDate, setReviewReferenceDate] = useState(() => new Date());
+  const [revisionOpenAppointmentId, setRevisionOpenAppointmentId] = useState(null);
+  const [revisionPinnedAppointment, setRevisionPinnedAppointment] = useState(null);
   const [profileData, setProfileData] = useState(null);
   const [profileFullName, setProfileFullName] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
@@ -682,6 +722,9 @@ export default function DashboardPage() {
         params.set("month", String(filterMonth));
         params.set("year", String(filterYear));
       }
+      if (rangeNeedsPeriodSelector(effectiveMode) && viewPeriod != null) {
+        params.set("period", String(viewPeriod));
+      }
       if (filterWarehouseId) {
         params.set("warehouse_id", String(filterWarehouseId));
       }
@@ -716,6 +759,7 @@ export default function DashboardPage() {
     session,
     authReady,
     viewMode,
+    viewPeriod,
     filterDay,
     filterMonth,
     filterYear,
@@ -1119,6 +1163,9 @@ export default function DashboardPage() {
   const loadAnalytics = useCallback(async () => {
     if (!session || !isAdmin) return;
     const params = new URLSearchParams({ range: analyticsRange });
+    if (rangeNeedsPeriodSelector(analyticsRange) && analyticsPeriod != null) {
+      params.set("period", String(analyticsPeriod));
+    }
     if (filterWarehouseId) {
       params.set("warehouse_id", String(filterWarehouseId));
     }
@@ -1128,7 +1175,7 @@ export default function DashboardPage() {
       throw new Error(payload.message);
     }
     setAnalytics(payload.data || null);
-  }, [session, isAdmin, analyticsRange, filterWarehouseId]);
+  }, [session, isAdmin, analyticsRange, analyticsPeriod, filterWarehouseId]);
 
   const loadProfile = useCallback(async () => {
     if (!session) return;
@@ -1141,9 +1188,6 @@ export default function DashboardPage() {
     setProfileData(data);
     setProfileFullName(data?.full_name || "");
     setProfileEmail(data?.email || "");
-    if (data?.unload_teams != null) {
-      setProfileUnloadTeams(Math.max(1, Number(data.unload_teams) || 1));
-    }
   }, [session]);
 
   const dismissToast = useCallback((id) => {
@@ -1170,6 +1214,9 @@ export default function DashboardPage() {
       params.set("month", String(filterMonth));
       params.set("year", String(filterYear));
     }
+    if (rangeNeedsPeriodSelector(viewMode) && viewPeriod != null) {
+      params.set("period", String(viewPeriod));
+    }
     if (filterWarehouseId) {
       params.set("warehouse_id", String(filterWarehouseId));
     }
@@ -1190,7 +1237,7 @@ export default function DashboardPage() {
     } catch (err) {
       pushToast(parseApiError(err), "error");
     }
-  }, [viewMode, filterDay, filterMonth, filterYear, filterWarehouseId, pushToast]);
+  }, [viewMode, viewPeriod, filterDay, filterMonth, filterYear, filterWarehouseId, pushToast]);
 
   useEffect(() => {
     if (!error) return;
@@ -1366,7 +1413,24 @@ export default function DashboardPage() {
       }
     };
     run();
-  }, [isAdmin, adminTab, loadAnalytics, analyticsRange, filterWarehouseId]);
+  }, [isAdmin, adminTab, loadAnalytics, analyticsRange, analyticsPeriod, filterWarehouseId]);
+
+  const analyticsPeriodOptions = useMemo(
+    () => getAnalyticsPeriodOptions(analyticsRange),
+    [analyticsRange]
+  );
+  const citasPeriodOptions = useMemo(
+    () => getAnalyticsPeriodOptions(citasRange),
+    [citasRange]
+  );
+  const reviewPeriodOptions = useMemo(
+    () => getAnalyticsPeriodOptions(reviewRange, reviewReferenceDate),
+    [reviewRange, reviewReferenceDate]
+  );
+  const viewPeriodOptions = useMemo(
+    () => getAnalyticsPeriodOptions(viewMode),
+    [viewMode]
+  );
 
   useEffect(() => {
     if (!session || !authReady || !isStaff) return;
@@ -1386,6 +1450,7 @@ export default function DashboardPage() {
     isStaff,
     loadAppointments,
     viewMode,
+    viewPeriod,
     filterDay,
     filterMonth,
     filterYear,
@@ -1535,13 +1600,14 @@ export default function DashboardPage() {
   }, [isAdmin, adminTab]);
 
   const citasInRange = useMemo(() => {
-    const { start, end } = getReportRangeBounds(citasRange);
+    const period = rangeNeedsPeriodSelector(citasRange) ? citasPeriod : null;
+    const { start, end } = getReportRangeBounds(citasRange, new Date(), period);
     return appointments.filter((a) => {
       if (!matchesWarehouseFilter(a, filterWarehouseId)) return false;
       const dt = new Date(a.start_time);
       return dt >= start && dt < end;
     });
-  }, [appointments, citasRange, filterWarehouseId]);
+  }, [appointments, citasRange, citasPeriod, filterWarehouseId]);
   const citasRangeCount = useMemo(() => citasInRange.length, [citasInRange]);
   const sinRevisionRangeCount = useMemo(
     () => citasInRange.filter((a) => a.status === "sin_revision").length,
@@ -1591,7 +1657,11 @@ export default function DashboardPage() {
     () => Math.max(1, ...analyticsTopProviders.map((p) => Number(p.cantidad || 0))),
     [analyticsTopProviders]
   );
-  const analyticsRangeLabel = formatReportRangeLabel(analyticsRange);
+  const analyticsRangeLabel = formatReportRangeLabel(
+    analyticsRange,
+    new Date(),
+    rangeNeedsPeriodSelector(analyticsRange) ? analyticsPeriod : null
+  );
   const analyticsStatusPie = useMemo(() => {
     if (analyticsStatusTotal <= 0) {
       return "conic-gradient(#e2e8f0 0deg 360deg)";
@@ -1635,14 +1705,22 @@ export default function DashboardPage() {
     });
   }, [logs, historyDateFilter]);
   const reviewAppointments = useMemo(() => {
-    const { start, end } = getReportRangeBounds(reviewRange);
+    const period = rangeNeedsPeriodSelector(reviewRange) ? reviewPeriod : null;
+    const { start, end } = getReportRangeBounds(reviewRange, reviewReferenceDate, period);
     return appointments.filter((a) => {
       if (!matchesWarehouseFilter(a, filterWarehouseId)) return false;
       if (a.status !== "sin_revision" && a.status !== "revisado") return false;
       const dt = new Date(a.start_time);
       return dt >= start && dt < end;
     });
-  }, [appointments, reviewRange, filterWarehouseId]);
+  }, [appointments, reviewRange, reviewPeriod, filterWarehouseId, reviewReferenceDate]);
+
+  const reviewAppointmentsDisplay = useMemo(() => {
+    if (!revisionPinnedAppointment) return reviewAppointments;
+    const exists = reviewAppointments.some((a) => Number(a.id) === Number(revisionPinnedAppointment.id));
+    if (exists) return reviewAppointments;
+    return [revisionPinnedAppointment, ...reviewAppointments];
+  }, [reviewAppointments, revisionPinnedAppointment]);
 
   const providerAppointmentsFiltered = useMemo(
     () => providerAppointments.filter((a) => matchesWarehouseFilter(a, providerListWarehouseFilter)),
@@ -1701,11 +1779,27 @@ export default function DashboardPage() {
     }
   };
 
-  const onStaffRescheduleAppointment = async ({ appointmentId, startTime }) => {
+  const onStaffRescheduleAppointment = async ({
+    appointmentId,
+    startTime,
+    durationMinutes,
+    warehouseId,
+    warehouseUnloadTeamId,
+    confirmNonStandardSlot,
+    staffChangeReason,
+  }) => {
     try {
       setError("");
       setSuccess("");
-      await api.put(`${API_PREFIX}/crud/appointments/${appointmentId}`, { start_time: startTime });
+      const body = { start_time: startTime };
+      if (durationMinutes != null) body.duration_minutes = durationMinutes;
+      if (warehouseId != null) body.warehouse_id = warehouseId;
+      if (warehouseUnloadTeamId != null) body.warehouse_unload_team_id = warehouseUnloadTeamId;
+      if (confirmNonStandardSlot) {
+        body.confirm_non_standard_slot = true;
+        body.staff_change_reason = staffChangeReason;
+      }
+      await api.put(`${API_PREFIX}/crud/appointments/${appointmentId}`, body);
       await loadAppointments();
       await loadReminders();
       if (isStaff) {
@@ -1780,9 +1874,9 @@ export default function DashboardPage() {
         setError(strengthError);
         return;
       }
-      const warehouseIds = nuWarehouseIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
-      if (nuRoleName === "AdminBodega" && warehouseIds.length === 0) {
-        setError("Selecciona al menos una bodega para el administrador de bodega.");
+      const warehouseIds = resolveWarehouseIdsForRole(nuRoleName, nuWarehouseIds);
+      if (roleNeedsWarehouses(nuRoleName) && warehouseIds.length === 0) {
+        setError("Selecciona al menos una bodega para Logística o Administrador de bodega.");
         return;
       }
       await api.post(`${API_PREFIX}/crud/users`, {
@@ -1833,11 +1927,11 @@ export default function DashboardPage() {
       setError("");
       setSuccess("");
       setTeamMessage("");
-      const warehouseIds = editUserWarehouseIds
-        .map((id) => Number(id))
-        .filter((id) => Number.isFinite(id) && id > 0);
-      if (editRoleName === "AdminBodega" && warehouseIds.length === 0) {
-        setError("Selecciona al menos una bodega para el administrador de bodega.");
+      const saveRoleName =
+        internalRolesOnly.find((r) => String(r.id) === String(editUserRoleId))?.name || editRoleName;
+      const warehouseIds = resolveWarehouseIdsForRole(saveRoleName, editUserWarehouseIds);
+      if (roleNeedsWarehouses(saveRoleName) && warehouseIds.length === 0) {
+        setError("Selecciona al menos una bodega para Logística o Administrador de bodega.");
         return;
       }
       await api.put(`${API_PREFIX}/crud/users/${documentId}`, {
@@ -2062,8 +2156,10 @@ export default function DashboardPage() {
           setError(`La franja de lote #${i + 1} tiene hora fin menor o igual a la de inicio.`);
           return;
         }
-        if (i > 0 && row.start_local <= sortedRows[i - 1].end_local) {
-          setError(`La franja de lote #${i + 1} debe iniciar después de ${sortedRows[i - 1].end_local}.`);
+        if (i > 0 && row.start_local < sortedRows[i - 1].end_local) {
+          setError(
+            `La franja de lote #${i + 1} se solapa con la anterior (puede empezar a las ${sortedRows[i - 1].end_local}, por ejemplo 08:00–09:00 y 09:00–10:00).`
+          );
           return;
         }
       }
@@ -2383,9 +2479,6 @@ export default function DashboardPage() {
         full_name: profileFullName.trim(),
         email: profileEmail.trim(),
       };
-      if (isProveedor) {
-        body.unload_teams = Math.min(20, Math.max(1, Number(profileUnloadTeams) || 1));
-      }
       const response = await api.put(`${API_PREFIX}/crud/profile/me`, body);
       const payload = parseApiResponse(response);
       if (!payload.success) {
@@ -2509,6 +2602,36 @@ export default function DashboardPage() {
     }
   };
 
+  const openRevisionAppointment = useCallback(
+    async (appointmentId) => {
+      if (!appointmentId) return;
+      setError("");
+      setRevisionOpenAppointmentId(Number(appointmentId));
+      try {
+        const response = await api.get(`${API_PREFIX}/crud/appointments/${appointmentId}`);
+        const payload = parseApiResponse(response);
+        if (!payload.success || !payload.data) {
+          setError(payload.message || "No se encontró la cita.");
+          setRevisionOpenAppointmentId(null);
+          return;
+        }
+        const appt = payload.data;
+        setRevisionPinnedAppointment(appt);
+        setReviewReferenceDate(new Date(appt.start_time));
+        setReviewRange("today");
+        if (appt.warehouse_id) {
+          setFilterWarehouseId(String(appt.warehouse_id));
+        }
+        await loadAppointments();
+      } catch (err) {
+        setError(parseApiError(err));
+        setRevisionOpenAppointmentId(null);
+        setRevisionPinnedAppointment(null);
+      }
+    },
+    [loadAppointments]
+  );
+
   const handleNotificationNavigate = useCallback(
     (item) => {
       if (!item) return;
@@ -2517,13 +2640,16 @@ export default function DashboardPage() {
       if (item.kind === "cita_para_revisar") {
         if (isAdmin) setAdminTab("revision_citas");
         if (isLogistica) setLogisticaTab("revision_citas");
+        if (item.appointment_id) {
+          void openRevisionAppointment(item.appointment_id);
+        }
         return;
       }
       if (item.kind === "cita_actualizada" && isProveedor) {
         setProveedorTab("mis_citas");
       }
     },
-    [isAdmin, isLogistica, isProveedor]
+    [isAdmin, isLogistica, isProveedor, openRevisionAppointment]
   );
 
   const showCitasSection =
@@ -2591,11 +2717,6 @@ export default function DashboardPage() {
     () => parseSlotKey(providerTimeChoice),
     [providerTimeChoice]
   );
-  const providerTeamOptions = useMemo(() => {
-    const n = Math.min(20, Math.max(1, Number(profileUnloadTeams) || 1));
-    return Array.from({ length: n }, (_, i) => i + 1);
-  }, [profileUnloadTeams]);
-
   const providerNeedsTeamForCalendar = Boolean(
     isProveedor && selectedWarehouseId && warehouseUnloadTeams.length > 0 && !activeProviderUnloadTeamId
   );
@@ -2705,7 +2826,7 @@ export default function DashboardPage() {
         material_description: desc,
         warehouse_id: selectedWarehouseId,
         warehouse_unload_team_id: activeProviderUnloadTeamId,
-        provider_team_index: Number(selectedProviderTeamIndex) || 1,
+        provider_team_index: 1,
         start_time: localDate.toISOString(),
         duration_minutes: chosen.duration_minutes,
       });
@@ -2741,7 +2862,6 @@ export default function DashboardPage() {
     providerCalendarBase,
     selectedWarehouseId,
     activeProviderUnloadTeamId,
-    selectedProviderTeamIndex,
     windowsPack?.timezone,
     loadProviderAppointments,
     loadProviderMonthAvailability,
@@ -2964,7 +3084,11 @@ export default function DashboardPage() {
     </header>
   );
 
-  const citasRangeLabel = formatReportRangeLabel(citasRange);
+  const citasRangeLabel = formatReportRangeLabel(
+    citasRange,
+    new Date(),
+    rangeNeedsPeriodSelector(citasRange) ? citasPeriod : null
+  );
 
   const warehouseFilterControl = (selectId, label = "Bodega") => (
     <div>
@@ -3013,7 +3137,7 @@ export default function DashboardPage() {
     adminTab === "citas" && (
       <div className="mb-6 space-y-3">
         <div className={`${card} p-4`}>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label htmlFor="admin-citas-range" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Filtro de citas
@@ -3023,7 +3147,13 @@ export default function DashboardPage() {
                 name="admin-citas-range"
                 className={`${input} w-full sm:max-w-xs`}
                 value={citasRange}
-                onChange={(e) => setCitasRange(e.target.value)}
+                onChange={(e) => {
+                  const nextRange = e.target.value;
+                  setCitasRange(nextRange);
+                  if (rangeNeedsPeriodSelector(nextRange)) {
+                    setCitasPeriod(getDefaultPeriodIndex(nextRange));
+                  }
+                }}
               >
                 <option value="today">Día</option>
                 <option value="week">Semana</option>
@@ -3031,6 +3161,26 @@ export default function DashboardPage() {
                 <option value="month">Mes</option>
               </select>
             </div>
+            {rangeNeedsPeriodSelector(citasRange) && (
+              <div>
+                <label htmlFor="admin-citas-period" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {getPeriodSelectorLabel(citasRange)}
+                </label>
+                <select
+                  id="admin-citas-period"
+                  name="admin-citas-period"
+                  className={`${input} w-full sm:max-w-xs`}
+                  value={citasPeriod ?? 1}
+                  onChange={(e) => setCitasPeriod(Number(e.target.value))}
+                >
+                  {citasPeriodOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {warehouseFilterControl("admin-citas-warehouse", "Bodega")}
           </div>
         </div>
@@ -3369,28 +3519,6 @@ export default function DashboardPage() {
                 {" · "}
                 Día: <strong>{providerSelectedDay ? formatLongEsDateFromISO(providerSelectedDay) : "sin elegir"}</strong>
               </p>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div>
-                  <label htmlFor="provider-own-team-select" className="mb-1 block text-xs font-medium text-slate-600">
-                    Tu equipo (camión / descarga)
-                  </label>
-                  <select
-                    id="provider-own-team-select"
-                    className={input}
-                    value={selectedProviderTeamIndex}
-                    onChange={(e) => setSelectedProviderTeamIndex(Number(e.target.value) || 1)}
-                  >
-                    {providerTeamOptions.map((n) => (
-                      <option key={`prov-team-${n}`} value={n}>
-                        Equipo proveedor {n}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    Tienes <strong>{profileUnloadTeams}</strong> equipo(s) propios para citas en paralelo.
-                  </p>
-                </div>
-              </div>
             </div>
             <div className={card}>
               <p className="text-xs font-medium uppercase text-slate-500">Horarios del muelle seleccionado</p>
@@ -3561,7 +3689,7 @@ export default function DashboardPage() {
         {isGlobalAdmin && adminTab === "analitica" && (
           <div className={card}>
             <h2 className="mb-4 text-lg font-semibold text-slate-900">Analítica</h2>
-            <div className="mb-4 grid gap-3 sm:grid-cols-2">
+            <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <label htmlFor="analytics-range-filter" className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-600">
                   Rango
@@ -3571,14 +3699,40 @@ export default function DashboardPage() {
                   name="analytics-range-filter"
                   className={`${input} w-full`}
                   value={analyticsRange}
-                  onChange={(e) => setAnalyticsRange(e.target.value)}
+                  onChange={(e) => {
+                    const nextRange = e.target.value;
+                    setAnalyticsRange(nextRange);
+                    if (rangeNeedsPeriodSelector(nextRange)) {
+                      setAnalyticsPeriod(getDefaultPeriodIndex(nextRange));
+                    }
+                  }}
                 >
                   <option value="today">Por día</option>
                   <option value="week">Por semana</option>
-                <option value="biweekly">Por quincena</option>
-                <option value="month">Por mes</option>
-              </select>
+                  <option value="biweekly">Por quincena</option>
+                  <option value="month">Por mes</option>
+                </select>
               </div>
+              {rangeNeedsPeriodSelector(analyticsRange) && (
+                <div>
+                  <label htmlFor="analytics-period-filter" className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-600">
+                    {getPeriodSelectorLabel(analyticsRange)}
+                  </label>
+                  <select
+                    id="analytics-period-filter"
+                    name="analytics-period-filter"
+                    className={`${input} w-full`}
+                    value={analyticsPeriod ?? 1}
+                    onChange={(e) => setAnalyticsPeriod(Number(e.target.value))}
+                  >
+                    {analyticsPeriodOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {warehouseFilterControl("analytics-warehouse", "Bodega")}
             </div>
             {!analytics && <p className="text-sm text-slate-500">Cargando…</p>}
@@ -4020,43 +4174,20 @@ export default function DashboardPage() {
                     )}
                   </div>
                 )}
-                {specialFranjaRows.map((row, idx) => (
-                  <div key={`selected-${idx}`} className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="text-sm text-slate-600">Turno</span>
-                    <span className="text-sm text-slate-600">De</span>
-                    <input
-                      type="time"
-                      className={input + " w-auto"}
-                      value={row.start_local.length === 5 ? row.start_local : row.start_local.slice(0, 5)}
-                      disabled={!specialDayCanEdit}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setSpecialFranjaRows((prev) => prev.map((r, i) => (i === idx ? { ...r, start_local: v } : r)));
-                      }}
-                      required
-                    />
-                    <span className="text-sm text-slate-600">a</span>
-                    <input
-                      type="time"
-                      className={input + " w-auto"}
-                      value={row.end_local.length === 5 ? row.end_local : row.end_local.slice(0, 5)}
-                      disabled={!specialDayCanEdit}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setSpecialFranjaRows((prev) => prev.map((r, i) => (i === idx ? { ...r, end_local: v } : r)));
-                      }}
-                      required
-                    />
-                    <button
-                      type="button"
-                      className="text-xs text-red-600 underline hover:text-red-700 disabled:opacity-40"
-                      disabled={!specialDayCanEdit}
-                      onClick={() => setSpecialFranjaRows((prev) => prev.filter((_, i) => i !== idx))}
-                    >
-                      Quitar
-                    </button>
-                  </div>
-                ))}
+                {specialFranjaRows.length > 0 && (
+                  <FranjaRowsTable
+                    rows={specialFranjaRows}
+                    inputClass={input}
+                    disabled={!specialDayCanEdit}
+                    idPrefix="special-franja"
+                    onChangeRow={(idx, field, value) => {
+                      setSpecialFranjaRows((prev) =>
+                        prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r))
+                      );
+                    }}
+                    onRemoveRow={(idx) => setSpecialFranjaRows((prev) => prev.filter((_, i) => i !== idx))}
+                  />
+                )}
                 {!isSpecialDayPast && (
                   <div className="flex flex-wrap gap-2 pt-1">
                     <button
@@ -4112,35 +4243,16 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <p className="text-xs text-slate-600">Este lote aplica a todos los días dentro del rango seleccionado.</p>
-                {bulkFranjaRows.map((row, idx) => (
-                  <div key={`bulk-row-${idx}`} className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm text-slate-600">De</span>
-                    <input
-                      type="time"
-                      className={input + " w-auto"}
-                      value={row.start_local.length === 5 ? row.start_local : row.start_local.slice(0, 5)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setBulkFranjaRows((prev) => prev.map((r, i) => (i === idx ? { ...r, start_local: v } : r)));
-                      }}
-                      required
-                    />
-                    <span className="text-sm text-slate-600">a</span>
-                    <input
-                      type="time"
-                      className={input + " w-auto"}
-                      value={row.end_local.length === 5 ? row.end_local : row.end_local.slice(0, 5)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setBulkFranjaRows((prev) => prev.map((r, i) => (i === idx ? { ...r, end_local: v } : r)));
-                      }}
-                      required
-                    />
-                    <button type="button" className="text-xs text-red-600 underline hover:text-red-700" onClick={() => setBulkFranjaRows((prev) => prev.filter((_, i) => i !== idx))}>
-                      Quitar
-                    </button>
-                  </div>
-                ))}
+                <FranjaRowsTable
+                  rows={bulkFranjaRows}
+                  inputClass={input}
+                  idPrefix="bulk-franja"
+                  onChangeRow={(idx, field, value) => {
+                    setBulkFranjaRows((prev) => prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r)));
+                  }}
+                  onRemoveRow={(idx) => setBulkFranjaRows((prev) => prev.filter((_, i) => i !== idx))}
+                  emptyMessage="Añade al menos una franja con el botón de abajo."
+                />
                 <div className="flex flex-wrap gap-2 pt-1">
                   <button type="button" className={btnGhost} onClick={() => setBulkFranjaRows((prev) => [...prev, { start_local: "09:00", end_local: "10:00" }])}>
                     Añadir franja lote
@@ -4160,7 +4272,9 @@ export default function DashboardPage() {
             <div className={card}>
               <h2 className="mb-2 text-lg font-semibold text-slate-900">Alta de personal interno</h2>
               <p className="mb-3 text-xs text-slate-500">
-                Admin global, administrador de bodega (con bodegas asignadas) o Logística.
+                Admin global (todas las bodegas). Administrador de bodega y Logística pueden tener{" "}
+                <strong>una o más bodegas</strong> asignadas. El admin de bodega cancela y modifica citas en sus bodegas;
+                Logística coordina citas en las suyas sin configurar franjas.
               </p>
               <form className="flex flex-col gap-2" onSubmit={onCreateUser}>
                 <input
@@ -4232,7 +4346,7 @@ export default function DashboardPage() {
                   onChange={(e) => {
                     setNuRoleId(e.target.value);
                     const role = internalRolesOnly.find((r) => String(r.id) === e.target.value);
-                    if (role?.name !== "AdminBodega") setNuWarehouseIds([]);
+                    if (!roleNeedsWarehouses(role?.name)) setNuWarehouseIds([]);
                   }}
                   required
                 >
@@ -4242,10 +4356,13 @@ export default function DashboardPage() {
                     </option>
                   ))}
                 </select>
-                {nuRoleName === "AdminBodega" && (
+                {roleNeedsWarehouses(nuRoleName) && (
                   <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
-                    <p className="mb-2 text-xs font-medium text-slate-700">Bodegas asignadas</p>
-                    <div className="max-h-36 space-y-1 overflow-y-auto">
+                    <p className="mb-2 text-xs font-medium text-slate-700">
+                      Bodegas asignadas (una o más)
+                    </p>
+                    <p className="mb-2 text-[11px] text-slate-500">{warehouseScopeHint(nuRoleName)}</p>
+                    <div className="max-h-36 space-y-1 overflow-y-auto rounded-md border border-slate-100 bg-white p-2">
                       {warehouses.map((w) => (
                         <label key={w.id} className="flex items-center gap-2 text-sm text-slate-700">
                           <input
@@ -4262,6 +4379,11 @@ export default function DashboardPage() {
                         </label>
                       ))}
                     </div>
+                    {nuWarehouseIds.length > 0 && (
+                      <p className="mt-2 text-[11px] font-medium text-emerald-800">
+                        Seleccionadas: {nuWarehouseIds.length} bodega{nuWarehouseIds.length === 1 ? "" : "s"}
+                      </p>
+                    )}
                     {warehouses.length === 0 && (
                       <p className="text-xs text-slate-500">Crea bodegas antes de asignar este rol.</p>
                     )}
@@ -4289,105 +4411,174 @@ export default function DashboardPage() {
                   <option value="Logistica">Logística</option>
                 </select>
               </div>
-              <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-slate-600 max-lg:min-h-[22rem] max-lg:max-h-[32rem]">
-                {filteredStaffUsers.map((u) => (
-                  <li key={u.document_id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                    {editingUserId === u.document_id ? (
-                      <div className="space-y-2">
-                        <input
-                          className={input}
-                          value={editUserName}
-                          onChange={(e) => setEditUserName(e.target.value)}
-                          placeholder="Nombre completo"
-                        />
-                        <input
-                          className={input}
-                          type="email"
-                          value={editUserEmail}
-                          onChange={(e) => setEditUserEmail(e.target.value)}
-                          placeholder="Correo"
-                        />
-                        <select
-                          className={input}
-                          value={editUserRoleId}
-                          onChange={(e) => {
-                            setEditUserRoleId(e.target.value);
-                            const role = internalRolesOnly.find((r) => String(r.id) === e.target.value);
-                            if (role?.name !== "AdminBodega") setEditUserWarehouseIds([]);
-                          }}
+              <div className="max-h-48 overflow-auto rounded-lg border border-slate-200 bg-white max-lg:min-h-[22rem] max-lg:max-h-[32rem]">
+                <table className="w-full min-w-[40rem] border-collapse text-sm">
+                  <thead className="sticky top-0 z-[1] border-b border-slate-200 bg-slate-50">
+                    <tr>
+                      <th
+                        scope="col"
+                        className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-600"
+                      >
+                        Nombre
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-600"
+                      >
+                        Rol
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-600"
+                      >
+                        Bodegas
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-600"
+                      >
+                        Documento
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-600"
+                      >
+                        Correo
+                      </th>
+                      {isAdmin && (
+                        <th
+                          scope="col"
+                          className="w-40 px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-600"
                         >
-                          {internalRolesOnly.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              {ROLE_LABELS[r.name] || r.name}
-                            </option>
-                          ))}
-                        </select>
-                        {editRoleName === "AdminBodega" && (
-                          <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
-                            <p className="mb-2 text-xs font-medium text-slate-700">Bodegas asignadas</p>
-                            <div className="max-h-36 space-y-1 overflow-y-auto">
-                              {warehouses.map((w) => (
-                                <label key={w.id} className="flex items-center gap-2 text-sm text-slate-700">
-                                  <input
-                                    type="checkbox"
-                                    checked={editUserWarehouseIds.includes(String(w.id))}
-                                    onChange={(e) => {
-                                      const id = String(w.id);
-                                      setEditUserWarehouseIds((prev) =>
-                                        e.target.checked ? [...prev, id] : prev.filter((x) => x !== id)
-                                      );
-                                    }}
-                                  />
-                                  {w.name}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        <div className="flex gap-2">
-                          <button type="button" className={btnPrimary} onClick={() => onSaveEditUser(u.document_id)}>
-                            Guardar cambios
-                          </button>
-                          <button type="button" className={btnGhost} onClick={onCancelEditUser}>
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <span className="min-w-0 break-words text-sm">
-                          {u.full_name} — {ROLE_LABELS[u.role_name] || u.role_name}
-                          {u.role_name === "AdminBodega" && Array.isArray(u.warehouse_ids) && u.warehouse_ids.length > 0
-                            ? ` — bodegas: ${u.warehouse_ids
-                                .map((id) => warehouses.find((w) => w.id === id)?.name || id)
-                                .join(", ")}`
-                            : ""}{" "}
-                          — doc. {u.document_id} — {u.email}
-                        </span>
-                        {isAdmin && (
-                          <div className="flex shrink-0 flex-wrap gap-2">
-                            <button type="button" className={btnGhost} onClick={() => onStartEditUser(u)}>
-                              Editar
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100"
-                              onClick={() => setConfirmDeleteUserId(u.document_id)}
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                          Acción
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredStaffUsers.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={isAdmin ? 6 : 5}
+                          className="px-3 py-6 text-center text-sm text-slate-500"
+                        >
+                          No hay usuarios que coincidan con los filtros.
+                        </td>
+                      </tr>
                     )}
-                  </li>
-                ))}
-                {filteredStaffUsers.length === 0 && (
-                  <li className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-500">
-                    No hay usuarios que coincidan con los filtros.
-                  </li>
-                )}
-              </ul>
+                    {filteredStaffUsers.map((u) => {
+                      const warehouseLabel = formatUserWarehousesLabel(u.role_name, u.warehouse_ids, warehouses);
+                      if (editingUserId === u.document_id) {
+                        return (
+                          <tr key={u.document_id} className="border-b border-slate-100 bg-amber-50/40">
+                            <td colSpan={isAdmin ? 6 : 5} className="px-3 py-3">
+                              <div className="space-y-2">
+                                <input
+                                  className={input}
+                                  value={editUserName}
+                                  onChange={(e) => setEditUserName(e.target.value)}
+                                  placeholder="Nombre completo"
+                                />
+                                <input
+                                  className={input}
+                                  type="email"
+                                  value={editUserEmail}
+                                  onChange={(e) => setEditUserEmail(e.target.value)}
+                                  placeholder="Correo"
+                                />
+                                <select
+                                  className={input}
+                                  value={editUserRoleId}
+                                  onChange={(e) => {
+                                    setEditUserRoleId(e.target.value);
+                                    const role = internalRolesOnly.find((r) => String(r.id) === e.target.value);
+                                    if (!roleNeedsWarehouses(role?.name)) setEditUserWarehouseIds([]);
+                                  }}
+                                >
+                                  {internalRolesOnly.map((r) => (
+                                    <option key={r.id} value={r.id}>
+                                      {ROLE_LABELS[r.name] || r.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {roleNeedsWarehouses(editRoleName) && (
+                                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                                    <p className="mb-2 text-xs font-medium text-slate-700">
+                                      Bodegas asignadas (una o más)
+                                    </p>
+                                    <p className="mb-2 text-[11px] text-slate-500">{warehouseScopeHint(editRoleName)}</p>
+                                    <div className="max-h-36 space-y-1 overflow-y-auto rounded-md border border-slate-100 bg-white p-2">
+                                      {warehouses.map((w) => (
+                                        <label key={w.id} className="flex items-center gap-2 text-sm text-slate-700">
+                                          <input
+                                            type="checkbox"
+                                            checked={editUserWarehouseIds.includes(String(w.id))}
+                                            onChange={(e) => {
+                                              const id = String(w.id);
+                                              setEditUserWarehouseIds((prev) =>
+                                                e.target.checked ? [...prev, id] : prev.filter((x) => x !== id)
+                                              );
+                                            }}
+                                          />
+                                          {w.name}
+                                        </label>
+                                      ))}
+                                    </div>
+                                    {editUserWarehouseIds.length > 0 && (
+                                      <p className="mt-2 text-[11px] font-medium text-emerald-800">
+                                        Seleccionadas: {editUserWarehouseIds.length} bodega
+                                        {editUserWarehouseIds.length === 1 ? "" : "s"}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                                <div className="flex flex-wrap gap-2">
+                                  <button type="button" className={btnPrimary} onClick={() => onSaveEditUser(u.document_id)}>
+                                    Guardar cambios
+                                  </button>
+                                  <button type="button" className={btnGhost} onClick={onCancelEditUser}>
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      return (
+                        <tr
+                          key={u.document_id}
+                          className="border-b border-slate-100 last:border-b-0 odd:bg-white even:bg-slate-50/50"
+                        >
+                          <td className="px-3 py-2.5 align-middle font-medium text-slate-900">{u.full_name}</td>
+                          <td className="px-3 py-2.5 align-middle text-slate-700">
+                            {ROLE_LABELS[u.role_name] || u.role_name}
+                          </td>
+                          <td className="px-3 py-2.5 align-middle text-slate-700">{warehouseLabel}</td>
+                          <td className="px-3 py-2.5 align-middle tabular-nums text-slate-700">{u.document_id}</td>
+                          <td className="px-3 py-2.5 align-middle text-slate-700">{u.email}</td>
+                          {isAdmin && (
+                            <td className="px-3 py-2.5 align-middle text-right">
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <button type="button" className={btnGhost} onClick={() => onStartEditUser(u)}>
+                                  Editar
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100"
+                                  onClick={() => setConfirmDeleteUserId(u.document_id)}
+                                >
+                                  Eliminar
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -4632,9 +4823,7 @@ export default function DashboardPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <div className={card}>
               <h2 className="mb-2 text-lg font-semibold text-slate-900">Datos del perfil</h2>
-              <p className="mb-3 text-xs text-slate-500">
-                Actualiza nombre y correo. Si eres proveedor, indica cuántos equipos de descarga tienes (camiones/muelles propios en paralelo).
-              </p>
+              <p className="mb-3 text-xs text-slate-500">Actualiza tu nombre y correo de contacto.</p>
               <form className="space-y-2" onSubmit={onSaveProfile}>
                 <input
                   className={input}
@@ -4652,19 +4841,6 @@ export default function DashboardPage() {
                   onChange={(e) => setProfileEmail(e.target.value)}
                   required
                 />
-                {isProveedor && (
-                  <label className="block text-xs text-slate-600">
-                    Equipos de descarga (citas simultáneas a la misma hora)
-                    <input
-                      className={input + " mt-1"}
-                      type="number"
-                      min={1}
-                      max={20}
-                      value={profileUnloadTeams}
-                      onChange={(e) => setProfileUnloadTeams(e.target.value)}
-                    />
-                  </label>
-                )}
                 <button type="submit" className={btnPrimary}>
                   Guardar perfil
                 </button>
@@ -4778,7 +4954,7 @@ export default function DashboardPage() {
         {isLogistica && logisticaTab === "citas" && (
           <div className="mb-6 space-y-3" data-tour="section-citas">
             <div className={`${card} p-4`}>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
                   <label htmlFor="logistica-citas-range" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Filtro de citas
@@ -4788,7 +4964,13 @@ export default function DashboardPage() {
                     name="logistica-citas-range"
                     className={`${input} w-full sm:max-w-xs`}
                     value={citasRange}
-                    onChange={(e) => setCitasRange(e.target.value)}
+                    onChange={(e) => {
+                      const nextRange = e.target.value;
+                      setCitasRange(nextRange);
+                      if (rangeNeedsPeriodSelector(nextRange)) {
+                        setCitasPeriod(getDefaultPeriodIndex(nextRange));
+                      }
+                    }}
                   >
                     <option value="today">Día</option>
                     <option value="week">Semana</option>
@@ -4796,6 +4978,26 @@ export default function DashboardPage() {
                     <option value="month">Mes</option>
                   </select>
                 </div>
+                {rangeNeedsPeriodSelector(citasRange) && (
+                  <div>
+                    <label htmlFor="logistica-citas-period" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {getPeriodSelectorLabel(citasRange)}
+                    </label>
+                    <select
+                      id="logistica-citas-period"
+                      name="logistica-citas-period"
+                      className={`${input} w-full sm:max-w-xs`}
+                      value={citasPeriod ?? 1}
+                      onChange={(e) => setCitasPeriod(Number(e.target.value))}
+                    >
+                      {citasPeriodOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {warehouseFilterControl("logistica-citas-warehouse", "Bodega")}
               </div>
             </div>
@@ -4882,9 +5084,17 @@ export default function DashboardPage() {
                 warehouseFilter={filterWarehouseId}
                 onWarehouseFilterChange={setFilterWarehouseId}
                 viewMode={viewMode}
-                onViewModeChange={setViewMode}
+                onViewModeChange={(mode) => {
+                  setViewMode(mode);
+                  if (rangeNeedsPeriodSelector(mode)) {
+                    setViewPeriod(getDefaultPeriodIndex(mode));
+                  }
+                }}
                 filterDay={filterDay}
                 onFilterDayChange={setFilterDay}
+                filterPeriod={viewPeriod}
+                onFilterPeriodChange={setViewPeriod}
+                viewPeriodOptions={viewPeriodOptions}
                 filterMonth={filterMonth}
                 onFilterMonthChange={setFilterMonth}
                 filterYear={filterYear}
@@ -4898,7 +5108,7 @@ export default function DashboardPage() {
           <section className="space-y-3" aria-labelledby="revision-citas-title">
             <h2 id="revision-citas-title" className="sr-only">Revisión de citas</h2>
             <div className={`${card} p-4`}>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
                   <label htmlFor="review-range-filter" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">
                     Filtro de revisión
@@ -4908,7 +5118,15 @@ export default function DashboardPage() {
                     name="review-range-filter"
                     className={`${input} w-full sm:max-w-xs`}
                     value={reviewRange}
-                    onChange={(e) => setReviewRange(e.target.value)}
+                    onChange={(e) => {
+                      const nextRange = e.target.value;
+                      setReviewRange(nextRange);
+                      setReviewReferenceDate(new Date());
+                      if (rangeNeedsPeriodSelector(nextRange)) {
+                        setReviewPeriod(getDefaultPeriodIndex(nextRange));
+                      }
+                      setRevisionPinnedAppointment(null);
+                    }}
                   >
                     <option value="today">Por día</option>
                     <option value="week">Por semana</option>
@@ -4916,12 +5134,32 @@ export default function DashboardPage() {
                     <option value="month">Por mes</option>
                   </select>
                 </div>
+                {rangeNeedsPeriodSelector(reviewRange) && (
+                  <div>
+                    <label htmlFor="review-period-filter" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {getPeriodSelectorLabel(reviewRange)}
+                    </label>
+                    <select
+                      id="review-period-filter"
+                      name="review-period-filter"
+                      className={`${input} w-full sm:max-w-xs`}
+                      value={reviewPeriod ?? 1}
+                      onChange={(e) => setReviewPeriod(Number(e.target.value))}
+                    >
+                      {reviewPeriodOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {warehouseFilterControl("revision-citas-warehouse", "Bodega")}
               </div>
             </div>
             <Suspense fallback={appointmentSectionFallback}>
               <AppointmentList
-                appointments={reviewAppointments}
+                appointments={reviewAppointmentsDisplay}
                 role={session?.role}
                 onReview={onReview}
                 onChangeStatus={onChangeStatus}
@@ -4939,8 +5177,15 @@ export default function DashboardPage() {
                 onFilterDayChange={setFilterDay}
                 filterMonth={filterMonth}
                 onFilterMonthChange={setFilterMonth}
-              filterYear={filterYear}
-              onFilterYearChange={setFilterYear}
+                filterYear={filterYear}
+                onFilterYearChange={setFilterYear}
+                openAppointmentId={revisionOpenAppointmentId}
+                onOpenAppointmentHandled={() => {
+                  setRevisionOpenAppointmentId(null);
+                }}
+                initialAppointmentIdFilter={
+                  revisionOpenAppointmentId != null ? String(revisionOpenAppointmentId) : ""
+                }
               />
             </Suspense>
           </section>
