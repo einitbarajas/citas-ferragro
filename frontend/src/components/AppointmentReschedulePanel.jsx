@@ -15,6 +15,7 @@ import {
   formatDateInputInTimeZone,
   formatTimeInputInTimeZone,
   getAppointmentSchedule,
+  todayISOInTimeZone,
 } from "../utils/businessTime";
 
 function toDateInputValue(isoString, timeZone = DEFAULT_BUSINESS_TZ) {
@@ -72,6 +73,7 @@ export default function AppointmentReschedulePanel({
   const [pendingOverridePayload, setPendingOverridePayload] = useState(null);
 
   const usesSlotPicker = variant === "provider" || variant === "staff";
+  const minBookableDate = todayISOInTimeZone(businessTz);
   const canChangeWarehouse = variant === "staff" && staffRole === "Admin";
   const canChangeTeam = variant === "staff" && (staffRole === "Admin" || staffRole === "AdminBodega");
   const effectiveWarehouseId = canChangeWarehouse ? warehouseId : String(appointment.warehouse_id || "");
@@ -340,6 +342,10 @@ export default function AppointmentReschedulePanel({
       setFormError("Selecciona una fecha.");
       return;
     }
+    if (variant === "provider" && dateValue < minBookableDate) {
+      setFormError("No puedes reprogramar a un día que ya pasó. Elige hoy o una fecha futura.");
+      return;
+    }
     if (variant === "staff" && canChangeTeam && !effectiveTeamId) {
       setFormError("Selecciona un equipo de descarga.");
       return;
@@ -475,6 +481,7 @@ export default function AppointmentReschedulePanel({
             type="date"
             className={inputClass}
             value={dateValue}
+            min={variant === "provider" ? minBookableDate : undefined}
             onChange={(event) => setDateValue(event.target.value)}
             required
           />

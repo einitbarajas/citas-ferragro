@@ -47,16 +47,13 @@ def _assert_slot_duration_valid(start_local: time, end_local: time, error_prefix
 def get_team_scheduled_iso_weekdays(
     db: Session, warehouse_id: int, warehouse_unload_team_id: int
 ) -> set[int]:
-    """Días ISO (1=lun..7=dom) presentes en franjas por fecha futuras del equipo."""
-    tz = ZoneInfo(settings.business_timezone)
-    local_today = datetime.now(tz).date()
+    """Días ISO (1=lun..7=dom) inferidos de franjas por fecha del equipo (patrón lun–vie, etc.)."""
     rows = (
         db.execute(
             select(AppointmentDateWindow.day)
             .where(
                 AppointmentDateWindow.warehouse_id == warehouse_id,
                 AppointmentDateWindow.warehouse_unload_team_id == warehouse_unload_team_id,
-                AppointmentDateWindow.day >= local_today,
             )
             .distinct()
         )
@@ -101,13 +98,16 @@ def list_warehouse_open_days_in_month(db: Session, year: int, month: int, wareho
         end_day = date(year + 1, 1, 1)
     else:
         end_day = date(year, month + 1, 1)
+    tz = ZoneInfo(settings.business_timezone)
+    local_today = datetime.now(tz).date()
     open_days: list[str] = []
     cursor = start_day
     while cursor < end_day:
-        for team in teams:
-            if day_has_team_schedule(db, cursor, warehouse_id, team.id):
-                open_days.append(str(cursor))
-                break
+        if cursor >= local_today:
+            for team in teams:
+                if day_has_team_schedule(db, cursor, warehouse_id, team.id):
+                    open_days.append(str(cursor))
+                    break
         cursor += timedelta(days=1)
     return open_days
 
@@ -116,6 +116,8 @@ def list_team_open_days_in_month(
     db: Session, year: int, month: int, warehouse_id: int, warehouse_unload_team_id: int
 ) -> list[str]:
     """Días del mes en los que el equipo tiene franja (semanal y/o excepción por fecha)."""
+    tz = ZoneInfo(settings.business_timezone)
+    local_today = datetime.now(tz).date()
     start_day = date(year, month, 1)
     if month == 12:
         end_day = date(year + 1, 1, 1)
@@ -124,7 +126,9 @@ def list_team_open_days_in_month(
     open_days: list[str] = []
     cursor = start_day
     while cursor < end_day:
-        if day_has_team_schedule(db, cursor, warehouse_id, warehouse_unload_team_id):
+        if cursor >= local_today and day_has_team_schedule(
+            db, cursor, warehouse_id, warehouse_unload_team_id
+        ):
             open_days.append(str(cursor))
         cursor += timedelta(days=1)
     return open_days

@@ -44,6 +44,8 @@ import {
   slotDurationMinutes,
   slotKey,
 } from "../utils/appointmentSlots";
+import { buildDateTimeIsoInTimeZone, todayISOInTimeZone, DEFAULT_BUSINESS_TZ } from "../utils/businessTime";
+import { parseFranjaMonthSummary } from "../utils/scheduleCalendar";
 
 const appointmentSectionFallback = (
   <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
@@ -293,7 +295,8 @@ function formatTodayWindowsHint(dayIso, resolvedData, availability = null) {
   return franjaLine;
 }
 
-function buildMonthCalendar(referenceDate, allowedDays) {
+function buildMonthCalendar(referenceDate, allowedDays, businessToday) {
+  const today = String(businessToday || todayISOInTimeZone(DEFAULT_BUSINESS_TZ));
   const year = referenceDate.getFullYear();
   const month = referenceDate.getMonth();
   const first = new Date(year, month, 1);
@@ -306,12 +309,14 @@ function buildMonthCalendar(referenceDate, allowedDays) {
   for (let day = 1; day <= last.getDate(); day += 1) {
     const d = new Date(year, month, day);
     const iso = getIsoWeekday(d);
+    const dateISO = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     cells.push({
       day,
-      dateISO: `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+      dateISO,
       isoWeekday: iso,
       enabled: allowedDays.includes(iso),
-      isToday: d.toDateString() === new Date().toDateString(),
+      isToday: dateISO === today,
+      isPast: dateISO < today,
     });
   }
   return { year, month, cells };
@@ -478,8 +483,10 @@ export default function DashboardPage() {
   const [bulkMessage, setBulkMessage] = useState("");
   const [bulkIsoWeekdays, setBulkIsoWeekdays] = useState(DEFAULT_BULK_ISO_WEEKDAYS);
   const [calendarOverrideDays, setCalendarOverrideDays] = useState([]);
+  const [teamOpenDays, setTeamOpenDays] = useState([]);
   const [teamHasWeeklyFranjas, setTeamHasWeeklyFranjas] = useState(false);
   const [scheduledIsoWeekdays, setScheduledIsoWeekdays] = useState([]);
+  const [scheduleBusinessToday, setScheduleBusinessToday] = useState(() => todayISOInTimeZone());
   const [unloadTeamsReadyWarehouseId, setUnloadTeamsReadyWarehouseId] = useState(null);
 
   const activeAdminFranjaTeamId = useMemo(
@@ -1163,13 +1170,9 @@ export default function DashboardPage() {
       if (!payload.success) {
         throw new Error(payload.message);
       }
-      const today = todayISO();
-      const openDays = Array.isArray(payload.data?.open_days)
-        ? payload.data.open_days
-        : payload.data?.override_days;
-      setProviderAvailableDays(
-        (Array.isArray(openDays) ? openDays : []).filter((d) => String(d) >= today)
-      );
+      const summary = parseFranjaMonthSummary(payload);
+      setScheduleBusinessToday(summary.businessToday);
+      setProviderAvailableDays(summary.openDays);
     },
     [session, isProveedor, selectedWarehouseId, activeProviderUnloadTeamId]
   );
@@ -1194,13 +1197,12 @@ export default function DashboardPage() {
       if (!payload.success) {
         throw new Error(payload.message);
       }
-      setCalendarOverrideDays(
-        Array.isArray(payload.data?.override_days) ? payload.data.override_days : []
-      );
-      setTeamHasWeeklyFranjas(Boolean(payload.data?.has_weekly_franjas));
-      setScheduledIsoWeekdays(
-        Array.isArray(payload.data?.scheduled_iso_weekdays) ? payload.data.scheduled_iso_weekdays : []
-      );
+      const summary = parseFranjaMonthSummary(payload);
+      setScheduleBusinessToday(summary.businessToday);
+      setCalendarOverrideDays(summary.overrideDays);
+      setTeamOpenDays(summary.openDays);
+      setTeamHasWeeklyFranjas(summary.hasWeeklyFranjas);
+      setScheduledIsoWeekdays(summary.scheduledIsoWeekdays);
     },
     [session, isAdminPanel, selectedWarehouseId, activeAdminFranjaTeamId]
   );
@@ -2717,15 +2719,15 @@ export default function DashboardPage() {
   const profileDisplayName = profileData?.full_name || session?.email || "Usuario";
   const avatarLetter = getInitials(profileDisplayName);
   const optimizedProfilePhotoUrl = useMemo(() => optimizeCloudinaryImage(profileData?.photo_url, 160), [profileData?.photo_url]);
-  const todayValue = todayISO();
+  const todayValue = scheduleBusinessToday;
   const isSpecialDayPast = specialDay < todayValue;
   const calendarBase = useMemo(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth() + calendarMonthOffset, 1);
   }, [calendarMonthOffset]);
   const workCalendar = useMemo(
-    () => buildMonthCalendar(calendarBase, [1, 2, 3, 4, 5, 6, 7]),
-    [calendarBase]
+    () => buildMonthCalendar(calendarBase, [1, 2, 3, 4, 5, 6, 7], scheduleBusinessToday),
+    [calendarBase, scheduleBusinessToday]
   );
   const monthLabel = useMemo(
     () => calendarBase.toLocaleDateString("es-CO", { month: "long", year: "numeric" }),
@@ -2740,9 +2742,17 @@ export default function DashboardPage() {
     [providerCalendarBase]
   );
   const providerCalendar = useMemo(
-    () => buildMonthCalendar(providerCalendarBase, [1, 2, 3, 4, 5, 6, 7]),
-    [providerCalendarBase]
+    () => buildMonthCalendar(providerCalendarBase, [1, 2, 3, 4, 5, 6, 7], scheduleBusinessToday),
+    [providerCalendarBase, scheduleBusinessToday]
   );
+  const providerCanGoPrevMonth = useMemo(() => {
+    const now = new Date();
+    const cal = providerCalendarBase;
+    return (
+      cal.getFullYear() > now.getFullYear() ||
+      (cal.getFullYear() === now.getFullYear() && cal.getMonth() > now.getMonth())
+    );
+  }, [providerCalendarBase]);
   const providerDaysWithAppointments = useMemo(() => {
     const set = new Set();
     const tz = String(windowsPack?.timezone || DEFAULT_BUSINESS_TZ);
@@ -2784,7 +2794,7 @@ export default function DashboardPage() {
   const providerCannotScheduleSlot = useMemo(() => {
     if (!selectedWarehouseId) return true;
     if (!activeProviderUnloadTeamId) return true;
-    if (!providerSelectedDay) return true;
+    if (!providerSelectedDay || providerSelectedDay < todayValue) return true;
     if (providerDayAvailabilityLoading) return true;
     if (providerCreateSubmitting) return true;
     if (providerAvailableSlotKeys.length === 0) return true;
@@ -2798,6 +2808,7 @@ export default function DashboardPage() {
     providerCreateSubmitting,
     providerAvailableSlotKeys,
     providerTimeChoice,
+    todayValue,
   ]);
   const providerSlotAvailabilityCopy = useMemo(
     () =>
@@ -2830,7 +2841,7 @@ export default function DashboardPage() {
         : "border-amber-200 bg-amber-50 text-amber-950";
 
   useEffect(() => {
-    if (!isProveedor || !providerSelectedDay) return;
+    if (!isProveedor || !providerSelectedDay || providerSelectedDay < todayValue) return;
     if (!activeProviderUnloadTeamId) {
       setProviderSelectedSlots([]);
       setProviderTimeChoice("");
@@ -2839,16 +2850,20 @@ export default function DashboardPage() {
       return;
     }
     void loadProviderDayAvailability(providerSelectedDay);
-  }, [isProveedor, providerSelectedDay, activeProviderUnloadTeamId, loadProviderDayAvailability]);
+  }, [isProveedor, providerSelectedDay, activeProviderUnloadTeamId, loadProviderDayAvailability, todayValue]);
 
   useEffect(() => {
     if (!isProveedor || proveedorTab !== "inicio") return;
-    const open = providerAvailableDays;
-    if (!Array.isArray(open) || open.length === 0) return;
+    const today = todayValue;
+    const open = (Array.isArray(providerAvailableDays) ? providerAvailableDays : []).filter(
+      (d) => String(d) >= today
+    );
+    if (open.length === 0) return;
     const sel = providerSelectedDay;
-    if (!sel || open.includes(sel)) return;
-    setProviderSelectedDay(open[0]);
-  }, [isProveedor, proveedorTab, providerAvailableDays, providerSelectedDay]);
+    if (!sel || sel < today || !open.includes(sel)) {
+      setProviderSelectedDay(open[0]);
+    }
+  }, [isProveedor, proveedorTab, providerAvailableDays, providerSelectedDay, todayValue]);
 
   const onProviderCreateAppointment = useCallback(async () => {
     if (providerCreateSubmitting) return;
@@ -2857,6 +2872,10 @@ export default function DashboardPage() {
       setSuccess("");
       if (!providerSelectedDay) {
         setError("Selecciona un día en el calendario.");
+        return;
+      }
+      if (providerSelectedDay < todayValue) {
+        setError("No puedes agendar en un día que ya pasó. Elige hoy o una fecha futura.");
         return;
       }
       const chosen = parseSlotKey(providerTimeChoice);
@@ -2869,9 +2888,16 @@ export default function DashboardPage() {
         setError("Describe qué vas a entregar (mínimo 5 caracteres).");
         return;
       }
-      const [y, m, d] = providerSelectedDay.split("-").map(Number);
-      const [hh, mm] = chosen.start_local.split(":").map(Number);
-      const localDate = new Date(y, m - 1, d, hh, mm, 0);
+      const scheduleTz = String(windowsPack?.timezone || DEFAULT_BUSINESS_TZ);
+      const startTime = buildDateTimeIsoInTimeZone(
+        providerSelectedDay,
+        chosen.start_local,
+        scheduleTz
+      );
+      if (!startTime) {
+        setError("No se pudo interpretar la fecha y hora en la zona horaria de la empresa.");
+        return;
+      }
       setProviderCreateSubmitting(true);
       await api.post(`${API_PREFIX}/appointments`, {
         title: "Entrega de material",
@@ -2879,7 +2905,7 @@ export default function DashboardPage() {
         warehouse_id: selectedWarehouseId,
         warehouse_unload_team_id: activeProviderUnloadTeamId,
         provider_team_index: 1,
-        start_time: localDate.toISOString(),
+        start_time: startTime,
         duration_minutes: chosen.duration_minutes,
       });
       setProviderMaterialDescription("");
@@ -3507,7 +3533,13 @@ export default function DashboardPage() {
                   ) : null}
                 </p>
                 <div className="flex shrink-0 items-center gap-2">
-                  <button type="button" className={btnGhost + " px-2 py-1 text-xs"} onClick={() => setProviderCalendarMonthOffset((v) => v - 1)} aria-label="Ir al mes anterior del calendario">
+                  <button
+                    type="button"
+                    className={btnGhost + " px-2 py-1 text-xs"}
+                    disabled={!providerCanGoPrevMonth}
+                    onClick={() => providerCanGoPrevMonth && setProviderCalendarMonthOffset((v) => v - 1)}
+                    aria-label="Ir al mes anterior del calendario"
+                  >
                     ◀
                   </button>
                   <span className="max-w-[9rem] truncate text-center text-xs font-medium capitalize text-slate-700 sm:max-w-none">{providerCalendarLabel}</span>
@@ -3523,7 +3555,9 @@ export default function DashboardPage() {
                 {providerCalendar.cells.map((cell, idx) => {
                   if (!cell) return <div key={`prov-empty-${idx}`} />;
                   const teamReady = Boolean(activeProviderUnloadTeamId);
-                  const canPickDay = teamReady && providerAvailableDays.includes(cell.dateISO);
+                  const isPast = cell.isPast;
+                  const isOpen = !isPast && providerAvailableDays.includes(cell.dateISO);
+                  const canPickDay = teamReady && isOpen;
                   return (
                     <button
                       type="button"
@@ -3534,22 +3568,26 @@ export default function DashboardPage() {
                         setProviderSelectedDay(cell.dateISO);
                       }}
                       className={`rounded-md border px-1 py-1.5 text-center text-xs ${
-                        !teamReady
-                          ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
-                          : !canPickDay
+                        isPast
+                          ? "cursor-not-allowed border-slate-100 bg-slate-100 text-slate-400"
+                          : !teamReady
                             ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
-                            : providerDaysWithAppointments.has(cell.dateISO)
-                              ? "border-emerald-700 bg-emerald-600 text-white"
-                              : "border-emerald-300 bg-emerald-100 text-emerald-900"
-                      } ${providerSelectedDay === cell.dateISO ? "ring-2 ring-blue-400/80" : ""}`}
+                            : !canPickDay
+                              ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
+                              : providerDaysWithAppointments.has(cell.dateISO)
+                                ? "border-emerald-700 bg-emerald-600 text-white"
+                                : "border-emerald-300 bg-emerald-100 text-emerald-900"
+                      } ${providerSelectedDay === cell.dateISO && canPickDay ? "ring-2 ring-blue-400/80" : ""}`}
                       title={
-                        !teamReady
-                          ? "Selecciona un muelle para ver el calendario de ese equipo"
-                          : !canPickDay
-                            ? "Sin franja para este muelle en esta fecha"
-                            : providerDaysWithAppointments.has(cell.dateISO)
-                              ? "Tienes cita ese día en este muelle; puedes agendar otro turno si hay cupo"
-                              : "Franja habilitada para este muelle: puedes agendar"
+                        isPast
+                          ? "Este día ya pasó; no puedes agendar aquí"
+                          : !teamReady
+                            ? "Selecciona un muelle para ver el calendario de ese equipo"
+                            : !canPickDay
+                              ? "Sin franja para este muelle en esta fecha"
+                              : providerDaysWithAppointments.has(cell.dateISO)
+                                ? "Tienes cita ese día en este muelle; puedes agendar otro turno si hay cupo"
+                                : "Franja habilitada para este muelle: puedes agendar"
                       }
                     >
                       {cell.day}
@@ -3559,7 +3597,7 @@ export default function DashboardPage() {
               </div>
               <p className="mt-2 text-[11px] text-slate-600">
                 Verde claro: franja abierta para el muelle seleccionado. Verde oscuro: ya tienes cita ese día en ese muelle.
-                Gris: sin franja para este equipo (otro muelle de la misma bodega puede estar abierto).
+                Gris: día pasado, sin franja o sin muelle seleccionado (no se puede hacer clic).
               </p>
             </div>
             <div className={card}>
@@ -4068,9 +4106,10 @@ export default function DashboardPage() {
         {isAdminPanel && adminTab === "horarios" && (
           <div className={card}>
             <h2 className="mb-2 text-lg font-semibold text-slate-900">Turnos por bodega y fecha</h2>
-            <p className="mb-4 text-xs text-slate-600">
+              <p className="mb-4 text-xs text-slate-600">
               Define turnos explícitos por bodega (ej. 13:00–14:00 de 60 min, 14:00–14:30 de 30 min). Zona horaria:{" "}
-              {windowsPack?.timezone || "America/Bogota"}.
+              {windowsPack?.timezone || DEFAULT_BUSINESS_TZ}. Hoy operativo: <strong>{scheduleBusinessToday}</strong> (misma
+              fecha que usa el proveedor para abrir días).
             </p>
             <div className="mb-4">
               <label htmlFor="admin-franja-warehouse-select" className="mb-1 block text-xs font-medium text-slate-600">
@@ -4162,33 +4201,38 @@ export default function DashboardPage() {
                         <div key={`e-${idx}`} />
                         );
                       }
+                      const isPast = cell.isPast;
                       const hasOverride = calendarOverrideDays.includes(cell.dateISO);
-                      const weeklyCoversDay =
-                        teamHasWeeklyFranjas &&
-                        (!scheduledIsoWeekdays.length || scheduledIsoWeekdays.includes(cell.isoWeekday));
+                      const isOpenForTeam = teamOpenDays.includes(cell.dateISO);
                       return (
                         <button
                           type="button"
                           key={`d-${idx}`}
+                          disabled={isPast}
                           onClick={() => {
+                            if (isPast) return;
                             setSpecialDay(cell.dateISO);
                             setSpecialDayMessage("");
                           }}
                           className={`rounded-md border px-1 py-1.5 text-center text-xs ${
-                            hasOverride
-                              ? "border-emerald-500 bg-emerald-500 text-white"
-                              : weeklyCoversDay
-                                ? "border-emerald-300 bg-emerald-100 text-emerald-900"
-                                : "border-slate-200 bg-white text-slate-500"
+                            isPast
+                              ? "cursor-not-allowed border-slate-100 bg-slate-100 text-slate-400"
+                              : hasOverride
+                                ? "border-emerald-500 bg-emerald-500 text-white"
+                                : isOpenForTeam
+                                  ? "border-emerald-300 bg-emerald-100 text-emerald-900"
+                                  : "border-slate-200 bg-white text-slate-500"
                           } ${cell.isToday ? "ring-2 ring-emerald-400/70" : ""} ${
-                            specialDay === cell.dateISO ? "ring-2 ring-blue-400/80" : ""
+                            specialDay === cell.dateISO && !isPast ? "ring-2 ring-blue-400/80" : ""
                           }`}
                           title={
-                            hasOverride
-                              ? "Franja especial de este equipo en esta fecha"
-                              : weeklyCoversDay
-                                ? "Regla semanal de este equipo"
-                                : "Sin franja para este equipo"
+                            isPast
+                              ? "Día pasado: no se puede configurar franja"
+                              : hasOverride
+                                ? "Franja especial de este equipo en esta fecha (el proveedor puede agendar)"
+                                : isOpenForTeam
+                                  ? "Franja abierta para el proveedor (regla semanal sin excepción en esta fecha)"
+                                  : "Sin franja para este equipo"
                           }
                         >
                           {cell.day}
@@ -4197,8 +4241,8 @@ export default function DashboardPage() {
                     })}
                   </div>
                   <p className="mt-2 text-[11px] text-slate-500">
-                    Verde fuerte: franja especial de <strong>este equipo</strong> en esa fecha. Verde claro: regla semanal de{" "}
-                    <strong>este equipo</strong>. Gris: sin horario para el equipo seleccionado.
+                    Verde fuerte: franja por fecha (lo que ve el proveedor si coincide). Verde claro: día abierto para el proveedor sin excepción guardada. Gris claro: día pasado. Gris: sin franja. La lista de días abiertos es la misma que usa el proveedor (
+                    {teamOpenDays.length} en este mes).
                   </p>
                 </div>
               </div>
@@ -4215,13 +4259,8 @@ export default function DashboardPage() {
                       No hay franja horaria para este equipo en este día.
                       {teamHasWeeklyFranjas &&
                       !calendarOverrideDays.includes(specialDay) &&
-                      (() => {
-                        const [y, m, d] = String(specialDay).split("-").map(Number);
-                        const iso =
-                          y && m && d ? getIsoWeekday(new Date(y, m - 1, d)) : 0;
-                        return !scheduledIsoWeekdays.length || scheduledIsoWeekdays.includes(iso);
-                      })()
-                        ? " La regla semanal del equipo sigue activa en este día de la semana; aquí puedes definir una excepción solo para esta fecha."
+                      teamOpenDays.includes(specialDay)
+                        ? " Este día está abierto para el proveedor por la regla semanal; aquí puedes definir una excepción solo para esta fecha."
                         : ""}
                       {isSpecialDayPast ? " No se puede agregar porque el día ya pasó." : ""}
                     </p>

@@ -21,6 +21,10 @@ function readZonedParts(date, timeZone) {
   };
 }
 
+export function todayISOInTimeZone(timeZone = DEFAULT_BUSINESS_TZ) {
+  return formatDateInputInTimeZone(new Date().toISOString(), timeZone);
+}
+
 export function formatDateInputInTimeZone(isoString, timeZone = DEFAULT_BUSINESS_TZ) {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return "";

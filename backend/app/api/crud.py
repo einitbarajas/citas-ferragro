@@ -1611,6 +1611,8 @@ def list_appointment_franjas_date_summary(
         end_day = date(year, month + 1, 1)
 
     if unload_team_id is None:
+        tz = ZoneInfo(settings.business_timezone)
+        business_today = datetime.now(tz).date()
         open_days = list_warehouse_open_days_in_month(db, year, month, warehouse_id)
         return ok_response(
             {
@@ -1619,6 +1621,8 @@ def list_appointment_franjas_date_summary(
                 "open_days": open_days,
                 "override_days": open_days,
                 "has_weekly_franjas": None,
+                "business_today": str(business_today),
+                "timezone": settings.business_timezone,
             },
             "Resumen de franjas por fecha consultado correctamente",
         )
@@ -1639,6 +1643,8 @@ def list_appointment_franjas_date_summary(
         .scalars()
         .all()
     )
+    tz = ZoneInfo(settings.business_timezone)
+    business_today = datetime.now(tz).date()
     override_days = [str(d) for d in rows]
     has_weekly = bool(list_windows_ordered(db, warehouse_id, team_id))
     open_days = list_team_open_days_in_month(db, year, month, warehouse_id, team_id)
@@ -1651,6 +1657,8 @@ def list_appointment_franjas_date_summary(
             "override_days": override_days,
             "has_weekly_franjas": has_weekly,
             "scheduled_iso_weekdays": scheduled_iso_weekdays,
+            "business_today": str(business_today),
+            "timezone": settings.business_timezone,
         },
         "Resumen de franjas por fecha consultado correctamente",
     )
