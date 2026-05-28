@@ -509,7 +509,7 @@ La documentación funcional permanece en este repo (`README.md`, `docs/`, `db/RE
 
    ```text
    GET https://ferragro-api.onrender.com/health
-   → "build_id": "2026-05-25-franja-calendario-v1"   (valor actual en backend/app/main.py → API_BUILD_ID)
+   → "build_id": "2026-05-28-deploy-main-v1"   (valor actual en backend/app/main.py → API_BUILD_ID)
    ```
 
    Si el `build_id` no coincide con el de `main.py`, el servicio **no** tiene el último código aunque GitHub sí. Checklist: [`PASOS-ENTRAR-PORTAL.md`](PASOS-ENTRAR-PORTAL.md).
