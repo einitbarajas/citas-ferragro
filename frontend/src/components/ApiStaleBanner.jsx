@@ -3,11 +3,14 @@ import { useEffect, useState } from "react";
 const PRODUCTION_API = "https://ferragro-api.onrender.com";
 /** Fecha mínima en build_id (YYYY-MM-DD al inicio). Sincronizar con backend/app/main.py → API_BUILD_ID. */
 const MIN_API_BUILD_DATE = "2026-05-21";
+/** Opcional en Vercel: mismo valor que API_BUILD_ID en backend/app/main.py */
+const EXPECTED_BUILD_ID = String(import.meta.env.VITE_EXPECTED_API_BUILD_ID || "").trim();
 const LEGACY_OK_MARKERS = ["admin-bodega", "prod-sync", "prod-v1", "calendar-per-team", "deploy-main"];
 
 function isApiBuildCurrent(buildId) {
-  const bid = String(buildId || "");
+  const bid = String(buildId || "").trim();
   if (!bid) return false;
+  if (EXPECTED_BUILD_ID && bid === EXPECTED_BUILD_ID) return true;
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(bid);
   if (dateMatch) {
     const buildDay = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
