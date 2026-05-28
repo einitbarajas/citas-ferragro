@@ -1,15 +1,11 @@
-"""Smoke del sistema API: rutas públicas, protección y flujos con BD."""
+"""Smoke del sistema API: rutas públicas, protección y OpenAPI."""
 
 from __future__ import annotations
 
-from datetime import date
-
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
-from app.main import app
-from app.models.warehouse import Warehouse
+from app.main import API_BUILD_ID, app
 
 
 @pytest.fixture
@@ -20,11 +16,17 @@ def client():
 def test_public_health_and_docs(client):
     health = client.get("/health")
     assert health.status_code == 200
-    assert health.json()["success"] is True
+    body = health.json()
+    assert body["success"] is True
+    assert body["data"]["status"] == "ok"
+    assert body["data"]["build_id"] == API_BUILD_ID
 
     openapi = client.get("/openapi.json")
     assert openapi.status_code == 200
-    paths = openapi.json().get("paths", {})
+    schema = openapi.json()
+    assert schema.get("openapi", "").startswith("3.")
+    paths = schema.get("paths", {})
+    assert "/health" in paths
     assert "/api/v1/auth/login" in paths or "/auth/login" in paths
 
 
@@ -50,24 +52,6 @@ def test_login_invalid_credentials(client):
     assert response.status_code in (401, 400, 422)
 
 
-def test_appointment_franjas_resumen_without_team(db_session):
-    """Resumen mensual sin equipo: días abiertos a nivel bodega."""
-    from fastapi.testclient import TestClient
-
-    wid = db_session.execute(
-        select(Warehouse.id).where(Warehouse.active.is_(True)).order_by(Warehouse.id).limit(1)
-    ).scalar_one_or_none()
-    if wid is None:
-        pytest.skip("Sin bodegas activas")
-
-    client = TestClient(app)
-    # Sin token: 401; este test valida la función vía TestClient con override sería pesado.
-    # Comprobamos al menos que la ruta existe en OpenAPI.
-    schema = client.get("/openapi.json").json()
-    found = any("appointment-franjas/fecha/resumen" in p for p in schema.get("paths", {}))
-    assert found
-
-
 def test_openapi_lists_core_appointment_paths(client):
     schema = client.get("/openapi.json").json()
     paths = schema.get("paths", {})
@@ -75,3 +59,4 @@ def test_openapi_lists_core_appointment_paths(client):
     assert "available-slots" in keys
     assert "unload-teams" in keys
     assert "appointment-franjas" in keys
+    assert "appointment-franjas/fecha/resumen" in keys

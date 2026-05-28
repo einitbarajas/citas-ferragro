@@ -22,9 +22,19 @@ class Settings(BaseSettings):
     forgot_password_cooldown_seconds: int = 60
     # Horas mínimas entre el momento de agendar/reprogramar y el inicio de la cita (proveedor).
     appointment_minimum_notice_hours: int = 24
+    # Horas mínimas antes del inicio para cancelar una cita (proveedor y staff sin exención).
+    appointment_cancel_minimum_notice_hours: int = 12
     # Máximo de equipos de descarga en paralelo (bodega o proveedor).
     max_unload_teams: int = 20
     reminder_scheduler_interval_seconds: int = 300
+    # Retención de notificaciones (días) para evitar saturación en UI.
+    notification_retention_days: int = 30
+    # Intervalo del scheduler de purga de notificaciones (segundos).
+    notification_purge_interval_seconds: int = 3600
+    # Intervalo del scheduler que marca no presentada tras 15 min en citas revisadas.
+    no_presentada_scheduler_interval_seconds: int = 60
+    # Minutos tras start_time para auto marcar no presentada si sigue en revisado.
+    appointment_finalization_grace_minutes: int = 15
     # Proveedores suspendidos: días hasta purga automática (credenciales, citas, etc.; conserva AuditoriaSistema).
     provider_purge_after_days: int = 180
     provider_purge_check_interval_seconds: int = 3600
@@ -44,6 +54,8 @@ class Settings(BaseSettings):
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
     cloudinary_folder: str = "ferragro/perfiles"
+    # Perfil SMTP opcional: office365 | gmail (rellena host/puerto si SMTP_HOST está vacío).
+    smtp_profile: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
@@ -51,6 +63,9 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_from_name: str = "Ferragro"
     smtp_use_tls: bool = True
+    # true = conexión SSL directa (puerto 465, p. ej. algunos Gmail); false = STARTTLS (587).
+    smtp_use_ssl: bool = False
+    smtp_reply_to: str = ""
     # Solo para emergencias: POST /auth/maintenance/reset-admin-password con header X-Maintenance-Token.
     # Déjalo vacío en producción normal; quítalo tras usarlo.
     maintenance_token: str = ""
@@ -66,6 +81,43 @@ class Settings(BaseSettings):
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host.strip() and self.smtp_from_email.strip())
+
+    @model_validator(mode="after")
+    def apply_smtp_profile_defaults(self) -> "Settings":
+        profile = self.smtp_profile.strip().lower()
+        presets: dict[str, dict[str, object]] = {
+            "office365": {
+                "host": "smtp.office365.com",
+                "port": 587,
+                "use_tls": True,
+                "use_ssl": False,
+            },
+            "outlook": {
+                "host": "smtp.office365.com",
+                "port": 587,
+                "use_tls": True,
+                "use_ssl": False,
+            },
+            "gmail": {
+                "host": "smtp.gmail.com",
+                "port": 587,
+                "use_tls": True,
+                "use_ssl": False,
+            },
+            "gmail_ssl": {
+                "host": "smtp.gmail.com",
+                "port": 465,
+                "use_tls": False,
+                "use_ssl": True,
+            },
+        }
+        if profile in presets and not self.smtp_host.strip():
+            preset = presets[profile]
+            object.__setattr__(self, "smtp_host", str(preset["host"]))
+            object.__setattr__(self, "smtp_port", int(preset["port"]))
+            object.__setattr__(self, "smtp_use_tls", bool(preset["use_tls"]))
+            object.__setattr__(self, "smtp_use_ssl", bool(preset["use_ssl"]))
+        return self
 
     @model_validator(mode="after")
     def apply_production_defaults(self) -> "Settings":

@@ -2,6 +2,34 @@ function monthEndDate(year, month) {
   return new Date(year, month + 1, 1);
 }
 
+export const MONTH_OPTIONS = [
+  { value: 1, label: "Enero" },
+  { value: 2, label: "Febrero" },
+  { value: 3, label: "Marzo" },
+  { value: 4, label: "Abril" },
+  { value: 5, label: "Mayo" },
+  { value: 6, label: "Junio" },
+  { value: 7, label: "Julio" },
+  { value: 8, label: "Agosto" },
+  { value: 9, label: "Septiembre" },
+  { value: 10, label: "Octubre" },
+  { value: 11, label: "Noviembre" },
+  { value: 12, label: "Diciembre" },
+];
+
+export function listYearOptions(yearsBefore = 3, yearsAfter = 3) {
+  const current = new Date().getFullYear();
+  const years = [];
+  for (let y = current - yearsBefore; y <= current + yearsAfter; y += 1) {
+    years.push(y);
+  }
+  return years;
+}
+
+export function referenceDateForMonthYear(month, year) {
+  return new Date(Number(year), Number(month) - 1, 15, 12, 0, 0);
+}
+
 export function listMonthWeekBounds(referenceDate = new Date()) {
   const ref = new Date(referenceDate);
   const year = ref.getFullYear();
@@ -137,7 +165,16 @@ export function formatReportRangeLabel(range, referenceDate = new Date(), period
   const { start, end } = getReportRangeBounds(range, referenceDate, period);
   const monthLabel = start.toLocaleDateString("es-CO", { month: "long", year: "numeric" });
 
-  if (range === "today") return "día actual";
+  if (range === "today") {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const isActualToday =
+      start.getFullYear() === today.getFullYear() &&
+      start.getMonth() === today.getMonth() &&
+      start.getDate() === today.getDate();
+    if (isActualToday) return "día actual";
+    return `día ${start.toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" })}`;
+  }
   if (range === "month") {
     const endInclusive = new Date(end);
     endInclusive.setDate(endInclusive.getDate() - 1);

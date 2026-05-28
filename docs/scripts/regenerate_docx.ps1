@@ -1,7 +1,8 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Regenera los .docx de docs/ desde los .md y generate_ieee830.py
+  Regenera los .docx de docs/ (requiere copias .md temporales o editar Word directamente).
+  La documentacion oficial del proyecto esta en .docx; ver docs/README.txt.
 #>
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -21,9 +22,6 @@ try {
 
   Write-Host "=== Operación continuidad ===" -ForegroundColor Cyan
   & $Py (Join-Path $RepoRoot "docs\scripts\md_to_docx_operacion.py")
-
-  Write-Host "=== IEEE 830 ===" -ForegroundColor Cyan
-  & $Py (Join-Path $RepoRoot "docs\generate_ieee830.py")
 
   $PruebasScript = Join-Path $RepoRoot "scripts\pruebas_md_to_docx.py"
   $Pairs = @(

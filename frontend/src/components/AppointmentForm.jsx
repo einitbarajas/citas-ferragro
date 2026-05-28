@@ -8,6 +8,8 @@ import {
 } from "../utils/appointmentSlots";
 
 const DRAFT_STORAGE_KEY = "ferragro_appt_form_draft_v1";
+/** Referencia estable para evitar bucles de render cuando no hay franjas. */
+const EMPTY_FRANJAS = [];
 
 const field =
   "mt-1 w-full rounded-lg border border-slate-400 bg-white px-3 py-2.5 text-sm text-[#121212] placeholder:text-slate-500 focus:border-[#35783C] focus:outline-none focus:ring-2 focus:ring-[#35783C]/30";
@@ -31,7 +33,7 @@ export default function AppointmentForm({
   warehouseId = null,
   onWarehouseChange,
 }) {
-  const windows = windowsPack?.franjas || [];
+  const windows = windowsPack?.franjas ?? EMPTY_FRANJAS;
   const defaultDate = resolveDefaultDate();
   const [form, setForm] = useState({
     provider_id: "",
@@ -85,7 +87,8 @@ export default function AppointmentForm({
           setResolvedWindows([]);
           return;
         }
-        setResolvedWindows(payload.data?.franjas || []);
+        const franjas = payload.data?.franjas;
+        setResolvedWindows(Array.isArray(franjas) && franjas.length > 0 ? franjas : EMPTY_FRANJAS);
       } catch {
         setResolvedWindows([]);
       }
@@ -163,13 +166,18 @@ export default function AppointmentForm({
     return buildSlotsFromFranjas(sourceWindows);
   }, [windows, resolvedWindows]);
 
+  const slotKeysSignature = useMemo(() => slots.map((s) => slotKey(s)).join("\u0001"), [slots]);
+
   useEffect(() => {
+    const keys = slotKeysSignature ? slotKeysSignature.split("\u0001") : [];
     setForm((prev) => {
-      const keys = slots.map((s) => slotKey(s));
+      if (keys.length === 0) {
+        return prev.appointment_slot === "" ? prev : { ...prev, appointment_slot: "" };
+      }
       if (keys.includes(prev.appointment_slot)) return prev;
-      return { ...prev, appointment_slot: keys[0] || "" };
+      return { ...prev, appointment_slot: keys[0] };
     });
-  }, [slots]);
+  }, [slotKeysSignature]);
 
   const handleSubmit = (e) => {
     e.preventDefault();

@@ -1,7 +1,14 @@
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import Date, cast, func
+
 DAY_NAMES_ES = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+
+
+def appointment_local_date_sql(column, tz_name: str):
+    """Fecha calendario en zona horaria de negocio (PostgreSQL timestamptz)."""
+    return cast(func.timezone(tz_name, column), Date)
 
 
 def _month_end_date(year: int, month: int) -> date:

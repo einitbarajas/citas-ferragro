@@ -47,5 +47,9 @@ class AppointmentOut(BaseModel):
     start_time: datetime
     duration_minutes: int
     status: AppointmentStatus
+    logistics_extend_used: bool = False
+    logistics_extend_minutes: int = 0
+    total_extend_minutes: int = 0
+    original_duration_minutes: int | None = None
 
     model_config = ConfigDict(from_attributes=True)

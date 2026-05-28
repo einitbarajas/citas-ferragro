@@ -43,6 +43,7 @@ export function describeProviderSlotAvailability({
   message,
   minimumNoticeHours,
   selectedDayOpen,
+  hasAvailableSlots = false,
   needsTeamSelection = false,
 }) {
   if (needsTeamSelection) {
@@ -119,6 +120,14 @@ export function describeProviderSlotAvailability({
         message ||
         "Hay franja publicada, pero no se generaron horarios válidos para este día. Elige otro día.",
       tone: "warning",
+    };
+  }
+  if (hasAvailableSlots) {
+    return {
+      optionLabel: "Selecciona un turno",
+      title: "",
+      detail: "",
+      tone: "info",
     };
   }
   if (selectedDayOpen) {

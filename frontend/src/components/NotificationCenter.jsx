@@ -10,6 +10,9 @@ const FILTER_OPTIONS = [
   { value: "read", label: "Leídas" },
 ];
 
+const RETENTION_NOTICE =
+  "Las notificaciones del panel se eliminan automáticamente a los 30 días. Recibirás una copia en tu correo de sesión como respaldo.";
+
 function formatWhen(iso) {
   if (!iso) return "";
   const date = new Date(iso);
@@ -19,6 +22,7 @@ function formatWhen(iso) {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: true,
   });
 }
 
@@ -59,12 +63,25 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
     }
   }, [authReady, filter]);
 
-  useEffect(() => {
-    if (!authReady) return undefined;
+useEffect(() => {
+  if (!authReady) return undefined;
+  let timer = null;
+  const boot = () => {
     loadNotifications();
-    const timer = window.setInterval(loadNotifications, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [authReady, loadNotifications]);
+    timer = window.setInterval(loadNotifications, POLL_MS);
+  };
+  const schedule = window.requestIdleCallback
+    ? window.requestIdleCallback(boot, { timeout: 4000 })
+    : window.setTimeout(boot, 2000);
+  return () => {
+    if (typeof schedule === "number") {
+      window.clearTimeout(schedule);
+    } else if (window.cancelIdleCallback) {
+      window.cancelIdleCallback(schedule);
+    }
+    if (timer) window.clearInterval(timer);
+  };
+}, [authReady, loadNotifications]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -109,20 +126,6 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
       setUnreadTotal(0);
     } catch {
       /* ignore */
-    }
-  };
-
-  const clearAll = async () => {
-    if (items.length === 0) return;
-    const confirmed = window.confirm("¿Vaciar todas las notificaciones? Esta acción no se puede deshacer.");
-    if (!confirmed) return;
-    try {
-      await api.delete(`${API_PREFIX}/notifications/all`);
-      setItems([]);
-      setUnreadTotal(0);
-      setError("");
-    } catch (err) {
-      setError(parseApiError(err));
     }
   };
 
@@ -191,7 +194,7 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
           >
             <div className="relative shrink-0 border-b border-slate-100 px-3 py-3 pr-12 sm:px-4">
               <p className="text-sm font-semibold text-slate-900">Notificaciones</p>
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <div className="mt-2 space-y-2">
                 <button
                   type="button"
                   onClick={markAllRead}
@@ -200,14 +203,7 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
                 >
                   Marcar todas leídas
                 </button>
-                <button
-                  type="button"
-                  onClick={clearAll}
-                  disabled={items.length === 0}
-                  className="rounded-lg px-2 py-1.5 text-[11px] font-medium text-red-600 transition hover:bg-red-50 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-40 sm:text-xs"
-                >
-                  Vaciar
-                </button>
+                <p className="text-[11px] leading-relaxed text-slate-500 sm:text-xs">{RETENTION_NOTICE}</p>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <label htmlFor="notification-filter" className="sr-only">

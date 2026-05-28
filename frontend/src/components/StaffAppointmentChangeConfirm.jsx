@@ -14,6 +14,7 @@ export default function StaffAppointmentChangeConfirm({
   proposedSummary,
   onConfirm,
   onCancel,
+  overlayZIndexClass = "z-[110]",
 }) {
   const [reason, setReason] = useState("");
   const [localError, setLocalError] = useState("");
@@ -38,7 +39,7 @@ export default function StaffAppointmentChangeConfirm({
 
   return (
     <div
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4"
+      className={`fixed inset-0 ${overlayZIndexClass} flex items-center justify-center bg-black/50 p-4`}
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="staff-change-confirm-title"

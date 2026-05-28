@@ -1,11 +1,11 @@
 """
-Genera PRUEBAS.docx desde PRUEBAS.md (tablas Word nativas).
+Convierte un .md a .docx (tablas Word nativas).
 
 Uso (desde la raíz del repo):
   pip install python-docx
-  python scripts/pruebas_md_to_docx.py
+  python scripts/pruebas_md_to_docx.py docs/archivo.md docs/archivo.docx
 
-Salida por defecto: PRUEBAS.docx junto a PRUEBAS.md
+La documentación oficial en docs/ está en .docx; editar Word directamente.
 """
 
 from __future__ import annotations

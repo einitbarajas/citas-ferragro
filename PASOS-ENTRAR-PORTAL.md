@@ -48,7 +48,7 @@ Si Repository está vacío: **Settings** → conecta GitHub y el repo, guarda, l
 
 1. Secreto `VERCEL_TOKEN` en GitHub Actions.  
 2. Workflow `deploy-vercel-frontend.yml` despliega en cada push a `frontend/`.  
-3. Guía: [`docs/CONECTAR_GIT_VERCEL_RENDER.md`](docs/CONECTAR_GIT_VERCEL_RENDER.md)
+3. Guía: [`docs/CONECTAR_GIT_VERCEL_RENDER.docx`](docs/CONECTAR_GIT_VERCEL_RENDER.docx)
 
 ```powershell
 .\scripts\conectar-git-produccion.ps1

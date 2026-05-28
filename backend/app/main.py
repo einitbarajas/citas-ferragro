@@ -27,10 +27,13 @@ from app.db.session import SessionLocal, engine
 from app.services.admin_bootstrap import ensure_production_admin
 from app.services.credential_cleanup import purge_orphan_credentials
 from app.services.provider_purge_scheduler import provider_purge_scheduler_loop
+from app.services.email_dispatch import shutdown_email_executor
+from app.services.no_presentada_scheduler import no_presentada_scheduler_loop
 from app.services.reminder_scheduler import reminder_scheduler_loop
+from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-25-calendar-sync-v1"
+API_BUILD_ID = "2026-05-25-franja-calendario-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -88,15 +91,20 @@ async def lifespan(app: FastAPI):
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(reminder_scheduler_loop(stop_event))
     purge_task = asyncio.create_task(provider_purge_scheduler_loop(stop_event))
+    no_presentada_task = asyncio.create_task(no_presentada_scheduler_loop(stop_event))
+    notification_purge_task = asyncio.create_task(notification_purge_scheduler_loop(stop_event))
     yield
     stop_event.set()
     scheduler_task.cancel()
     purge_task.cancel()
-    for task in (scheduler_task, purge_task):
+    no_presentada_task.cancel()
+    notification_purge_task.cancel()
+    for task in (scheduler_task, purge_task, no_presentada_task, notification_purge_task):
         try:
             await task
         except asyncio.CancelledError:
             pass
+    shutdown_email_executor()
 
 
 app = FastAPI(

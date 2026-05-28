@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.api.crud import STAFF_AUDIT_ROLES
 from app.models.user import UserRole
 from app.services import notification_service as svc
 
@@ -59,6 +60,12 @@ def test_appointment_stakeholder_emails_dedupes_provider():
 def test_internal_staff_roles_include_admin_bodega():
     assert UserRole.admin_bodega in svc.INTERNAL_STAFF_ROLES
     assert UserRole.logistica in svc.WAREHOUSE_SCOPED_STAFF_ROLES
+
+
+def test_staff_audit_roles_include_admin_bodega():
+    assert UserRole.admin_bodega in STAFF_AUDIT_ROLES
+    for role in (UserRole.admin, UserRole.logistica, UserRole.admin_bodega):
+        assert role in STAFF_AUDIT_ROLES
 
 
 @pytest.mark.parametrize(

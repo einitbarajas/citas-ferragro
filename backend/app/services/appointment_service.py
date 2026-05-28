@@ -73,7 +73,15 @@ def _overlapping_appointments_query(
     end_time = start_time + timedelta(minutes=duration_minutes)
     window_start = start_time - timedelta(hours=12)
     stmt = select(Appointment).where(
-        Appointment.status != AppointmentStatus.cancelado,
+        # Para cálculos operativos (reserva/extensión), las citas cerradas
+        # no deberían bloquear el uso del horario.
+        Appointment.status.not_in(
+            [
+                AppointmentStatus.cancelado,
+                AppointmentStatus.finalizada,
+                AppointmentStatus.no_presentada,
+            ]
+        ),
         Appointment.start_time < end_time,
         Appointment.start_time >= window_start,
     )
@@ -237,10 +245,11 @@ def finalize_elapsed_appointments(db: Session) -> int:
     _finalize_last_run_monotonic = tick
 
     now = datetime.now(timezone.utc)
+    # Solo sin_revision: revisado queda en ventana de 15 min para marcar finalizada/no presentada.
     candidates = (
         db.execute(
             select(Appointment).where(
-                Appointment.status.in_([AppointmentStatus.sin_revision, AppointmentStatus.revisado]),
+                Appointment.status == AppointmentStatus.sin_revision,
                 Appointment.start_time <= now,
             )
         )

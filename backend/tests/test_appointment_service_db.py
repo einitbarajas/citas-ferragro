@@ -147,3 +147,83 @@ def test_reserve_slot_non_overlapping_ok(db_session):
         60,
         _team_id(db_session, warehouse_id),
     )
+
+
+@pytest.mark.parametrize(
+    "closed_status",
+    [AppointmentStatus.finalizada, AppointmentStatus.no_presentada],
+)
+def test_unload_team_slot_available_ignores_closed_statuses(db_session, closed_status: AppointmentStatus):
+    warehouse_id = _active_warehouse_id(db_session)
+    provider_id = _provider_id(db_session)
+    team_id = _team_id(db_session, warehouse_id)
+
+    # Buscar un start_time donde el equipo no tenga citas que ya se traslapen.
+    # Así el test no depende de datos semilla o de otras pruebas.
+    start = None
+    for days_ahead in range(220, 251):
+        candidate = _unique_start(days_ahead)
+        # ventana que usa el servicio para buscar traslapes (~12h hacia atrás)
+        window_start = candidate - timedelta(hours=12)
+        window_end = candidate + timedelta(minutes=90)
+        existing = db_session.execute(
+            select(Appointment.id).where(
+                Appointment.warehouse_unload_team_id == team_id,
+                Appointment.start_time < window_end,
+                Appointment.start_time >= window_start,
+            )
+        ).scalars().all()
+        if not existing:
+            start = candidate
+            break
+    assert start is not None, "No se encontró una franja limpia para el test"
+
+    # Cita base (la que intentaremos extender).
+    base = _insert_appointment(
+        db_session,
+        provider_id=provider_id,
+        warehouse_id=warehouse_id,
+        start_time=start,
+        duration_minutes=60,
+    )
+
+    # Cita cerrada que cae dentro del rango extendido (start..start+90).
+    closed = _insert_appointment(
+        db_session,
+        provider_id=provider_id,
+        warehouse_id=warehouse_id,
+        start_time=start + timedelta(minutes=30),
+        duration_minutes=60,
+    )
+    closed.status = closed_status
+    db_session.commit()
+
+    from app.services.appointment_service import unload_team_slot_available
+    from app.services.appointment_service import _overlapping_appointments_query
+
+    can_extend = unload_team_slot_available(
+        db_session,
+        team_id,
+        start,
+        90,
+        exclude_appointment_id=base.id,
+    )
+
+    # Debug funcional: confirmar si el traslape trae o no a la cita "closed".
+    overlaps = list(
+        db_session.execute(
+            _overlapping_appointments_query(
+                start_time=start,
+                duration_minutes=90,
+                warehouse_unload_team_id=team_id,
+                exclude_appointment_id=base.id,
+            )
+        ).scalars()
+    )
+    overlap_ids = {a.id for a in overlaps}
+    assert closed.status == closed_status
+    assert closed.id not in overlap_ids, f"Closed appt incluida en traslape para {closed_status}"
+    assert base.id not in overlap_ids, "La cita base debe excluirse del traslape"
+    assert len(overlaps) == 0, f"Debe no haber traslapes (encontrados {len(overlaps)})"
+
+    assert can_extend is True

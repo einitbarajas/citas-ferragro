@@ -1,5 +1,10 @@
 export const DEFAULT_BUSINESS_TZ = "America/Bogota";
 
+export const APPOINTMENT_CANCEL_MINIMUM_NOTICE_HOURS = Math.max(
+  1,
+  Number(import.meta.env.VITE_APPOINTMENT_CANCEL_MINIMUM_NOTICE_HOURS) || 12
+);
+
 function readZonedParts(date, timeZone) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -56,7 +61,8 @@ export function getAppointmentSchedule(
     };
   }
   const end = new Date(start.getTime() + mins * 60 * 1000);
-  const timeOpts = { timeZone, hour: "2-digit", minute: "2-digit" };
+  // Mostrar siempre en formato 12 horas (AM/PM) para evitar “hora militar”.
+  const timeOpts = { timeZone, hour: "2-digit", minute: "2-digit", hour12: true };
   const dateOpts = {
     timeZone,
     weekday: "long",
@@ -71,6 +77,42 @@ export function getAppointmentSchedule(
     rangeLine: `${startTime} – ${endTime}`,
     endLine: endTime,
     durationLabel: `${mins} min`,
+  };
+}
+
+export function appointmentOnLocalDay(startIso, dayIso, timeZone = DEFAULT_BUSINESS_TZ) {
+  if (!startIso || !dayIso) return false;
+  return formatDateInputInTimeZone(startIso, timeZone) === dayIso;
+}
+
+/** Resumen por estado para un día (zona de negocio), p. ej. si el API de analítica está desactualizado. */
+export function summarizeAppointmentsByLocalDay(
+  appointments,
+  dayIso,
+  warehouseFilterId = "",
+  timeZone = DEFAULT_BUSINESS_TZ
+) {
+  const totales = {};
+  let total = 0;
+  for (const a of appointments || []) {
+    if (warehouseFilterId && Number(a?.warehouse_id) !== Number(warehouseFilterId)) continue;
+    if (!appointmentOnLocalDay(a.start_time, dayIso, timeZone)) continue;
+    const status = String(a.status || "sin_revision");
+    totales[status] = (totales[status] || 0) + 1;
+    total += 1;
+  }
+  const noonIso = buildDateTimeIsoInTimeZone(dayIso, "12:00", timeZone);
+  const weekday = noonIso
+    ? new Intl.DateTimeFormat("es-CO", { weekday: "long", timeZone }).format(new Date(noonIso))
+    : dayIso;
+  const dayLabel = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  return {
+    totales_por_estado: totales,
+    totales_por_estado_hoy: { ...totales },
+    total_citas: total,
+    citas_por_dia_semana: [{ fecha: dayIso, dia: dayLabel, cantidad: total }],
+    citas_ultimos_30_dias: [],
+    top_proveedores: [],
   };
 }
 

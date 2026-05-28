@@ -1,4 +1,12 @@
 import axios from "axios";
+import {
+  AUTH_EXPIRED_EVENT,
+  clearAccessToken as resetAccessToken,
+  getAccessToken,
+  setAccessToken,
+} from "./auth-token";
+
+export { AUTH_EXPIRED_EVENT, getAccessToken, setAccessToken };
 
 /** Versión del API en el servidor (routers montados en `/api` y `/api/v1`). */
 export const API_PREFIX = (import.meta.env.VITE_API_PREFIX || "/api/v1").trim();
@@ -15,25 +23,44 @@ function resolveApiBaseUrl() {
   if (typeof explicit === "string" && explicit.trim()) {
     return explicit.trim().replace(/\/$/, "");
   }
+  // En ejecución local (dev o preview en localhost), preferimos misma-origin
+  // para usar el proxy de Vite hacia el backend local.
+  if (typeof window !== "undefined") {
+    const host = String(window.location.hostname || "").toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
+      return "";
+    }
+  }
   if (import.meta.env.DEV) {
     return "";
   }
   return PRODUCTION_API_URL;
 }
 
-/** Tras despertar el API, el login suele responder en pocos segundos. */
-const API_TIMEOUT_MS = import.meta.env.PROD ? 35000 : 10000;
+function parseTimeoutMs(raw, fallback) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 5000 ? n : fallback;
+}
+
+/** Peticiones normales (listados, disponibilidad). En dev igual que prod: Render/local pueden tardar >10 s. */
+export const API_TIMEOUT_MS = parseTimeoutMs(import.meta.env.VITE_API_TIMEOUT_MS, 45000);
+
+/** Crear/reprogramar citas: el cold start de Render puede superar el timeout habitual. */
+export const API_SLOW_TIMEOUT_MS = parseTimeoutMs(import.meta.env.VITE_API_SLOW_TIMEOUT_MS, 90000);
 
 let apiWakePromise = null;
 
-/** Despierta el API en Render (plan Free) antes del login. */
+/** True si axios abortó por tiempo de espera (la petición pudo completarse en el servidor). */
+export function isApiTimeoutError(error) {
+  return error?.code === "ECONNABORTED" || error?.code === "ETIMEDOUT";
+}
+
+/** Despierta el API (/health) antes de operaciones lentas. En dev usa el proxy de Vite. */
 export function warmApi() {
   const base = resolveApiBaseUrl();
-  if (!base || import.meta.env.DEV) {
-    return Promise.resolve();
-  }
+  const healthUrl = base ? `${base}/health` : "/health";
   if (!apiWakePromise) {
-    apiWakePromise = fetch(`${base}/health`, { method: "GET", credentials: "omit" })
+    apiWakePromise = fetch(healthUrl, { method: "GET", credentials: "omit" })
       .catch(() => {})
       .finally(() => {
         setTimeout(() => {
@@ -50,9 +77,7 @@ const api = axios.create({
   timeout: API_TIMEOUT_MS,
 });
 
-export const AUTH_EXPIRED_EVENT = "auth:expired";
 let refreshPromise = null;
-let accessToken = "";
 
 function hasLocalSessionHint() {
   if (typeof window === "undefined") return true;
@@ -82,17 +107,9 @@ export function refreshAccessToken() {
   return refreshPromise;
 }
 
-export function setAccessToken(token) {
-  accessToken = String(token || "").trim();
-}
-
 export function clearAccessToken() {
-  accessToken = "";
+  resetAccessToken();
   refreshPromise = null;
-}
-
-export function getAccessToken() {
-  return accessToken;
 }
 
 api.interceptors.request.use(async (config) => {
@@ -206,8 +223,8 @@ export function parseApiError(error) {
     if (typeof first === "string") return first;
     if (first?.msg) return String(first.msg);
   }
-  if (error?.code === "ECONNABORTED" || error?.code === "ETIMEDOUT") {
-    return "El servidor tardó demasiado en responder. Espera unos segundos e intenta de nuevo (el API en Render puede despertar al primer intento).";
+  if (isApiTimeoutError(error)) {
+    return "El servidor tardó demasiado en responder. Revisa «Ver mis citas» por si la operación sí se guardó antes de volver a intentar (el API en Render puede despertar al primer intento).";
   }
   if (error?.code === "ERR_NETWORK" || error?.message === "Network Error") {
     const dev = import.meta.env.DEV;

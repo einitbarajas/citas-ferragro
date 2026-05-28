@@ -1,12 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import api, {
+import {
   AUTH_EXPIRED_EVENT,
-  API_PREFIX,
   clearAccessToken,
   getAccessToken,
-  refreshAccessToken,
   setAccessToken,
-} from "../api/client";
+} from "../api/auth-token";
 
 const AuthContext = createContext(null);
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
@@ -63,6 +61,7 @@ export function AuthProvider({ children }) {
         return;
       }
       try {
+        const { refreshAccessToken } = await import("../api/client");
         const refreshed = await refreshAccessToken();
         const role = refreshed?.role || sessionStorage.getItem("role") || "";
         const email = sessionStorage.getItem("user_email");
@@ -81,7 +80,8 @@ export function AuthProvider({ children }) {
     bootstrap();
   }, [clearStoredSession]);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    const { default: api, API_PREFIX } = await import("../api/client");
     api.post(`${API_PREFIX}/auth/logout`).catch(() => {
       // Si falla, limpiamos estado local de todas formas.
     });
@@ -110,6 +110,7 @@ export function AuthProvider({ children }) {
       return;
     }
     try {
+      const { refreshAccessToken } = await import("../api/client");
       const refreshed = await refreshAccessToken();
       const role = refreshed?.role || storedRole || sessionStorage.getItem("role") || "";
       const email = sessionStorage.getItem("user_email");

@@ -13,6 +13,8 @@ export default defineConfig(({ mode }) => {
       : "connect-src 'self' https://*.onrender.com";
   const cspDirectives = [
     "default-src 'self'",
+    // En desarrollo Vite usa runtime/HMR que puede requerir inline/eval.
+    // En build/preview mantenemos CSP estricta para producción.
     isDev ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self'",
     isDev ? "style-src 'self' 'unsafe-inline'" : "style-src 'self'",
     "img-src 'self' data: https://res.cloudinary.com",
@@ -28,11 +30,20 @@ export default defineConfig(({ mode }) => {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cross-Origin-Opener-Policy": "same-origin",
-    "Content-Security-Policy": `${cspDirectives.join("; ")};`,
   };
 
   return {
-    plugins: [react({ fastRefresh: false })],
+    // En algunos entornos (proxy/escáner/extensión) se inyecta una CSP externa
+    // que bloquea el preamble inline del plugin React en dev.
+    // Evitamos ese preamble en desarrollo y mantenemos el plugin en build.
+    plugins: isDev ? [] : [react({ fastRefresh: false })],
+    esbuild: isDev
+      ? {
+          // En dev sin plugin-react: usar runtime automático de JSX para evitar
+          // errores "React is not defined" sin depender de import manual.
+          jsx: "automatic",
+        }
+      : undefined,
     envDir: "..",
     build: {
       target: "es2020",
@@ -41,8 +52,9 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks(id) {
             if (id.includes("node_modules")) {
-              if (id.includes("node_modules/react-dom")) return "vendor-react-dom";
-              if (id.includes("node_modules/react/")) return "vendor-react";
+              if (id.includes("node_modules/react-dom") || id.includes("node_modules/react/")) {
+                return "vendor-react-runtime";
+              }
               if (id.includes("axios")) return "vendor-axios";
               return undefined;
             }

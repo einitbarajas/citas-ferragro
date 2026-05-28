@@ -5,7 +5,6 @@ import "./index.css";
 import { AuthProvider } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { initAxe } from "./axe";
 
 const RootWrapper = import.meta.env.DEV ? React.Fragment : React.StrictMode;
 
@@ -27,8 +26,10 @@ if (!rootEl) {
   );
 }
 
-if (import.meta.env.DEV) {
-  initAxe().catch(() => {
-    // No bloquea el render si la instrumentación de accesibilidad falla en dev.
-  });
+if (import.meta.env.DEV && import.meta.env.VITE_ENABLE_AXE === "1") {
+  import("./axe")
+    .then(({ initAxe }) => initAxe())
+    .catch(() => {
+      // No bloquea el render si la instrumentación de accesibilidad falla en dev.
+    });
 }

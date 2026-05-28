@@ -22,7 +22,7 @@ from app.models.warehouse import Warehouse
 from app.models.profile_photo import ProfilePhoto
 from app.models.reminder_run import ReminderExecution
 from app.models.role import Role
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.services.credential_cleanup import delete_credential_fully, release_email_for_reuse
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
 from app.services.provider_account import (
@@ -76,6 +76,8 @@ from app.services.appointment_windows import (
     iter_bookable_slots,
     list_date_windows_ordered,
     list_team_open_days_in_month,
+    list_team_override_days_in_month,
+    list_team_provider_bookable_days_in_month,
     list_warehouse_open_days_in_month,
     replace_date_windows,
     resolve_team_windows_for_day,
@@ -85,6 +87,7 @@ from app.services.appointment_windows import (
 )
 from app.services.appointment_service import finalize_elapsed_appointments, reserve_slot_fifo_or_raise
 from app.services.range_bounds import (
+    appointment_local_date_sql,
     build_daily_counts_in_range,
     business_local_range_bounds,
 )
@@ -102,6 +105,7 @@ router = APIRouter(prefix="/crud", tags=["crud"])
 
 STAFF_APPOINTMENT_ROLES = ("Admin", "Logistica", "AdminBodega")
 WAREHOUSE_OPS_ROLES = ("Admin", "AdminBodega")
+STAFF_AUDIT_ROLES = ("Admin", "Logistica", "AdminBodega")
 
 
 def _local_day_utc_bounds(target_day: date) -> tuple[datetime, datetime]:
@@ -282,22 +286,14 @@ def _assert_weekly_windows_do_not_break_existing_appointments(
         )
 
 
-def _appointment_ids_with_logistics_extend(db: Session, appointment_ids: list[int]) -> set[int]:
-    if not appointment_ids:
-        return set()
-    return set(
-        db.execute(
-            select(AuditLog.appointment_id)
-            .where(
-                AuditLog.appointment_id.in_(appointment_ids),
-                AuditLog.action == "extend_duration",
-            )
-            .distinct()
-        ).scalars()
-    )
-
-
-def _appointment_to_crud_out(appt: Appointment, *, logistics_extend_used: bool = False) -> dict:
+def _appointment_to_crud_out(
+    appt: Appointment,
+    *,
+    logistics_extend_used: bool = False,
+    logistics_extend_minutes: int = 0,
+    total_extend_minutes: int = 0,
+    original_duration_minutes: int | None = None,
+) -> dict:
     pname = appt.provider.company_name if appt.provider else ""
     wname = appt.warehouse.name if appt.warehouse else ""
     team = getattr(appt, "warehouse_unload_team", None)
@@ -315,7 +311,29 @@ def _appointment_to_crud_out(appt: Appointment, *, logistics_extend_used: bool =
         duration_minutes=appt.duration_minutes,
         status=appt.status,
         logistics_extend_used=logistics_extend_used,
+        logistics_extend_minutes=logistics_extend_minutes,
+        total_extend_minutes=total_extend_minutes,
+        original_duration_minutes=original_duration_minutes,
     ).model_dump()
+
+
+def _extension_fields_for_appt(appt: Appointment, summaries: dict) -> dict:
+    from app.services.appointment_extension import ExtensionSummary
+
+    summary: ExtensionSummary | None = summaries.get(int(appt.id))
+    if summary is None:
+        return {
+            "logistics_extend_used": False,
+            "logistics_extend_minutes": 0,
+            "total_extend_minutes": 0,
+            "original_duration_minutes": int(appt.duration_minutes),
+        }
+    return {
+        "logistics_extend_used": summary.logistics_extend_used,
+        "logistics_extend_minutes": summary.logistics_extend_minutes,
+        "total_extend_minutes": summary.total_extend_minutes,
+        "original_duration_minutes": summary.original_duration_minutes,
+    }
 
 
 def _user_to_out(user: User, db: Session) -> UserCrudOut:
@@ -380,8 +398,20 @@ def _actor_display(db: Session, actor_id: str) -> tuple[str, str]:
     return ("", "")
 
 
-def _change_log_to_out(db: Session, log: ChangeLog) -> dict:
+def _change_log_to_out(db: Session, log: ChangeLog, appointment: Appointment | None = None) -> dict:
     name, role = _actor_display(db, log.actor_id)
+    appt = appointment
+    if appt is None and log.appointment_id is not None:
+        appt = db.get(Appointment, log.appointment_id)
+    warehouse_name = ""
+    warehouse_id = None
+    if appt is not None:
+        warehouse_id = int(appt.warehouse_id)
+        if appt.warehouse is not None:
+            warehouse_name = appt.warehouse.name or ""
+        elif warehouse_id:
+            wh = db.get(Warehouse, warehouse_id)
+            warehouse_name = wh.name if wh else ""
     return ChangeLogOut(
         id=log.id,
         actor_id=log.actor_id,
@@ -391,6 +421,8 @@ def _change_log_to_out(db: Session, log: ChangeLog) -> dict:
         created_at=log.created_at,
         actor_name=name,
         actor_role=role,
+        warehouse_id=warehouse_id,
+        warehouse_name=warehouse_name,
         critical_field=log.critical_field,
         old_value=log.old_value,
         new_value=log.new_value,
@@ -992,8 +1024,7 @@ def _staff_appointments_select(
         stmt = stmt.where(Appointment.start_time < end_d)
 
     if mode == "day" and day:
-        start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
-        end = start + timedelta(days=1)
+        start, end = _local_day_utc_bounds(day)
         stmt = stmt.where(Appointment.start_time >= start, Appointment.start_time < end)
     elif mode in ("week", "biweekly"):
         tz = ZoneInfo(settings.business_timezone)
@@ -1060,9 +1091,16 @@ def list_appointments(
     )
     offset = (page - 1) * page_size
     appointments = db.execute(stmt.offset(offset).limit(page_size)).unique().scalars().all()
-    extended_ids = _appointment_ids_with_logistics_extend(db, [a.id for a in appointments])
+    from app.services.appointment_extension import get_extension_summaries
+
+    appt_ids = [a.id for a in appointments]
+    ext_summaries = get_extension_summaries(
+        db,
+        appt_ids,
+        current_durations={a.id: int(a.duration_minutes) for a in appointments},
+    )
     data = [
-        _appointment_to_crud_out(a, logistics_extend_used=a.id in extended_ids) for a in appointments
+        _appointment_to_crud_out(a, **_extension_fields_for_appt(a, ext_summaries)) for a in appointments
     ]
     return ok_response(
         {"items": data, "total": total, "page": page, "page_size": page_size},
@@ -1164,9 +1202,15 @@ def get_appointment(
     if not appointment:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
     assert_warehouse_access(db, principal, appointment.warehouse_id)
-    extended_ids = _appointment_ids_with_logistics_extend(db, [appointment.id])
+    from app.services.appointment_extension import get_extension_summaries
+
+    ext_summaries = get_extension_summaries(
+        db,
+        [appointment.id],
+        current_durations={appointment.id: int(appointment.duration_minutes)},
+    )
     return ok_response(
-        _appointment_to_crud_out(appointment, logistics_extend_used=appointment.id in extended_ids),
+        _appointment_to_crud_out(appointment, **_extension_fields_for_appt(appointment, ext_summaries)),
         "Cita consultada correctamente",
     )
 
@@ -1202,8 +1246,7 @@ def create_appointment(
     data["warehouse_unload_team_id"] = team.id
     appointment = Appointment(**data)
     db.add(appointment)
-    db.commit()
-    db.refresh(appointment)
+    db.flush()
     notify_staff_review_needed(db, appointment)
     db.commit()
     appointment = db.execute(
@@ -1352,7 +1395,17 @@ def update_appointment(
         )
         .where(Appointment.id == appointment_id)
     ).unique().scalar_one()
-    return ok_response(_appointment_to_crud_out(appointment), "Cita actualizada correctamente")
+    from app.services.appointment_extension import get_extension_summaries
+
+    ext_summaries = get_extension_summaries(
+        db,
+        [appointment.id],
+        current_durations={appointment.id: int(appointment.duration_minutes)},
+    )
+    return ok_response(
+        _appointment_to_crud_out(appointment, **_extension_fields_for_appt(appointment, ext_summaries)),
+        "Cita actualizada correctamente",
+    )
 
 
 @router.get("/warehouses", dependencies=[Depends(require_roles("Admin", "Logistica", "AdminBodega", "Proveedor"))])
@@ -1611,8 +1664,6 @@ def list_appointment_franjas_date_summary(
         end_day = date(year, month + 1, 1)
 
     if unload_team_id is None:
-        tz = ZoneInfo(settings.business_timezone)
-        business_today = datetime.now(tz).date()
         open_days = list_warehouse_open_days_in_month(db, year, month, warehouse_id)
         return ok_response(
             {
@@ -1621,33 +1672,19 @@ def list_appointment_franjas_date_summary(
                 "open_days": open_days,
                 "override_days": open_days,
                 "has_weekly_franjas": None,
-                "business_today": str(business_today),
-                "timezone": settings.business_timezone,
             },
             "Resumen de franjas por fecha consultado correctamente",
         )
 
     team_id = _resolve_franja_unload_team_id(db, warehouse_id, unload_team_id)
-    rows = (
-        db.execute(
-            select(AppointmentDateWindow.day)
-            .where(
-                AppointmentDateWindow.day >= start_day,
-                AppointmentDateWindow.day < end_day,
-                AppointmentDateWindow.warehouse_id == warehouse_id,
-                AppointmentDateWindow.warehouse_unload_team_id == team_id,
-            )
-            .group_by(AppointmentDateWindow.day)
-            .order_by(AppointmentDateWindow.day.asc())
-        )
-        .scalars()
-        .all()
-    )
-    tz = ZoneInfo(settings.business_timezone)
-    business_today = datetime.now(tz).date()
-    override_days = [str(d) for d in rows]
+    override_days = list_team_override_days_in_month(db, year, month, warehouse_id, team_id)
     has_weekly = bool(list_windows_ordered(db, warehouse_id, team_id))
-    open_days = list_team_open_days_in_month(db, year, month, warehouse_id, team_id)
+    if principal.role_name == UserRole.proveedor:
+        open_days = list_team_provider_bookable_days_in_month(
+            db, year, month, warehouse_id, team_id
+        )
+    else:
+        open_days = list_team_open_days_in_month(db, year, month, warehouse_id, team_id)
     scheduled_iso_weekdays = sorted(get_team_scheduled_iso_weekdays(db, warehouse_id, team_id))
     return ok_response(
         {
@@ -1657,8 +1694,6 @@ def list_appointment_franjas_date_summary(
             "override_days": override_days,
             "has_weekly_franjas": has_weekly,
             "scheduled_iso_weekdays": scheduled_iso_weekdays,
-            "business_today": str(business_today),
-            "timezone": settings.business_timezone,
         },
         "Resumen de franjas por fecha consultado correctamente",
     )
@@ -1779,6 +1814,9 @@ def _appointment_scope(warehouse_id: int | None):
 def analytics_summary(
     range_mode: str = Query(default="today", alias="range", pattern="^(today|week|biweekly|month)$"),
     period: int | None = Query(default=None, ge=1, le=6),
+    day: date | None = Query(default=None),
+    month: int | None = Query(default=None, ge=1, le=12),
+    year: int | None = Query(default=None, ge=2000, le=2100),
     warehouse_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
@@ -1787,15 +1825,30 @@ def analytics_summary(
         get_active_warehouse_or_raise(db, warehouse_id)
     scope = _appointment_scope(warehouse_id)
     tz = ZoneInfo(settings.business_timezone)
+    tz_name = settings.business_timezone
     local_now = datetime.now(tz)
-    local_today_start = datetime(local_now.year, local_now.month, local_now.day, tzinfo=tz)
-    local_today_end = local_today_start + timedelta(days=1)
+    if range_mode == "month" and month is not None and year is not None:
+        local_now = datetime(int(year), int(month), 15, tzinfo=tz)
     period_arg = period if range_mode in ("week", "biweekly") else None
-    local_range_start, local_range_end = business_local_range_bounds(
-        range_mode, local_now, tz, period=period_arg
-    )
-    range_start_utc = local_range_start.astimezone(timezone.utc)
-    range_end_utc = local_range_end.astimezone(timezone.utc)
+    if range_mode == "today":
+        target_day = day if day is not None else local_now.date()
+        range_start_utc, range_end_utc = _local_day_utc_bounds(target_day)
+        local_range_start = datetime(target_day.year, target_day.month, target_day.day, tzinfo=tz)
+        local_range_end = local_range_start + timedelta(days=1)
+        local_today_start = local_range_start
+        local_today_end = local_range_end
+        local_now = datetime(
+            target_day.year, target_day.month, target_day.day, 12, tzinfo=tz
+        )
+    else:
+        local_today_start = datetime(local_now.year, local_now.month, local_now.day, tzinfo=tz)
+        local_today_end = local_today_start + timedelta(days=1)
+        local_range_start, local_range_end = business_local_range_bounds(
+            range_mode, local_now, tz, period=period_arg
+        )
+        range_start_utc = local_range_start.astimezone(timezone.utc)
+        range_end_utc = local_range_end.astimezone(timezone.utc)
+    day_col = appointment_local_date_sql(Appointment.start_time, tz_name)
 
     # Totales por estado para el rango seleccionado (filtro de analítica).
     rows_status = (
@@ -1830,9 +1883,10 @@ def analytics_summary(
     for st, cnt in rows_status_today:
         key = st.value if hasattr(st, "value") else str(st)
         totales_hoy[key] = int(cnt)
+    if range_mode == "today":
+        totales_hoy = dict(totales)
     local_cutoff = local_today_start - timedelta(days=30)
     cutoff = local_cutoff.astimezone(timezone.utc)
-    day_col = cast(Appointment.start_time, Date)
     day_rows = (
         db.execute(
             scope(select(day_col.label("d"), func.count()).where(Appointment.start_time >= cutoff))
@@ -1844,7 +1898,10 @@ def analytics_summary(
     citas_30 = [{"fecha": str(d), "cantidad": int(c)} for d, c in day_rows]
     chart_start_local = local_range_start
     chart_end_local = local_range_end
-    if range_mode not in ("week", "biweekly"):
+    if range_mode == "today":
+        chart_start_local = local_range_start
+        chart_end_local = local_range_end
+    elif range_mode not in ("week", "biweekly"):
         chart_start_local, chart_end_local = business_local_range_bounds("week", local_now, tz)
     chart_start = chart_start_local.astimezone(timezone.utc)
     chart_end = chart_end_local.astimezone(timezone.utc)
@@ -1865,14 +1922,18 @@ def analytics_summary(
     citas_por_dia_semana = build_daily_counts_in_range(
         chart_start_local, chart_end_local, weekday_map
     )
-    # Top proveedores: siempre del mes actual (hora local del negocio), top 10.
-    local_month_start = datetime(local_now.year, local_now.month, 1, tzinfo=tz)
-    if local_now.month == 12:
-        local_next_month_start = datetime(local_now.year + 1, 1, 1, tzinfo=tz)
+    # Top proveedores: si el rango es mensual, usa ese mes; si no, usa el mes actual.
+    if range_mode == "month":
+        month_start_utc = local_range_start.astimezone(timezone.utc)
+        month_end_utc = local_range_end.astimezone(timezone.utc)
     else:
-        local_next_month_start = datetime(local_now.year, local_now.month + 1, 1, tzinfo=tz)
-    month_start_utc = local_month_start.astimezone(timezone.utc)
-    month_end_utc = local_next_month_start.astimezone(timezone.utc)
+        local_month_start = datetime(local_now.year, local_now.month, 1, tzinfo=tz)
+        if local_now.month == 12:
+            local_next_month_start = datetime(local_now.year + 1, 1, 1, tzinfo=tz)
+        else:
+            local_next_month_start = datetime(local_now.year, local_now.month + 1, 1, tzinfo=tz)
+        month_start_utc = local_month_start.astimezone(timezone.utc)
+        month_end_utc = local_next_month_start.astimezone(timezone.utc)
 
     top_rows = (
         db.execute(
@@ -1944,36 +2005,73 @@ def list_reminders(
     return ok_response({"items": items, "total": total, "page": page, "page_size": page_size}, "Recordatorios consultados")
 
 
-@router.get("/change-logs", dependencies=[Depends(require_roles("Admin", "Logistica"))])
+@router.get("/change-logs", dependencies=[Depends(require_roles(*STAFF_AUDIT_ROLES))])
 def list_change_logs(
     db: Session = Depends(get_db),
     actor_id: str | None = Query(default=None, max_length=30),
     appointment_id: int | None = Query(default=None),
+    warehouse_id: int | None = Query(default=None, ge=1),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=500),
     principal: SecurityPrincipal = Depends(get_security_principal),
 ):
+    allowed_warehouses = resolve_allowed_warehouse_ids(db, principal)
+    if allowed_warehouses is not None and not allowed_warehouses:
+        return ok_response(
+            {"items": [], "total": 0, "page": page, "page_size": page_size},
+            "Historial consultado correctamente",
+        )
+
+    if appointment_id is not None:
+        appt = db.get(Appointment, appointment_id)
+        if not appt:
+            raise HTTPException(status_code=404, detail="Cita no encontrada")
+        assert_warehouse_access(db, principal, appt.warehouse_id)
+
+    if warehouse_id is not None:
+        assert_warehouse_access(db, principal, warehouse_id)
+
     # Logística solo puede consultar su propio historial.
     effective_actor_id = actor_id.strip() if actor_id and actor_id.strip() else None
-    if principal.role_name == "Logistica":
+    if principal.role_name == UserRole.logistica:
         effective_actor_id = principal.document_id
 
     stmt = select(ChangeLog).order_by(ChangeLog.created_at.desc())
+    scope_by_warehouse = allowed_warehouses is not None or warehouse_id is not None
+    if scope_by_warehouse:
+        stmt = stmt.join(Appointment, ChangeLog.appointment_id == Appointment.id)
     if effective_actor_id:
         stmt = stmt.where(ChangeLog.actor_id == effective_actor_id)
     if appointment_id is not None:
         stmt = stmt.where(ChangeLog.appointment_id == appointment_id)
+    if warehouse_id is not None:
+        stmt = stmt.where(Appointment.warehouse_id == int(warehouse_id))
+    elif allowed_warehouses is not None:
+        stmt = stmt.where(Appointment.warehouse_id.in_(allowed_warehouses))
 
     logs = db.execute(stmt).scalars().all()
+    appointment_ids = {int(log.appointment_id) for log in logs if log.appointment_id is not None}
+    appointments_by_id: dict[int, Appointment] = {}
+    if appointment_ids:
+        rows = db.execute(
+            select(Appointment)
+            .options(joinedload(Appointment.warehouse))
+            .where(Appointment.id.in_(appointment_ids))
+        ).unique().scalars().all()
+        appointments_by_id = {int(a.id): a for a in rows}
 
     system_logs: list[AdminEvent] = []
-    if appointment_id is None:
+    if appointment_id is None and principal.role_name == UserRole.admin:
         system_stmt = select(AdminEvent).order_by(AdminEvent.created_at.desc())
         if effective_actor_id:
             system_stmt = system_stmt.where(AdminEvent.actor_id == effective_actor_id)
         system_logs = db.execute(system_stmt).scalars().all()
 
-    data = [_change_log_to_out(db, log) for log in logs] + [_admin_event_to_out(db, event) for event in system_logs]
+    data = [
+        _change_log_to_out(db, log, appointments_by_id.get(int(log.appointment_id)))
+        for log in logs
+        if log.appointment_id is not None
+    ] + [_admin_event_to_out(db, event) for event in system_logs]
     data.sort(key=lambda x: (x["created_at"], x["id"]), reverse=True)
     total = len(data)
     offset = (page - 1) * page_size
@@ -1984,11 +2082,18 @@ def list_change_logs(
     )
 
 
-@router.get("/change-logs/{log_id}", dependencies=[Depends(require_roles("Admin", "Logistica"))])
-def get_change_log(log_id: int, db: Session = Depends(get_db)):
+@router.get("/change-logs/{log_id}", dependencies=[Depends(require_roles(*STAFF_AUDIT_ROLES))])
+def get_change_log(
+    log_id: int,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(get_security_principal),
+):
     log = db.get(ChangeLog, log_id)
     if not log:
         raise HTTPException(status_code=404, detail="Historial no encontrado")
+    appt = db.get(Appointment, log.appointment_id)
+    if appt:
+        assert_warehouse_access(db, principal, appt.warehouse_id)
     return ok_response(_change_log_to_out(db, log), "Historial consultado correctamente")
 
 

@@ -121,6 +121,9 @@ class AppointmentCrudOut(BaseModel):
     duration_minutes: int
     status: AppointmentStatus
     logistics_extend_used: bool = False
+    logistics_extend_minutes: int = 0
+    total_extend_minutes: int = 0
+    original_duration_minutes: int | None = None
 
 
 class WarehouseIn(BaseModel):
@@ -182,6 +185,8 @@ class ChangeLogOut(BaseModel):
     created_at: datetime
     actor_name: str = ""
     actor_role: str = ""
+    warehouse_id: int | None = None
+    warehouse_name: str = ""
     critical_field: str | None = None
     old_value: str | None = None
     new_value: str | None = None

@@ -1,13 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import ConfirmDialog from "./ConfirmDialog";
 import AppointmentReschedulePanel from "./AppointmentReschedulePanel";
 import { getAppointmentSchedule } from "../utils/businessTime";
+import MonthYearSelects from "./MonthYearSelects";
+import { APPOINTMENT_CANCEL_MINIMUM_NOTICE_HOURS } from "../utils/businessTime";
 import { getPeriodSelectorLabel, rangeNeedsPeriodSelector } from "../utils/reportRange";
 
 const field =
   "rounded-lg border border-slate-400 bg-white px-2 py-1.5 text-sm text-[#121212] focus:border-[#35783C] focus:outline-none focus:ring-2 focus:ring-[#35783C]/30";
 const actionButtonClass =
-  "min-h-11 w-full rounded-lg px-2.5 py-1.5 text-xs font-medium transition sm:w-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 disabled:opacity-40";
+  "min-h-11 w-full rounded-lg px-2.5 py-1.5 text-xs font-medium transition sm:w-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 disabled:cursor-not-allowed disabled:opacity-50";
+
+const MODAL_LAYER_Z = "z-[200]";
+const CONFIRM_LAYER_Z = "z-[220]";
 
 export default function AppointmentList({
   appointments,
@@ -46,7 +52,22 @@ export default function AppointmentList({
   const [appointmentIdFilter, setAppointmentIdFilter] = useState("");
   const [confirmCancelId, setConfirmCancelId] = useState(null);
   const [editAppointment, setEditAppointment] = useState(null);
+  const [staffActionBusy, setStaffActionBusy] = useState(false);
+  const [staffActionError, setStaffActionError] = useState("");
   const editAppointmentId = editAppointment?.id ?? null;
+
+  const runStaffAction = useCallback(async (action) => {
+    if (staffActionBusy) return;
+    setStaffActionError("");
+    setStaffActionBusy(true);
+    try {
+      await action();
+    } catch (err) {
+      setStaffActionError(err?.message || "No se pudo completar la acción.");
+    } finally {
+      setStaffActionBusy(false);
+    }
+  }, [staffActionBusy]);
 
   useEffect(() => {
     if (editAppointmentId == null) return;
@@ -64,8 +85,18 @@ export default function AppointmentList({
     const found = appointments.find((a) => Number(a.id) === Number(openAppointmentId));
     if (!found) return;
     setEditAppointment(found);
+    setAppointmentIdFilter(String(openAppointmentId));
     onOpenAppointmentHandled?.();
   }, [openAppointmentId, appointments, onOpenAppointmentHandled]);
+
+  useEffect(() => {
+    if (!editAppointment) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [editAppointment]);
 
   const filteredAppointments = useMemo(() => {
     const companyNeedle = companyFilter.trim().toLowerCase();
@@ -111,62 +142,101 @@ export default function AppointmentList({
   const canRescheduleAppointment = (appointment) =>
     appointment.status === "sin_revision" || appointment.status === "revisado";
 
-  const canExtendDuration = (appointment) =>
-    appointment.status === "sin_revision" &&
-    !(role === "Logistica" && appointment.logistics_extend_used);
+  const isAdminOrBodega = role === "Admin" || role === "AdminBodega";
+
+  const canExtendDuration = (appointment) => {
+    if (
+      appointment.status === "cancelado" ||
+      appointment.status === "finalizada" ||
+      appointment.status === "no_presentada"
+    ) {
+      return false;
+    }
+    if (role === "Logistica") {
+      if (appointment.status !== "sin_revision") return false;
+      return !appointment.logistics_extend_used;
+    }
+    if (isAdminOrBodega && (appointment.status === "sin_revision" || appointment.status === "revisado")) {
+      return true;
+    }
+    return appointment.status === "sin_revision";
+  };
+
+  const renderExtensionNote = (appointment) => {
+    const logisticsMin = Number(appointment.logistics_extend_minutes) || 0;
+    const totalMin = Number(appointment.total_extend_minutes) || 0;
+
+    // Para evitar incoherencias cuando la cita se reprograma/modifica (y vuelve a una duración anterior),
+    // mostramos el resumen simplificado solo desde el cálculo del backend (después del último reset).
+    if (isAdminOrBodega) {
+      if (totalMin <= 0) return null;
+      return (
+        <p className="mt-1 text-xs text-amber-800">
+          Se aumentó +{totalMin} min sobre la reserva original. Ver Auditorías para más información.
+        </p>
+      );
+    }
+
+    if (role === "Logistica") {
+      if (logisticsMin <= 0) return null;
+      return (
+        <p className="mt-1 text-xs text-amber-800">
+          Logística añadió +{logisticsMin} min. Ver Auditorías para más información.
+        </p>
+      );
+    }
+
+    return null;
+  };
 
   const renderStaffActions = (appointment) => {
     if (!canManageAppointment(appointment)) return null;
     const a = appointment;
+    const busy = staffActionBusy;
     return (
       <div className="mt-4 flex flex-wrap gap-2">
         {!(role === "Logistica" && a.status === "revisado") && (
           <>
             {canMarkSinRevision && (
               <button
+                type="button"
                 className={`${actionButtonClass} border border-sky-300 bg-sky-50 text-sky-900 hover:bg-sky-100`}
-                disabled={a.status === "sin_revision"}
-                onClick={() => onChangeStatus?.(a.id, "sin_revision")}
-                aria-label={`Marcar como sin revisión la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+                disabled={busy || a.status === "sin_revision"}
+                onClick={() => void runStaffAction(() => onChangeStatus?.(a.id, "sin_revision"))}
               >
                 Marcar sin revisión
               </button>
             )}
             <button
+              type="button"
               className={`${actionButtonClass} bg-[#35783C] text-white hover:bg-[#2d6532]`}
-              disabled={a.status === "revisado"}
-              onClick={() => onReview(a.id)}
-              aria-label={`Marcar como revisada la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+              disabled={busy || a.status === "revisado"}
+              onClick={() => void runStaffAction(() => onReview(a.id))}
             >
               Marcar revisado
             </button>
             <button
+              type="button"
               className={`${actionButtonClass} border border-[#35783C] bg-emerald-50 text-[#121212] hover:bg-emerald-100`}
-              disabled={a.status === "finalizada"}
-              onClick={() => onChangeStatus?.(a.id, "finalizada")}
-              aria-label={`Marcar como finalizada la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+              disabled={busy || a.status === "finalizada"}
+              onClick={() => void runStaffAction(() => onChangeStatus?.(a.id, "finalizada"))}
             >
               Marcar finalizada
             </button>
             <button
+              type="button"
               className={`${actionButtonClass} border border-slate-300 bg-slate-100 text-slate-900 hover:bg-slate-200`}
-              disabled={a.status === "no_presentada"}
-              onClick={() => onChangeStatus?.(a.id, "no_presentada")}
-              aria-label={`Marcar como no presentada la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+              disabled={busy || a.status === "no_presentada"}
+              onClick={() => void runStaffAction(() => onChangeStatus?.(a.id, "no_presentada"))}
             >
               Marcar no presentada
             </button>
             {canCancelAppointment && (
               <button
+                type="button"
                 className={`${actionButtonClass} border border-rose-300 bg-rose-50 text-rose-900 hover:bg-rose-100`}
-                disabled={a.status === "cancelado"}
-                title={
-                  role === "AdminBodega"
-                    ? "Cancelar la cita en tus bodegas asignadas"
-                    : "Cancelar la cita (administrador global)"
-                }
+                disabled={busy || a.status === "cancelado"}
                 onClick={() => setConfirmCancelId(a.id)}
-                aria-label={`Cancelar la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
               >
                 Cancelar cita
               </button>
@@ -176,51 +246,56 @@ export default function AppointmentList({
         {role === "Logistica" && a.status === "revisado" && (
           <>
             <button
+              type="button"
               className={`${actionButtonClass} border border-[#35783C] bg-emerald-50 text-[#121212] hover:bg-emerald-100`}
-              onClick={() => onChangeStatus?.(a.id, "finalizada")}
-              aria-label={`Confirmar finalizada la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+              disabled={busy}
+              onClick={() => void runStaffAction(() => onChangeStatus?.(a.id, "finalizada"))}
             >
               Confirmar finalizada
             </button>
             <button
+              type="button"
               className={`${actionButtonClass} border border-slate-300 bg-slate-100 text-slate-900 hover:bg-slate-200`}
-              onClick={() => onChangeStatus?.(a.id, "no_presentada")}
-              aria-label={`Confirmar no presentada la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+              disabled={busy}
+              onClick={() => void runStaffAction(() => onChangeStatus?.(a.id, "no_presentada"))}
             >
               Confirmar no presentada
             </button>
           </>
         )}
-        {!reviewMode && canExtendDuration(a) && !(role === "Logistica" && a.status === "revisado") && (
+        {!reviewMode && canExtendDuration(a) && (isAdminOrBodega || !(role === "Logistica" && a.status === "revisado")) && (
           <button
+            type="button"
             className={`${actionButtonClass} border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100`}
-            onClick={() => onExtend(a.id, 30)}
-            title="Extiende 30 min si no hay otra cita pegada después"
-            aria-label={`Extender 30 minutos la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+            disabled={busy}
+            onClick={() => void runStaffAction(() => onExtend(a.id, 30))}
           >
             Extender +30 min
           </button>
         )}
-        {reviewMode && canExtendDuration(a) && !(role === "Logistica" && a.status === "revisado") && (
+        {reviewMode && canExtendDuration(a) && (isAdminOrBodega || !(role === "Logistica" && a.status === "revisado")) && (
           <>
             <button
+              type="button"
               className={`${actionButtonClass} border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100`}
-              onClick={() => onExtend(a.id, 30)}
-              aria-label={`Extender 30 minutos la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+              disabled={busy}
+              onClick={() => void runStaffAction(() => onExtend(a.id, 30))}
             >
               +30 min
             </button>
             <button
+              type="button"
               className={`${actionButtonClass} border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100`}
-              onClick={() => onExtend(a.id, 60)}
-              aria-label={`Extender 60 minutos la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+              disabled={busy}
+              onClick={() => void runStaffAction(() => onExtend(a.id, 60))}
             >
               +60 min
             </button>
             <button
+              type="button"
               className={`${actionButtonClass} border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100`}
-              onClick={() => onExtend(a.id, 90)}
-              aria-label={`Extender 90 minutos la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
+              disabled={busy}
+              onClick={() => void runStaffAction(() => onExtend(a.id, 90))}
             >
               +90 min
             </button>
@@ -265,11 +340,7 @@ export default function AppointmentList({
           <p className="text-sm text-slate-700">
             Termina a las <span className="font-medium">{schedule.endLine}</span>
           </p>
-          {appointment.logistics_extend_used && (
-            <p className="mt-1 text-xs text-amber-800">
-              La duración ya fue extendida por Logística; el horario de arriba incluye ese tiempo adicional.
-            </p>
-          )}
+          {renderExtensionNote(appointment)}
         </div>
         <p className={`mt-2 text-sm ${statusMeta(appointment.status).className}`}>
           Estado: {`${statusMeta(appointment.status).icon} ${statusMeta(appointment.status).label}`}
@@ -278,21 +349,103 @@ export default function AppointmentList({
     );
   };
 
+  const editModal =
+    editAppointment &&
+    createPortal(
+      <div className={`fixed inset-0 ${MODAL_LAYER_Z} flex items-center justify-center p-4`}>
+        <button
+          type="button"
+          className="absolute inset-0 z-0 cursor-default bg-slate-900/55"
+          aria-label="Cerrar detalle de cita"
+          disabled={staffActionBusy}
+          onClick={() => !staffActionBusy && setEditAppointment(null)}
+        />
+        <div
+          className="relative z-10 max-h-[min(90vh,42rem)] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-2xl"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="appointment-dialog-title"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <h3 id="appointment-dialog-title" className="text-lg font-semibold text-slate-900">
+              Cita #{editAppointment.id}
+            </h3>
+            <button
+              type="button"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              disabled={staffActionBusy}
+              onClick={() => setEditAppointment(null)}
+            >
+              Cerrar
+            </button>
+          </div>
+          {isLogisticaClosed(editAppointment) && (
+            <p className="mt-3 text-xs font-medium text-amber-700">
+              Esta cita ya está cerrada. Solo se muestra el estado.
+            </p>
+          )}
+          <div className="mt-3">{renderAppointmentDetails(editAppointment)}</div>
+          {canManageAppointment(editAppointment) &&
+            canRescheduleAppointment(editAppointment) &&
+            onReschedule && (
+              <AppointmentReschedulePanel
+                appointment={editAppointment}
+                variant="staff"
+                staffRole={role}
+                warehouses={warehouses}
+                inputClass={field}
+                buttonClass={`${actionButtonClass} bg-[#35783C] text-white hover:bg-[#2d6532]`}
+                confirmOverlayZIndexClass={CONFIRM_LAYER_Z}
+                onReschedule={async (payload) => {
+                  await onReschedule(payload);
+                  setEditAppointment(null);
+                }}
+              />
+            )}
+          {staffActionError && (
+            <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800" role="alert">
+              {staffActionError}
+            </p>
+          )}
+          {staffActionBusy && (
+            <p className="mt-2 text-xs text-slate-500" aria-live="polite">
+              Guardando cambios…
+            </p>
+          )}
+          {renderStaffActions(editAppointment)}
+        </div>
+      </div>,
+      document.body
+    );
+
+  const cancelConfirmDialog = createPortal(
+    <ConfirmDialog
+      open={confirmCancelId !== null}
+      title="Cancelar cita"
+      danger
+      confirmLabel="Sí, cancelar"
+      overlayZIndexClass={CONFIRM_LAYER_Z}
+      onCancel={() => setConfirmCancelId(null)}
+      onConfirm={() => {
+        const id = confirmCancelId;
+        setConfirmCancelId(null);
+        if (id != null) {
+          void runStaffAction(async () => {
+            await onChangeStatus?.(id, "cancelado");
+          });
+        }
+      }}
+    >
+      ¿Seguro que deseas cancelar esta cita? Solo se permite con al menos {APPOINTMENT_CANCEL_MINIMUM_NOTICE_HOURS}{" "}
+      horas de anticipación (validado en el servidor).
+    </ConfirmDialog>,
+    document.body
+  );
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <ConfirmDialog
-        open={confirmCancelId !== null}
-        title="Cancelar cita"
-        danger
-        confirmLabel="Sí, cancelar"
-        onCancel={() => setConfirmCancelId(null)}
-        onConfirm={() => {
-          if (confirmCancelId !== null) onChangeStatus?.(confirmCancelId, "cancelado");
-          setConfirmCancelId(null);
-        }}
-      >
-        ¿Seguro que deseas cancelar esta cita? Solo se permite con al menos 24 horas de anticipación (validado en el servidor).
-      </ConfirmDialog>
+      {cancelConfirmDialog}
+      {editModal}
       <h2 className="mb-3 text-lg font-semibold text-slate-900">{title}</h2>
 
       {isStaffRole && (
@@ -312,10 +465,16 @@ export default function AppointmentList({
               {viewMode === "day" && (
                 <div className="sm:col-span-1">
                   <label htmlFor="appt-list-filter-day" className="mb-1 block text-xs font-medium text-slate-600">Día</label>
-                  <input id="appt-list-filter-day" type="date" className={field + " w-full"} value={filterDay} onChange={(e) => onFilterDayChange(e.target.value)} />
+                  <input
+                    id="appt-list-filter-day"
+                    type="date"
+                    className={field + " w-full"}
+                    value={filterDay}
+                    onChange={(e) => onFilterDayChange(e.target.value)}
+                  />
                 </div>
               )}
-              {rangeNeedsPeriodSelector(viewMode) && (
+              {(viewMode === "week" || viewMode === "biweekly") && viewPeriodOptions.length > 0 && (
                 <div className="sm:col-span-1">
                   <label htmlFor="appt-list-filter-period" className="mb-1 block text-xs font-medium text-slate-600">
                     {getPeriodSelectorLabel(viewMode)}
@@ -335,30 +494,16 @@ export default function AppointmentList({
                 </div>
               )}
               {viewMode === "month" && (
-                <>
-                  <div className="sm:col-span-1">
-                    <label htmlFor="appt-list-filter-month" className="mb-1 block text-xs font-medium text-slate-600">Mes</label>
-                    <select id="appt-list-filter-month" className={field} value={filterMonth} onChange={(e) => onFilterMonthChange(Number(e.target.value))}>
-                      {Array.from({ length: 12 }, (_, i) => (
-                        <option key={i + 1} value={i + 1}>
-                          {new Date(2000, i, 1).toLocaleString("es", { month: "long" })}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="sm:col-span-1">
-                    <label htmlFor="appt-list-filter-year" className="mb-1 block text-xs font-medium text-slate-600">Año</label>
-                    <input
-                      id="appt-list-filter-year"
-                      type="number"
-                      min={2000}
-                      max={2100}
-                      className={field + " w-full"}
-                      value={filterYear}
-                      onChange={(e) => onFilterYearChange(Number(e.target.value))}
-                    />
-                  </div>
-                </>
+                <MonthYearSelects
+                  month={filterMonth}
+                  year={filterYear}
+                  onMonthChange={onFilterMonthChange}
+                  onYearChange={onFilterYearChange}
+                  inputClass={field + " w-full"}
+                  monthId="appt-list-filter-month"
+                  yearId="appt-list-filter-year"
+                  cellClassName="sm:col-span-1"
+                />
               )}
             </>
           )}
@@ -450,7 +595,10 @@ export default function AppointmentList({
                 <button
                   type="button"
                   className={`${actionButtonClass} shrink-0 border border-[#35783C] bg-white text-[#35783C] hover:bg-emerald-50`}
-                  onClick={() => setEditAppointment(a)}
+                  onClick={() => {
+                    setStaffActionError("");
+                    setEditAppointment(a);
+                  }}
                   aria-label={`${canManageAppointment(a) ? "Editar" : "Ver"} la cita #${a.id} de ${a.provider_name || "proveedor sin nombre"}`}
                 >
                   {canManageAppointment(a) ? "Editar cita" : "Ver cita"}
@@ -466,60 +614,6 @@ export default function AppointmentList({
         );
         })}
       </div>
-
-      {editAppointment && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-          role="presentation"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/45"
-            aria-label="Cerrar diálogo de cita"
-            onClick={() => setEditAppointment(null)}
-          />
-          <div
-            className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-xl"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="appointment-dialog-title"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <h3 id="appointment-dialog-title" className="text-lg font-semibold text-slate-900">
-                Cita #{editAppointment.id}
-              </h3>
-              <button
-                type="button"
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                onClick={() => setEditAppointment(null)}
-              >
-                Cerrar
-              </button>
-            </div>
-            {isLogisticaClosed(editAppointment) && (
-              <p className="mt-3 text-xs font-medium text-amber-700">
-                Esta cita ya está cerrada. Solo se muestra el estado.
-              </p>
-            )}
-            <div className="mt-3">{renderAppointmentDetails(editAppointment)}</div>
-            {canManageAppointment(editAppointment) && canRescheduleAppointment(editAppointment) && onReschedule && (
-              <AppointmentReschedulePanel
-                appointment={editAppointment}
-                variant="staff"
-                staffRole={role}
-                warehouses={warehouses}
-                inputClass={field}
-                buttonClass={`${actionButtonClass} bg-[#35783C] text-white hover:bg-[#2d6532]`}
-                onReschedule={async (payload) => {
-                  await onReschedule(payload);
-                  setEditAppointment(null);
-                }}
-              />
-            )}
-            {renderStaffActions(editAppointment)}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

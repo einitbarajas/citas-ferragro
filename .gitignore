@@ -12,6 +12,7 @@ backend/.venv_external
 
 # Python cache
 __pycache__/
+.pytest_cache/
 *.py[cod]
 
 # Node modules and build artifacts

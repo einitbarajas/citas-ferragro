@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Evita render/layout de bloques fuera de viewport en primer paint. */
+.content-visibility-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 900px;
+}
+
 html,
 body,
 #root {

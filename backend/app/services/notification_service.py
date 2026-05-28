@@ -13,6 +13,7 @@ from app.models.user import User, UserRole
 from app.models.user_notification import UserNotification
 from app.models.user_warehouse import UserWarehouse
 from app.services.email_dispatch import dispatch_notification_email
+from app.services.email_utils import dedupe_emails
 
 WAREHOUSE_SCOPED_STAFF_ROLES = (UserRole.logistica, UserRole.admin_bodega)
 INTERNAL_STAFF_ROLES = (UserRole.admin,) + WAREHOUSE_SCOPED_STAFF_ROLES
@@ -23,21 +24,6 @@ def _format_start_local(appointment: Appointment) -> str:
     return appointment.start_time.astimezone(tz).strftime("%d/%m/%Y %H:%M")
 
 
-def _dedupe_emails(emails: list[str]) -> list[str]:
-    seen: set[str] = set()
-    unique: list[str] = []
-    for email in emails:
-        normalized = str(email or "").strip()
-        if not normalized:
-            continue
-        key = normalized.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(normalized)
-    return unique
-
-
 def _staff_emails_for_role(db: Session, role_name: str) -> list[str]:
     rows = db.execute(
         select(Credential.email)
@@ -45,7 +31,7 @@ def _staff_emails_for_role(db: Session, role_name: str) -> list[str]:
         .join(Role, User.role_id == Role.id)
         .where(Role.name == role_name)
     ).scalars().all()
-    return _dedupe_emails([str(email) for email in rows])
+    return dedupe_emails([str(email) for email in rows])
 
 
 def _staff_emails_for_warehouse_role(db: Session, warehouse_id: int, role_name: str) -> list[str]:
@@ -56,7 +42,7 @@ def _staff_emails_for_warehouse_role(db: Session, warehouse_id: int, role_name: 
         .join(UserWarehouse, UserWarehouse.document_id == User.document_id)
         .where(Role.name == role_name, UserWarehouse.warehouse_id == int(warehouse_id))
     ).scalars().all()
-    return _dedupe_emails([str(email) for email in rows])
+    return dedupe_emails([str(email) for email in rows])
 
 
 def _warehouse_staff_emails(db: Session, warehouse_id: int) -> list[str]:
@@ -64,7 +50,7 @@ def _warehouse_staff_emails(db: Session, warehouse_id: int) -> list[str]:
     emails.extend(_staff_emails_for_role(db, UserRole.admin))
     for role in WAREHOUSE_SCOPED_STAFF_ROLES:
         emails.extend(_staff_emails_for_warehouse_role(db, warehouse_id, role))
-    return _dedupe_emails(emails)
+    return dedupe_emails(emails)
 
 
 def _provider_credential_email(db: Session, provider_id: int) -> str | None:
@@ -86,12 +72,12 @@ def _appointment_stakeholder_emails(
     if include_provider:
         provider_email = _provider_credential_email(db, int(appointment.provider_id))
         if provider_email:
-            emails = _dedupe_emails(emails + [provider_email])
+            emails = dedupe_emails(emails + [provider_email])
     return emails
 
 
 def _dispatch_notification_emails(to_emails: list[str], *, title: str, message: str) -> None:
-    for to_email in _dedupe_emails(to_emails):
+    for to_email in dedupe_emails(to_emails):
         dispatch_notification_email(to_email, title, message)
 
 
@@ -221,4 +207,55 @@ def notify_staff_provider_cancelled(
         title=title,
         message=message,
         include_provider=True,
+    )
+
+
+def _format_deadline_local(deadline_utc: datetime) -> str:
+    tz = ZoneInfo(settings.business_timezone)
+    aware = deadline_utc if deadline_utc.tzinfo else deadline_utc.replace(tzinfo=timezone.utc)
+    return aware.astimezone(tz).strftime("%d/%m/%Y %H:%M")
+
+
+def notify_staff_finalization_window_started(
+    db: Session,
+    appointment: Appointment,
+    *,
+    deadline_utc: datetime,
+) -> None:
+    """Avisa a staff que la cita ya inició y tienen 15 min para marcar finalizada."""
+    if appointment.status != AppointmentStatus.revisado:
+        return
+    start_label = _format_start_local(appointment)
+    deadline_label = _format_deadline_local(deadline_utc)
+    title = f"Cita #{appointment.id}: marcar finalizada en los próximos 15 min"
+    message = (
+        f"La cita revisada programada para {start_label} ya está en curso. "
+        f"Tienes hasta {deadline_label} ({settings.business_timezone}) para marcarla como finalizada "
+        "en el sistema. Si no se marca a tiempo, pasará automáticamente a no presentada."
+    )
+    _notify_appointment_stakeholders(
+        db,
+        appointment,
+        kind="finalizacion_15min_alerta",
+        title=title,
+        message=message,
+        include_provider=False,
+    )
+
+
+def notify_staff_no_presentada_auto(db: Session, appointment: Appointment) -> None:
+    """Avisa a staff que la cita pasó a no presentada por vencimiento de la ventana."""
+    start_label = _format_start_local(appointment)
+    title = f"Cita #{appointment.id} marcada automáticamente como no presentada"
+    message = (
+        f"La cita revisada de {start_label} no fue marcada como finalizada dentro de los "
+        "15 minutos posteriores a la hora de la cita. El sistema la registró como no presentada."
+    )
+    _notify_appointment_stakeholders(
+        db,
+        appointment,
+        kind="no_presentada_auto",
+        title=title,
+        message=message,
+        include_provider=False,
     )

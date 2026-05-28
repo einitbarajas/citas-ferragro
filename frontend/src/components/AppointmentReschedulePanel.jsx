@@ -44,6 +44,7 @@ export default function AppointmentReschedulePanel({
   buttonClass,
   onReschedule,
   loadProviderDayAvailability,
+  confirmOverlayZIndexClass = "z-[110]",
 }) {
   const [dateValue, setDateValue] = useState(() => toDateInputValue(appointment.start_time));
   const [timeValue, setTimeValue] = useState(() => {
@@ -224,6 +225,33 @@ export default function AppointmentReschedulePanel({
 
   const slotKeys = useMemo(() => slots.map((s) => slotKey(s)), [slots]);
 
+  function addMinutesToLocalTime(startLocal, minutesToAdd) {
+    const [sh, sm] = String(startLocal || "")
+      .split(":")
+      .map((v) => Number(v));
+    const add = Number(minutesToAdd);
+    if (!Number.isFinite(sh) || !Number.isFinite(sm) || !Number.isFinite(add)) return "";
+    const total = sh * 60 + sm + add;
+    const wrapped = ((total % 1440) + 1440) % 1440; // permite cruzar el día
+    const eh = Math.floor(wrapped / 60);
+    const em = wrapped % 60;
+    return `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
+  }
+
+  const syntheticSelectedSlotLabel = useMemo(() => {
+    if (!usesSlotPicker) return null;
+    const parsed = parseSlotKey(timeValue);
+    if (!parsed) return null;
+    if (slotKeys.includes(timeValue)) return null; // ya está entre las franjas disponibles
+    const endLocal = addMinutesToLocalTime(parsed.start_local, parsed.duration_minutes);
+    if (!endLocal) return null;
+    return formatSlotLabel({
+      start_local: parsed.start_local,
+      end_local: endLocal,
+      duration_minutes: parsed.duration_minutes,
+    });
+  }, [usesSlotPicker, timeValue, slotKeys]);
+
   const selectedWarehouseName = useMemo(() => {
     const fromList = warehouses.find((w) => String(w.id) === String(effectiveWarehouseId))?.name;
     if (fromList) return fromList;
@@ -241,13 +269,13 @@ export default function AppointmentReschedulePanel({
       describeProviderSlotAvailability({
         loading: loadingSlots,
         loadError: slotError,
-        hasExistingAppointment: false,
         reason: slotReason,
         message: slotMessage,
         minimumNoticeHours,
-        selectedDayOpen: true,
+        selectedDayOpen: false,
+        hasAvailableSlots: slotKeys.length > 0,
       }),
-    [loadingSlots, slotError, slotReason, slotMessage, minimumNoticeHours]
+    [loadingSlots, slotError, slotReason, slotMessage, minimumNoticeHours, slotKeys.length]
   );
 
   const buildStaffPayload = (chosen, { confirmOverride = false, staffChangeReason = "" } = {}) => {
@@ -509,6 +537,9 @@ export default function AppointmentReschedulePanel({
                   </option>
                 ))
               )}
+              {syntheticSelectedSlotLabel ? (
+                <option value={timeValue}>{syntheticSelectedSlotLabel}</option>
+              ) : null}
             </select>
           ) : (
             <input
@@ -522,8 +553,13 @@ export default function AppointmentReschedulePanel({
           )}
         </div>
       </div>
-      {variant === "provider" && availabilityCopy.detail && (
-        <p className="mt-2 text-xs text-amber-800">{availabilityCopy.detail}</p>
+      {variant === "provider" && loadingSlots && (
+        <p className="mt-2 text-xs text-slate-500">Consultando franjas disponibles…</p>
+      )}
+      {variant === "provider" && !loadingSlots && slotKeys.length === 0 && availabilityCopy.detail && (
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-relaxed text-amber-950">
+          {availabilityCopy.detail}
+        </p>
       )}
       {variant === "staff" && slotError && <p className="mt-2 text-xs text-amber-800">{slotError}</p>}
       {formError && <p className="mt-2 text-xs text-rose-700">{formError}</p>}
@@ -540,7 +576,7 @@ export default function AppointmentReschedulePanel({
         title="¿Confirmar cambio de cita?"
         confirmLabel="Sí, cambiar cita"
         cancelLabel="Cancelar"
-        overlayZIndexClass="z-[110]"
+        overlayZIndexClass={confirmOverlayZIndexClass}
         onCancel={() => {
           setSaveConfirmOpen(false);
           setPendingSavePayload(null);
@@ -581,6 +617,7 @@ export default function AppointmentReschedulePanel({
           setOverrideErrorMessage("");
         }}
         onConfirm={onConfirmOverride}
+        overlayZIndexClass={confirmOverlayZIndexClass}
       />
     </form>
   );

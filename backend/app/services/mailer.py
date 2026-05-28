@@ -1,13 +1,15 @@
 """Utilidad simple de correo SMTP (fallback a logs si no hay SMTP_HOST)."""
 import logging
+import smtplib
+from contextlib import contextmanager
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from pathlib import Path
-import smtplib
 
 from app.core.config import settings
+from app.services.email_utils import is_deliverable_email, normalize_email
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,41 @@ COMPANY_ADDRESS = "Carrera 41 #46-167, Itagui-Ant"
 COMPANY_WEBSITE = "https://www.ferragro.com"
 LOGO_PATH = Path(__file__).resolve().parents[3] / "frontend" / "public" / "ferragro-blan-bord.png"
 LOGO_CID = "ferragro-logo-watermark"
+
+
+@contextmanager
+def _smtp_client():
+    """Conexión unificada: STARTTLS (587) o SSL directo (465), según configuración."""
+    if settings.smtp_use_ssl:
+        client = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=30)
+        try:
+            client.ehlo()
+            if settings.smtp_user:
+                client.login(settings.smtp_user, settings.smtp_password)
+            yield client
+        finally:
+            client.quit()
+        return
+
+    client = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30)
+    try:
+        client.ehlo()
+        if settings.smtp_use_tls:
+            client.starttls()
+            client.ehlo()
+        if settings.smtp_user:
+            client.login(settings.smtp_user, settings.smtp_password)
+        yield client
+    finally:
+        client.quit()
+
+
+def _reply_to_address() -> str:
+    explicit = normalize_email(settings.smtp_reply_to)
+    if explicit:
+        return explicit
+    from_addr = normalize_email(settings.smtp_from_email)
+    return from_addr or SUPPORT_EMAIL
 
 
 def _build_mail_layout(body_html: str) -> str:
@@ -69,12 +106,17 @@ def _build_mail_layout(body_html: str) -> str:
 
 
 def send_branded_email(subject: str, to_email: str, plain_body: str, content_html: str) -> bool:
+    delivery = normalize_email(to_email)
+    if not delivery or not is_deliverable_email(delivery):
+        logger.warning("Correo no enviado (destinatario inválido): %r subject=%s", to_email, subject)
+        return False
+
     html_body = _build_mail_layout(content_html)
 
     if not settings.smtp_configured:
         logger.warning(
             "Correo no enviado (SMTP no configurado). to=%s subject=%s",
-            to_email,
+            delivery,
             subject,
         )
         return False
@@ -82,7 +124,8 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
     message = MIMEMultipart("related")
     message["Subject"] = subject
     message["From"] = formataddr((settings.smtp_from_name, settings.smtp_from_email))
-    message["To"] = to_email
+    message["To"] = delivery
+    message["Reply-To"] = _reply_to_address()
     alternative_part = MIMEMultipart("alternative")
     alternative_part.attach(MIMEText(plain_body, "plain", _charset="utf-8"))
     alternative_part.attach(MIMEText(html_body, "html", _charset="utf-8"))
@@ -95,14 +138,8 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
         message.attach(logo_mime)
 
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as client:
-            client.ehlo()
-            if settings.smtp_use_tls:
-                client.starttls()
-                client.ehlo()
-            if settings.smtp_user:
-                client.login(settings.smtp_user, settings.smtp_password)
-            client.sendmail(settings.smtp_from_email, [to_email], message.as_string())
+        with _smtp_client() as client:
+            client.sendmail(settings.smtp_from_email, [delivery], message.as_string())
         return True
     except smtplib.SMTPAuthenticationError as exc:
         logger.error(
@@ -113,7 +150,7 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
         )
         raise
     except smtplib.SMTPException as exc:
-        logger.error("SMTP error al enviar a %s: %s", to_email, exc)
+        logger.error("SMTP error al enviar a %s: %s", delivery, exc)
         raise
 
 

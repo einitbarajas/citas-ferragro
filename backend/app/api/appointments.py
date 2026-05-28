@@ -55,7 +55,34 @@ def _title_from_appointment(appointment: Appointment) -> str:
     return (first[:120] if first else "Cita")
 
 
-def _serialize(appointment: Appointment) -> AppointmentOut:
+def _extension_out_fields(summary) -> dict:
+    from app.services.appointment_extension import ExtensionSummary
+
+    if summary is None:
+        return {
+            "logistics_extend_used": False,
+            "logistics_extend_minutes": 0,
+            "total_extend_minutes": 0,
+            "original_duration_minutes": None,
+        }
+    if not isinstance(summary, ExtensionSummary):
+        return _extension_out_fields(None)
+    return {
+        "logistics_extend_used": summary.logistics_extend_used,
+        "logistics_extend_minutes": summary.logistics_extend_minutes,
+        "total_extend_minutes": summary.total_extend_minutes,
+        "original_duration_minutes": summary.original_duration_minutes,
+    }
+
+
+def _serialize(
+    appointment: Appointment,
+    *,
+    logistics_extend_used: bool = False,
+    logistics_extend_minutes: int = 0,
+    total_extend_minutes: int = 0,
+    original_duration_minutes: int | None = None,
+) -> AppointmentOut:
     warehouse_name = appointment.warehouse.name if appointment.warehouse else ""
     team_name = ""
     if appointment.warehouse_unload_team is not None:
@@ -74,7 +101,22 @@ def _serialize(appointment: Appointment) -> AppointmentOut:
         start_time=appointment.start_time,
         duration_minutes=appointment.duration_minutes,
         status=appointment.status,
+        logistics_extend_used=logistics_extend_used,
+        logistics_extend_minutes=logistics_extend_minutes,
+        total_extend_minutes=total_extend_minutes,
+        original_duration_minutes=original_duration_minutes,
     )
+
+
+def _serialize_with_extension(db: Session, appointment: Appointment) -> AppointmentOut:
+    from app.services.appointment_extension import get_extension_summaries
+
+    summaries = get_extension_summaries(
+        db,
+        [appointment.id],
+        current_durations={appointment.id: int(appointment.duration_minutes)},
+    )
+    return _serialize(appointment, **_extension_out_fields(summaries.get(int(appointment.id))))
 
 
 def _local_day_utc_bounds(target_day: date) -> tuple[datetime, datetime]:
@@ -180,11 +222,14 @@ def create_appointment(
     day_local = payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).date()
     get_active_warehouse_or_raise(db, payload.warehouse_id)
     team = get_unload_team_or_raise(db, payload.warehouse_id, payload.warehouse_unload_team_id)
-    windows, _ = resolve_team_windows_for_day(db, day_local, payload.warehouse_id, team.id)
-    if not windows:
+    windows, source = resolve_team_windows_for_day(db, day_local, payload.warehouse_id, team.id)
+    if not windows or source != "date_override":
         raise HTTPException(
             status_code=400,
-            detail="Este día no tiene turnos habilitados para el equipo seleccionado.",
+            detail=(
+                "La empresa aún no ha publicado horarios para agendar en esta fecha. "
+                "Elige un día marcado en verde claro en el calendario."
+            ),
         )
     enforce_minimum_notice(payload.start_time, minimum_hours=settings.appointment_minimum_notice_hours)
     assert_appointment_slot(
@@ -214,7 +259,7 @@ def create_appointment(
         status=AppointmentStatus.sin_revision,
     )
     db.add(appointment)
-    db.commit()
+    db.flush()
     notify_staff_review_needed(db, appointment)
     db.commit()
     appointment = db.execute(
@@ -226,7 +271,7 @@ def create_appointment(
         )
         .where(Appointment.id == appointment.id)
     ).unique().scalar_one()
-    return _serialize(appointment)
+    return _serialize_with_extension(db, appointment)
 
 
 @router.get("/unload-teams")
@@ -336,9 +381,19 @@ def list_appointments(
 
     offset = (page - 1) * page_size
     rows = db.execute(stmt.offset(offset).limit(page_size)).unique().scalars().all()
+    from app.services.appointment_extension import get_extension_summaries
+
+    ext_summaries = get_extension_summaries(
+        db,
+        [a.id for a in rows],
+        current_durations={a.id: int(a.duration_minutes) for a in rows},
+    )
     return ok_response(
         {
-            "items": [_serialize(a).model_dump() for a in rows],
+            "items": [
+                _serialize(a, **_extension_out_fields(ext_summaries.get(int(a.id)))).model_dump()
+                for a in rows
+            ],
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -402,20 +457,23 @@ def list_available_slots_for_provider_day(
         assert_warehouse_access(db, principal, warehouse_id)
     team = get_unload_team_or_raise(db, warehouse_id, unload_team_id)
     windows, source = resolve_team_windows_for_day(db, day, warehouse_id, team.id)
-    if not windows:
+    if not windows or (not is_staff and source != "date_override"):
         return ok_response(
             {
                 "day": str(day),
                 "warehouse_id": warehouse_id,
                 "unload_team_id": team.id,
                 "unload_team_name": team.name,
-                "source": "none",
+                "source": source if windows else "none",
                 "available_slots": [],
                 "available_times": [],
                 "minimum_notice_hours": minimum_hours,
                 "unavailable_reason": "no_windows",
                 "unavailable_message": (
-                    f"Este día no tiene turnos habilitados para {team.name} en esta bodega."
+                    "La empresa aún no ha publicado horarios para agendar en esta fecha. "
+                    "Elige un día marcado en verde claro en el calendario."
+                    if not is_staff
+                    else f"Este día no tiene turnos habilitados para {team.name} en esta bodega."
                 ),
             },
             "Disponibilidad obtenida",
@@ -489,6 +547,33 @@ def list_available_slots_for_provider_day(
     return ok_response(payload, "Disponibilidad obtenida")
 
 
+@router.get("/{appointment_id}")
+def get_appointment(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    principal: SecurityPrincipal = Depends(
+        require_roles(*STAFF_ROLES, UserRole.proveedor)
+    ),
+):
+    appt = db.execute(
+        select(Appointment)
+        .options(
+            joinedload(Appointment.provider),
+            joinedload(Appointment.warehouse),
+            joinedload(Appointment.warehouse_unload_team),
+        )
+        .where(Appointment.id == appointment_id)
+    ).unique().scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+    if principal.role_name == UserRole.proveedor:
+        if int(appt.provider_id) != int(principal.subject):
+            raise HTTPException(status_code=403, detail="No autorizado para ver esta cita")
+    else:
+        assert_warehouse_access(db, principal, appt.warehouse_id)
+    return ok_response(_serialize_with_extension(db, appt).model_dump(), "Cita obtenida")
+
+
 @router.patch("/{appointment_id}/status", response_model=AppointmentOut)
 def update_status(
     appointment_id: int,
@@ -511,10 +596,13 @@ def update_status(
             raise HTTPException(status_code=403, detail="Logística no está autorizada para cancelar citas")
         if principal.role_name not in WAREHOUSE_ADMIN_ROLES:
             now_utc = datetime.now(timezone.utc)
-            if appt.start_time - now_utc < timedelta(hours=24):
+            cancel_hours = settings.appointment_cancel_minimum_notice_hours
+            if appt.start_time - now_utc < timedelta(hours=cancel_hours):
                 raise HTTPException(
                     status_code=400,
-                    detail="La cita solo se puede cancelar con minimo 24 horas de anticipacion",
+                    detail=(
+                        f"La cita solo se puede cancelar con mínimo {cancel_hours} horas de anticipación"
+                    ),
                 )
     old_status = appt.status
     appt.status = payload.status
@@ -537,7 +625,7 @@ def update_status(
     )
     db.commit()
     db.refresh(appt)
-    return _serialize(appt)
+    return _serialize_with_extension(db, appt)
 
 
 @router.patch("/{appointment_id}/extend", response_model=AppointmentOut)
@@ -566,7 +654,10 @@ def extend_appointment(
             actor_id=principal.document_id,
             appointment_id=appt.id,
             action="extend_duration",
-            description=f"Duración extendida de {old_duration} a {appt.duration_minutes} minutos (+{payload.extra_minutes})",
+            description=(
+                f"Duración extendida de {old_duration} a {appt.duration_minutes} minutos "
+                f"(+{payload.extra_minutes}) [actor_role={principal.role_name}]"
+            ),
             created_at=datetime.now(timezone.utc),
             critical_field="duracion_minutos",
             old_value=str(old_duration),
@@ -580,7 +671,7 @@ def extend_appointment(
     )
     db.commit()
     db.refresh(appt)
-    return _serialize(appt)
+    return _serialize_with_extension(db, appt)
 
 
 @router.patch("/{appointment_id}/reschedule", response_model=AppointmentOut)
@@ -651,7 +742,7 @@ def provider_reschedule_appointment(
     notify_staff_review_needed(db, appt)
     db.commit()
     db.refresh(appt)
-    return _serialize(appt)
+    return _serialize_with_extension(db, appt)
 
 
 @router.post("/{appointment_id}/provider-cancel", response_model=AppointmentOut)
@@ -669,8 +760,12 @@ def provider_cancel_appointment(
     if appt.status in {AppointmentStatus.cancelado, AppointmentStatus.finalizada, AppointmentStatus.no_presentada}:
         raise HTTPException(status_code=400, detail="Esta cita ya no puede cancelarse")
     now_utc = datetime.now(timezone.utc)
-    if appt.start_time - now_utc < timedelta(hours=2):
-        raise HTTPException(status_code=400, detail="La cita solo se puede cancelar con mínimo 2 horas de anticipación")
+    cancel_hours = settings.appointment_cancel_minimum_notice_hours
+    if appt.start_time - now_utc < timedelta(hours=cancel_hours):
+        raise HTTPException(
+            status_code=400,
+            detail=f"La cita solo se puede cancelar con mínimo {cancel_hours} horas de anticipación",
+        )
     appt.status = AppointmentStatus.cancelado
     reason = payload.reason.strip()
     provider = db.get(Provider, int(appt.provider_id))
@@ -687,4 +782,4 @@ def provider_cancel_appointment(
     notify_staff_provider_cancelled(db, appt, reason=reason, provider_label=provider_label)
     db.commit()
     db.refresh(appt)
-    return _serialize(appt)
+    return _serialize_with_extension(db, appt)

@@ -1,6 +1,9 @@
-"""Envío de correos transaccionales sin bloquear la operación principal."""
+"""Envío de correos transaccionales en segundo plano (no bloquea la respuesta HTTP)."""
+import atexit
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
+from app.services.email_utils import dedupe_emails, is_deliverable_email, normalize_email
 from app.services.mailer import send_internal_welcome_email, send_notification_email, send_welcome_email
 
 logger = logging.getLogger(__name__)
@@ -13,38 +16,71 @@ _PROVIDER_ACTION_TITLES = {
     "purged": "Datos de proveedor purgados",
 }
 
+_email_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ferragro-email")
+
+
+def shutdown_email_executor() -> None:
+    _email_executor.shutdown(wait=False, cancel_futures=True)
+
+
+atexit.register(shutdown_email_executor)
+
+
+def _run_in_email_pool(fn, *args, **kwargs) -> None:
+    _email_executor.submit(fn, *args, **kwargs)
+
+
+def _send_notification_email_blocking(to_email: str, title: str, message: str) -> None:
+    try:
+        if not send_notification_email(to_email, title, message):
+            logger.warning("Correo de aviso no enviado a %s | %s", to_email, title)
+    except Exception:
+        logger.exception("Error al enviar aviso a %s | %s", to_email, title)
+
+
+def _send_welcome_provider_blocking(to_email: str, recipient_name: str) -> None:
+    try:
+        if not send_welcome_email(to_email, recipient_name):
+            logger.warning("Correo de bienvenida (proveedor) no enviado a %s", to_email)
+    except Exception:
+        logger.exception("Error al enviar bienvenida de proveedor a %s", to_email)
+
+
+def _send_welcome_staff_blocking(to_email: str, recipient_name: str, role_name: str) -> None:
+    try:
+        if not send_internal_welcome_email(to_email, recipient_name, role_name):
+            logger.warning("Correo de bienvenida (staff) no enviado a %s", to_email)
+    except Exception:
+        logger.exception("Error al enviar bienvenida de usuario interno a %s", to_email)
+
+
+def _normalize_recipient(to_email: str) -> str | None:
+    email = normalize_email(to_email)
+    if not email or not is_deliverable_email(email):
+        return None
+    return email
+
 
 def dispatch_welcome_provider(to_email: str, recipient_name: str) -> None:
-    normalized = str(to_email or "").strip()
+    normalized = _normalize_recipient(to_email)
     if not normalized:
         return
-    try:
-        if not send_welcome_email(normalized, recipient_name):
-            logger.warning("Correo de bienvenida (proveedor) no enviado a %s", normalized)
-    except Exception:
-        logger.exception("Error al enviar bienvenida de proveedor a %s", normalized)
+    _run_in_email_pool(_send_welcome_provider_blocking, normalized, recipient_name)
 
 
 def dispatch_welcome_staff(to_email: str, recipient_name: str, role_name: str) -> None:
-    normalized = str(to_email or "").strip()
+    normalized = _normalize_recipient(to_email)
     if not normalized:
         return
-    try:
-        if not send_internal_welcome_email(normalized, recipient_name, role_name):
-            logger.warning("Correo de bienvenida (staff) no enviado a %s", normalized)
-    except Exception:
-        logger.exception("Error al enviar bienvenida de usuario interno a %s", normalized)
+    _run_in_email_pool(_send_welcome_staff_blocking, normalized, recipient_name, role_name)
 
 
 def dispatch_notification_email(to_email: str, title: str, message: str) -> None:
-    normalized = str(to_email or "").strip()
+    normalized = _normalize_recipient(to_email)
     if not normalized:
+        logger.warning("Correo de aviso omitido (destinatario inválido): %r | %s", to_email, title)
         return
-    try:
-        if not send_notification_email(normalized, title, message):
-            logger.warning("Correo de aviso no enviado a %s | %s", normalized, title)
-    except Exception:
-        logger.exception("Error al enviar aviso a %s | %s", normalized, title)
+    _run_in_email_pool(_send_notification_email_blocking, normalized, title, message)
 
 
 def dispatch_provider_account_notice(
@@ -73,11 +109,12 @@ def dispatch_provider_account_notice(
         f"Realizado por: {actor_label}."
     )
     seen: set[str] = set()
-    for admin_email in admin_emails:
-        key = admin_email.strip().lower()
-        if not key or key in seen:
+    provider_key = (normalize_email(provider_email) or "").lower()
+    for admin_email in dedupe_emails(admin_emails):
+        key = admin_email.lower()
+        if key in seen:
             continue
         seen.add(key)
-        if key == provider_email.strip().lower():
+        if provider_key and key == provider_key:
             continue
         dispatch_notification_email(admin_email, admin_title, admin_body)

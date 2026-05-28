@@ -4,7 +4,7 @@ import ThemeToggle from "../components/ThemeToggle";
 export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
   return (
     <div className="min-h-screen bg-white">
-      <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-2 px-4 py-3 sm:gap-3">
           <div className="min-w-0 flex-1 basis-[min(100%,12rem)] pr-1 py-1 sm:basis-auto">
             <BrandLogo className="max-h-10 w-auto sm:max-h-12" fetchPriority="high" />
@@ -24,6 +24,7 @@ export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
               type="button"
               onClick={() => (typeof onLogin === "function" ? onLogin() : null)}
               data-tour="landing-login-btn"
+              aria-label="Iniciar sesión"
               className="inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 sm:gap-2 sm:px-3"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 fill-none stroke-current" strokeWidth="2" aria-hidden="true">
@@ -73,7 +74,11 @@ export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
               </div>
             </section>
 
-            <section aria-labelledby="landing-modules-title" data-tour="landing-modules" className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <section
+              aria-labelledby="landing-modules-title"
+              data-tour="landing-modules"
+              className="content-visibility-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+            >
               <h2 id="landing-modules-title" className="text-sm font-semibold text-slate-900">
                 Módulos del portal
               </h2>
@@ -134,7 +139,7 @@ export default function LandingPage({ onLogin, onRegister, onStartTour } = {}) {
         </section>
       </main>
 
-      <footer className="border-t border-slate-200">
+      <footer className="content-visibility-auto border-t border-slate-200">
         <div className="mx-auto w-full max-w-6xl px-4 py-6 text-xs text-slate-500">
           <p>© {new Date().getFullYear()} Ferragro. Todos los derechos reservados.</p>
         </div>

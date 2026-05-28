@@ -43,6 +43,7 @@ jobs:
           --ignore=tests/test_franjas_per_team_logic.py
           --ignore=tests/test_unload_team_resolve.py
           --ignore=tests/test_unload_team_names.py
+          --ignore=tests/test_analytics_summary_timezone.py
           -q --tb=short
 
   backend-db-tests:
@@ -100,6 +101,7 @@ jobs:
           tests/test_franjas_per_team_logic.py
           tests/test_unload_team_resolve.py
           tests/test_unload_team_names.py
+          tests/test_analytics_summary_timezone.py
           -q --tb=short
 
   frontend-build:
