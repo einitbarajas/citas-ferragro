@@ -3,6 +3,10 @@ from pathlib import Path
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.smtp_env_loader import bootstrap_smtp_from_secret_files
+
+bootstrap_smtp_from_secret_files()
+
 
 def _resolve_env_files() -> tuple[str, ...]:
     """Local .env + secret files de Render (/etc/secrets) para SMTP en producción."""

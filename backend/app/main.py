@@ -33,7 +33,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-28-smtp-config-v1"
+API_BUILD_ID = "2026-05-28-smtp-fix-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -458,6 +458,12 @@ def health():
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
             "email_enabled": settings.smtp_configured,
             "smtp_host": settings.smtp_host or None,
+            "smtp_diag": {
+                "host_set": bool(settings.smtp_host.strip()),
+                "user_set": bool(settings.smtp_user.strip()),
+                "password_set": bool(settings.smtp_password.strip()),
+                "from_email_set": bool(settings.smtp_from_email.strip()),
+            },
             "admin_email": admin_email,
         },
         "Servicio activo",

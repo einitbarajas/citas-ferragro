@@ -1,0 +1,94 @@
+# Sube variables SMTP a Render (ferragro-api) y dispara redeploy.
+# Secrets requeridos en GitHub → Settings → Secrets → Actions:
+#   RENDER_API_KEY, RENDER_SERVICE_ID (opcional, default srv-d82dvanaqgkc739362u0)
+#   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
+#   SMTP_FROM_NAME (opcional), SMTP_USE_TLS (opcional, default true)
+#   RENDER_DEPLOY_HOOK (opcional)
+name: Sync SMTP to Render
+
+on:
+  workflow_dispatch:
+
+env:
+  RENDER_SERVICE_ID: srv-d82dvanaqgkc739362u0
+
+jobs:
+  sync:
+    if: ${{ secrets.RENDER_API_KEY != '' && secrets.SMTP_HOST != '' && secrets.SMTP_PASSWORD != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Push SMTP env vars to Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+          SMTP_FROM_NAME: ${{ secrets.SMTP_FROM_NAME }}
+          SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          SERVICE_ID="${RENDER_SERVICE_ID:-srv-d82dvanaqgkc739362u0}"
+          PORT="${SMTP_PORT:-587}"
+          FROM_NAME="${SMTP_FROM_NAME:-Ferragro}"
+          USE_TLS="${SMTP_USE_TLS:-true}"
+          for pair in \
+            "SMTP_HOST=${SMTP_HOST}" \
+            "SMTP_PORT=${PORT}" \
+            "SMTP_USER=${SMTP_USER}" \
+            "SMTP_PASSWORD=${SMTP_PASSWORD}" \
+            "SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL}" \
+            "SMTP_FROM_NAME=${FROM_NAME}" \
+            "SMTP_USE_TLS=${USE_TLS}" \
+            "SMTP_USE_SSL=false"
+          do
+            KEY="${pair%%=*}"
+            VAL="${pair#*=}"
+            JSON=$(printf '{"key":"%s","value":"%s"}' "$KEY" "$VAL")
+            HTTP=$(curl -sS -o /tmp/render-env.out -w "%{http_code}" \
+              -X PUT "https://api.render.com/v1/services/${SERVICE_ID}/env-vars/${KEY}" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$JSON")
+            if [ "$HTTP" -lt 200 ] || [ "$HTTP" -ge 300 ]; then
+              echo "::error::${KEY} HTTP ${HTTP}"
+              cat /tmp/render-env.out || true
+              exit 1
+            fi
+            echo "OK ${KEY}"
+          done
+
+      - name: Trigger Render deploy
+        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          curl -fsS -X POST "$DEPLOY_HOOK"
+          echo "Deploy solicitado."
+
+      - name: Wait for email_enabled
+        env:
+          EXPECTED: "2026-05-28-smtp-fix-v1"
+        run: |
+          for i in $(seq 1 24); do
+            sleep 20
+            BODY=$(curl -fsS --max-time 90 "https://ferragro-api.onrender.com/health" || echo "{}")
+            ENABLED=$(echo "$BODY" | grep -o '"email_enabled":[^,}]*' | head -1)
+            BUILD=$(echo "$BODY" | grep -o '"build_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+            echo "intento $i: $ENABLED build_id=$BUILD"
+            if echo "$BODY" | grep -q '"email_enabled":true'; then
+              echo "Correo activo en producción."
+              exit 0
+            fi
+          done
+          echo "::warning::email_enabled sigue en false tras 8 min. Revisa Environment en Render."
+
+  remind:
+    if: ${{ secrets.RENDER_API_KEY == '' || secrets.SMTP_HOST == '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::notice::Configura en GitHub Secrets: RENDER_API_KEY, SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL"
+          echo "Luego ejecuta este workflow de nuevo (workflow_dispatch)."
