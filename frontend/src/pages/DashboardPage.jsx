@@ -4072,10 +4072,10 @@ export default function DashboardPage() {
                   if (!cell) return <div key={`prov-empty-${idx}`} />;
                   const teamReady = Boolean(activeProviderUnloadTeamId);
                   const isPast = cell.isPast || cell.dateISO < todayValue;
-                  const hasPublishedFranja = providerAvailableDays.includes(cell.dateISO);
-                  const canPickDay = teamReady && !isPast && hasPublishedFranja;
+                  const hasFranja = !isPast && providerAvailableDays.includes(cell.dateISO);
                   const hasAppointment =
-                    hasPublishedFranja && providerDaysWithAppointments.has(cell.dateISO);
+                    hasFranja && providerDaysWithAppointments.has(cell.dateISO);
+                  const canPickDay = teamReady && hasFranja;
                   return (
                     <button
                       type="button"
@@ -4086,24 +4086,22 @@ export default function DashboardPage() {
                         setProviderSelectedDay(cell.dateISO);
                       }}
                       className={`rounded-md border px-1 py-1.5 text-center text-xs ${
-                        isPast
+                        !canPickDay
                           ? "cursor-not-allowed border-slate-100 bg-slate-100 text-slate-400"
-                          : !teamReady
-                            ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
-                            : hasPublishedFranja
-                              ? "border-emerald-700 bg-emerald-600 text-white"
-                              : "border-emerald-300 bg-emerald-100 text-emerald-900"
+                          : hasAppointment
+                            ? "border-emerald-700 bg-emerald-600 text-white"
+                            : "border-emerald-300 bg-emerald-100 text-emerald-900"
                       } ${providerSelectedDay === cell.dateISO && canPickDay ? "ring-2 ring-blue-400/80" : ""}`}
                       title={
                         isPast
                           ? "Este día ya pasó; no puedes agendar aquí"
                           : !teamReady
                             ? "Selecciona un muelle para ver el calendario de ese equipo"
-                            : hasPublishedFranja
-                              ? hasAppointment
-                                ? "Franja publicada y ya tienes cita ese día; puedes agendar otro turno si hay cupo"
-                                : "Franja publicada: puedes agendar"
-                              : "Aún no hay franja publicada para este día"
+                            : !hasFranja
+                              ? "Sin franja para este muelle en esta fecha"
+                              : hasAppointment
+                                ? "Ya tienes cita este día; puedes agendar otro turno si hay cupo"
+                                : "Hay franja publicada: puedes agendar"
                       }
                     >
                       {cell.day}
@@ -4112,8 +4110,8 @@ export default function DashboardPage() {
                 })}
               </div>
               <p className="mt-2 text-[11px] text-slate-600">
-                Verde claro: día sin franja publicada aún. Verde oscuro: franja publicada (puedes agendar). Gris: solo fechas
-                pasadas.
+                Verde claro: día con franja (puedes agendar). Verde oscuro: ya tienes cita ese día. Gris: sin franja, día pasado o sin
+                muelle seleccionado (no se puede hacer clic).
               </p>
             </div>
             <div className={card}>
@@ -4846,7 +4844,7 @@ export default function DashboardPage() {
                   </div>
                   <p className="mt-2 text-[11px] text-slate-500">
                     Verde claro: día en el que puedes <strong>abrir franja</strong>. Verde oscuro: día que ya tiene{" "}
-                    <strong>franja publicada</strong>. Gris: solo fechas pasadas (sin clic).
+                    <strong>franja publicada</strong>. Gris: fechas pasadas (sin clic).
                   </p>
                 </div>
               </div>
