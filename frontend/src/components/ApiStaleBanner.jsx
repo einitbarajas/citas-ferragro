@@ -1,9 +1,20 @@
 import { useEffect, useState } from "react";
 
 const PRODUCTION_API = "https://ferragro-api.onrender.com";
-/** Prefijos de build_id que indican API al día (no confundir con la fecha del deploy). */
-const OK_API_BUILD_PREFIXES = ["2026-05-21", "2026-05-22", "2026-05-25"];
-const OK_API_BUILD_MARKERS = ["admin-bodega", "prod-sync", "prod-v1", "calendar-per-team"];
+/** Fecha mínima en build_id (YYYY-MM-DD al inicio). Sincronizar con backend/app/main.py → API_BUILD_ID. */
+const MIN_API_BUILD_DATE = "2026-05-21";
+const LEGACY_OK_MARKERS = ["admin-bodega", "prod-sync", "prod-v1", "calendar-per-team", "deploy-main"];
+
+function isApiBuildCurrent(buildId) {
+  const bid = String(buildId || "");
+  if (!bid) return false;
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(bid);
+  if (dateMatch) {
+    const buildDay = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+    if (buildDay >= MIN_API_BUILD_DATE) return true;
+  }
+  return LEGACY_OK_MARKERS.some((m) => bid.includes(m));
+}
 
 export default function ApiStaleBanner() {
   const [stale, setStale] = useState(false);
@@ -19,12 +30,7 @@ export default function ApiStaleBanner() {
         const bid = String(json?.data?.build_id || "");
         if (cancelled) return;
         setBuildId(bid);
-        const git = String(json?.data?.render_git_commit || "");
-        const ok =
-          OK_API_BUILD_PREFIXES.some((p) => bid.startsWith(p)) ||
-          OK_API_BUILD_MARKERS.some((m) => bid.includes(m)) ||
-          (git.length >= 7 && bid.includes("prod"));
-        setStale(!ok && bid.length > 0);
+        setStale(!isApiBuildCurrent(bid) && bid.length > 0);
       } catch {
         if (!cancelled) setStale(false);
       }
@@ -62,7 +68,7 @@ export default function ApiStaleBanner() {
         >
           /health
         </a>{" "}
-        (debe incluir <strong>prod-sync</strong> o un <strong>render_git_commit</strong> reciente).
+        (el <strong>build_id</strong> debe coincidir con el de <code>backend/app/main.py</code>).
       </p>
     </div>
   );
