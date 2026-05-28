@@ -28,6 +28,48 @@ function Read-DatabaseUrlFromEnv {
   throw "DATABASE_URL no está definido en: $Path"
 }
 
+function Test-PlaceholderDatabaseUrl {
+  param([string] $Url)
+  if ([string]::IsNullOrWhiteSpace($Url)) { return $true }
+  $u = $Url.Trim()
+  if ($u -match '\.\.\.' -or $u -match '@host[:/]' -or $u -match '/nombre_bd\b') { return $true }
+  if ($u -match '@usuario:') { return $true }
+  return $false
+}
+
+function Read-RenderDatabaseUrlFromFile {
+  param([string] $Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return $null }
+  foreach ($line in Get-Content -LiteralPath $Path -Encoding UTF8) {
+    if ($line -match '^\s*(RENDER_DATABASE_URL|DATABASE_URL)\s*=\s*(.+)\s*$') {
+      $v = $Matches[2].Trim().Trim([char]0x22).Trim("'")
+      if (-not (Test-PlaceholderDatabaseUrl $v)) { return $v }
+    }
+  }
+  return $null
+}
+
+function Resolve-RenderDatabaseUrl {
+  param(
+    [string] $ExplicitUrl = "",
+    [string] $RepoRoot = ""
+  )
+  if (-not (Test-PlaceholderDatabaseUrl $ExplicitUrl)) {
+    return $ExplicitUrl.Trim()
+  }
+  if ($RepoRoot) {
+    $fromFile = Read-RenderDatabaseUrlFromFile -Path (Join-Path $RepoRoot ".env.render.local")
+    if ($fromFile) { return $fromFile }
+  }
+  foreach ($name in @("RENDER_DATABASE_URL", "DATABASE_URL")) {
+    $fromEnv = [Environment]::GetEnvironmentVariable($name)
+    if (-not (Test-PlaceholderDatabaseUrl $fromEnv)) {
+      return $fromEnv.Trim()
+    }
+  }
+  return $null
+}
+
 function Resolve-PsqlExecutable {
   $cmd = Get-Command psql -ErrorAction SilentlyContinue
   if ($cmd) { return $cmd.Source }

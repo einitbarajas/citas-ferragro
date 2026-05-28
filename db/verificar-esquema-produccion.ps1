@@ -14,24 +14,16 @@ $DbFolder = $PSScriptRoot
 $RepoRoot = Split-Path -Parent $DbFolder
 . (Join-Path $DbFolder "PsqlDb.ps1")
 
-$localEnv = Join-Path $RepoRoot ".env.render.local"
-if ([string]::IsNullOrWhiteSpace($DatabaseUrl)) {
-  $DatabaseUrl = $env:DATABASE_URL
-}
-if ([string]::IsNullOrWhiteSpace($DatabaseUrl) -and (Test-Path $localEnv)) {
-  foreach ($line in Get-Content $localEnv -Encoding UTF8) {
-    if ($line -match '^\s*(RENDER_DATABASE_URL|DATABASE_URL)\s*=\s*(.+)\s*$') {
-      $DatabaseUrl = $Matches[2].Trim().Trim('"').Trim("'")
-      break
-    }
-  }
+$DatabaseUrl = Resolve-RenderDatabaseUrl -ExplicitUrl $DatabaseUrl -RepoRoot $RepoRoot
+if (Test-PlaceholderDatabaseUrl $env:DATABASE_URL) {
+  Write-Host "Ignorando DATABASE_URL de la sesion (parece ejemplo/placeholder). Usando .env.render.local si existe." -ForegroundColor Yellow
 }
 if ([string]::IsNullOrWhiteSpace($DatabaseUrl)) {
   Write-Host "Pega la External Database URL de Render (ferragro-db -> Connections):" -ForegroundColor Cyan
   $DatabaseUrl = Read-Host "DATABASE_URL"
 }
-if ([string]::IsNullOrWhiteSpace($DatabaseUrl)) {
-  throw "Falta DATABASE_URL"
+if ([string]::IsNullOrWhiteSpace($DatabaseUrl) -or (Test-PlaceholderDatabaseUrl $DatabaseUrl)) {
+  throw "Falta DATABASE_URL valida. Guarda la External URL en .env.render.local como RENDER_DATABASE_URL=postgresql://..."
 }
 
 $sql = Join-Path $DbFolder "scripts\verificar-esquema-produccion.sql"

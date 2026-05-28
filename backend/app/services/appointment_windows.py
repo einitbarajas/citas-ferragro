@@ -76,10 +76,6 @@ def resolve_team_windows_for_day(
     weekly = list_windows_ordered(db, warehouse_id, warehouse_unload_team_id)
     if not weekly:
         return [], "none"
-    if warehouse_unload_team_id is not None:
-        scheduled_weekdays = get_team_scheduled_iso_weekdays(db, warehouse_id, warehouse_unload_team_id)
-        if scheduled_weekdays and day.isoweekday() not in scheduled_weekdays:
-            return [], "none"
     return weekly, "weekly"
 
 
@@ -145,16 +141,8 @@ def list_team_override_days_in_month(
 def list_team_provider_bookable_days_in_month(
     db: Session, year: int, month: int, warehouse_id: int, warehouse_unload_team_id: int
 ) -> list[str]:
-    """Días futuros del mes en los que el proveedor puede agendar (solo franja por fecha)."""
-    tz = ZoneInfo(settings.business_timezone)
-    local_today = datetime.now(tz).date()
-    return [
-        d
-        for d in list_team_override_days_in_month(
-            db, year, month, warehouse_id, warehouse_unload_team_id
-        )
-        if date.fromisoformat(d) >= local_today
-    ]
+    """Días futuros del mes en los que el proveedor puede agendar (franja por fecha o regla semanal)."""
+    return list_team_open_days_in_month(db, year, month, warehouse_id, warehouse_unload_team_id)
 
 
 def list_team_open_days_in_month(

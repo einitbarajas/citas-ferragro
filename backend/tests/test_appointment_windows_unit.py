@@ -85,8 +85,8 @@ def test_format_schedule_hint_lists_turns():
     assert "90 min" in hint
 
 
-def test_scheduled_iso_weekdays_limit_weekly_to_configured_days():
-    """Si hay franjas por fecha lun–vie, sáb/dom (6–7) quedan fuera del patrón."""
+def test_scheduled_iso_weekdays_from_date_overrides():
+    """Días ISO inferidos de franjas por fecha (p. ej. lun–vie publicados)."""
     scheduled = {1, 2, 3, 4, 5}
     assert 6 not in scheduled
     assert 7 not in scheduled

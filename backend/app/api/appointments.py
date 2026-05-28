@@ -223,7 +223,7 @@ def create_appointment(
     get_active_warehouse_or_raise(db, payload.warehouse_id)
     team = get_unload_team_or_raise(db, payload.warehouse_id, payload.warehouse_unload_team_id)
     windows, source = resolve_team_windows_for_day(db, day_local, payload.warehouse_id, team.id)
-    if not windows or source != "date_override":
+    if not windows or source not in ("date_override", "weekly"):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -457,7 +457,7 @@ def list_available_slots_for_provider_day(
         assert_warehouse_access(db, principal, warehouse_id)
     team = get_unload_team_or_raise(db, warehouse_id, unload_team_id)
     windows, source = resolve_team_windows_for_day(db, day, warehouse_id, team.id)
-    if not windows or (not is_staff and source != "date_override"):
+    if not windows or (not is_staff and source not in ("date_override", "weekly")):
         return ok_response(
             {
                 "day": str(day),

@@ -1,6 +1,31 @@
 -- Permite franjas distintas por equipo de descarga en el mismo día y bodega.
 -- Idempotente.
 
+-- Quitar duplicados legacy (misma Fecha+Bodega+Equipo+Orden) antes de los índices únicos.
+DELETE FROM "FranjasPermitidasCitaFecha" f
+WHERE f."IdEquipoDescargaBodega" IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM "FranjasPermitidasCitaFecha" keep
+    WHERE keep."Fecha" = f."Fecha"
+      AND keep."IdBodega" = f."IdBodega"
+      AND keep."IdEquipoDescargaBodega" = f."IdEquipoDescargaBodega"
+      AND keep."Orden" = f."Orden"
+      AND keep."Id" < f."Id"
+  );
+
+DELETE FROM "FranjasPermitidasCitaFecha" f
+WHERE f."IdEquipoDescargaBodega" IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM "FranjasPermitidasCitaFecha" keep
+    WHERE keep."Fecha" = f."Fecha"
+      AND keep."IdBodega" = f."IdBodega"
+      AND keep."IdEquipoDescargaBodega" IS NULL
+      AND keep."Orden" = f."Orden"
+      AND keep."Id" < f."Id"
+  );
+
 ALTER TABLE "FranjasPermitidasCitaFecha" DROP CONSTRAINT IF EXISTS "UqFranjaFechaBodegaOrden";
 ALTER TABLE "FranjasPermitidasCitaFecha" DROP CONSTRAINT IF EXISTS "UqFranjaFechaOrden";
 

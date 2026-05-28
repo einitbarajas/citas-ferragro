@@ -1250,12 +1250,8 @@ export default function DashboardPage() {
         throw new Error(payload.message);
       }
       const today = todayISO();
-      const bookableDays = Array.isArray(payload.data?.override_days)
-        ? payload.data.override_days
-        : payload.data?.open_days;
-      setProviderAvailableDays(
-        (Array.isArray(bookableDays) ? bookableDays : []).filter((d) => String(d) >= today)
-      );
+      const openDays = Array.isArray(payload.data?.open_days) ? payload.data.open_days : [];
+      setProviderAvailableDays(openDays.filter((d) => String(d) >= today));
     },
     [session, isProveedor, selectedWarehouseId, activeProviderUnloadTeamId]
   );
@@ -4076,8 +4072,10 @@ export default function DashboardPage() {
                   if (!cell) return <div key={`prov-empty-${idx}`} />;
                   const teamReady = Boolean(activeProviderUnloadTeamId);
                   const isPast = cell.isPast || cell.dateISO < todayValue;
-                  const isOpen = !isPast && providerAvailableDays.includes(cell.dateISO);
-                  const canPickDay = teamReady && isOpen;
+                  const hasPublishedFranja = providerAvailableDays.includes(cell.dateISO);
+                  const canPickDay = teamReady && !isPast && hasPublishedFranja;
+                  const hasAppointment =
+                    hasPublishedFranja && providerDaysWithAppointments.has(cell.dateISO);
                   return (
                     <button
                       type="button"
@@ -4092,22 +4090,20 @@ export default function DashboardPage() {
                           ? "cursor-not-allowed border-slate-100 bg-slate-100 text-slate-400"
                           : !teamReady
                             ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
-                            : !canPickDay
-                              ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
-                              : providerDaysWithAppointments.has(cell.dateISO)
-                                ? "border-emerald-700 bg-emerald-600 text-white"
-                                : "border-emerald-300 bg-emerald-100 text-emerald-900"
+                            : hasPublishedFranja
+                              ? "border-emerald-700 bg-emerald-600 text-white"
+                              : "border-emerald-300 bg-emerald-100 text-emerald-900"
                       } ${providerSelectedDay === cell.dateISO && canPickDay ? "ring-2 ring-blue-400/80" : ""}`}
                       title={
                         isPast
                           ? "Este día ya pasó; no puedes agendar aquí"
                           : !teamReady
                             ? "Selecciona un muelle para ver el calendario de ese equipo"
-                            : !canPickDay
-                              ? "Sin franja publicada para este muelle en esta fecha"
-                              : providerDaysWithAppointments.has(cell.dateISO)
-                                ? "Tienes cita ese día en este muelle; puedes agendar otro turno si hay cupo"
-                                : "Franja publicada para este muelle: puedes agendar"
+                            : hasPublishedFranja
+                              ? hasAppointment
+                                ? "Franja publicada y ya tienes cita ese día; puedes agendar otro turno si hay cupo"
+                                : "Franja publicada: puedes agendar"
+                              : "Aún no hay franja publicada para este día"
                       }
                     >
                       {cell.day}
@@ -4116,9 +4112,8 @@ export default function DashboardPage() {
                 })}
               </div>
               <p className="mt-2 text-[11px] text-slate-600">
-                Verde claro: día con franja publicada para el muelle (como el verde fuerte en Franjas horarias del admin).
-                Verde oscuro: ya tienes cita ese día en ese muelle. Gris: día pasado, solo regla semanal sin publicar, o sin muelle
-                seleccionado (no se puede hacer clic).
+                Verde claro: día sin franja publicada aún. Verde oscuro: franja publicada (puedes agendar). Gris: solo fechas
+                pasadas.
               </p>
             </div>
             <div className={card}>
@@ -4816,11 +4811,7 @@ export default function DashboardPage() {
                         );
                       }
                       const isPast = cell.isPast || cell.dateISO < todayValue;
-                      const hasOverride = calendarOverrideDays.includes(cell.dateISO);
-                      const weeklyCoversDay =
-                        !isPast &&
-                        teamHasWeeklyFranjas &&
-                        (!scheduledIsoWeekdays.length || scheduledIsoWeekdays.includes(cell.isoWeekday));
+                      const hasPublishedFranja = calendarOverrideDays.includes(cell.dateISO);
                       return (
                         <button
                           type="button"
@@ -4834,22 +4825,18 @@ export default function DashboardPage() {
                           className={`rounded-md border px-1 py-1.5 text-center text-xs ${
                             isPast
                               ? "cursor-not-allowed border-slate-100 bg-slate-100 text-slate-400"
-                              : hasOverride
-                                ? "border-emerald-500 bg-emerald-500 text-white"
-                                : weeklyCoversDay
-                                  ? "border-emerald-300 bg-emerald-100 text-emerald-900"
-                                  : "border-slate-200 bg-white text-slate-500"
+                              : hasPublishedFranja
+                                ? "border-emerald-700 bg-emerald-600 text-white"
+                                : "border-emerald-300 bg-emerald-100 text-emerald-900"
                           } ${cell.isToday ? "ring-2 ring-emerald-400/70" : ""} ${
                             specialDay === cell.dateISO && !isPast ? "ring-2 ring-blue-400/80" : ""
                           }`}
                           title={
                             isPast
                               ? "Día pasado: no se puede configurar franja"
-                              : hasOverride
-                                ? "Franja especial de este equipo en esta fecha"
-                                : weeklyCoversDay
-                                  ? "Regla semanal de este equipo"
-                                  : "Sin franja para este equipo"
+                              : hasPublishedFranja
+                                ? "Este día ya tiene franja publicada para este equipo"
+                                : "Puedes abrir franja en este día"
                           }
                         >
                           {cell.day}
@@ -4858,8 +4845,8 @@ export default function DashboardPage() {
                     })}
                   </div>
                   <p className="mt-2 text-[11px] text-slate-500">
-                    Verde fuerte: franja especial de <strong>este equipo</strong> en esa fecha. Verde claro: regla semanal de{" "}
-                    <strong>este equipo</strong>. Gris claro: día pasado (sin clic). Gris: sin horario para el equipo seleccionado.
+                    Verde claro: día en el que puedes <strong>abrir franja</strong>. Verde oscuro: día que ya tiene{" "}
+                    <strong>franja publicada</strong>. Gris: solo fechas pasadas (sin clic).
                   </p>
                 </div>
               </div>
