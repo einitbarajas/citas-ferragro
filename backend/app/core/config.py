@@ -4,9 +4,34 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _resolve_env_files() -> tuple[str, ...]:
+    """Local .env + secret files de Render (/etc/secrets) para SMTP en producción."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    repo_root = backend_dir.parent
+    candidates = [
+        repo_root / ".env",
+        Path("/etc/secrets/smtp.env"),
+        Path("/etc/secrets/.env"),
+        backend_dir / "smtp.env",
+    ]
+    paths: list[str] = []
+    seen: set[str] = set()
+    for path in candidates:
+        if not path.is_file():
+            continue
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        paths.append(key)
+        seen.add(key)
+    if not paths:
+        paths.append(str(repo_root / ".env"))
+    return tuple(paths)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).resolve().parents[3] / ".env",
+        env_file=_resolve_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
     )

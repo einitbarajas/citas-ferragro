@@ -24,6 +24,8 @@ frontend/dist/
 .tmp-*
 
 .render-hook.local
+.render-api-key.local
+smtp-render.env
 
 # Artefactos generados por scripts de docs
 docs/_req_dump.json
