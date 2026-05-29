@@ -1,9 +1,9 @@
-# Sube variables SMTP a Render (ferragro-api) y dispara redeploy.
-# Secrets requeridos en GitHub → Settings → Secrets → Actions:
-#   RENDER_API_KEY, RENDER_SERVICE_ID (opcional, default srv-d82dvanaqgkc739362u0)
-#   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
-#   SMTP_FROM_NAME (opcional), SMTP_USE_TLS (opcional, default true)
-#   RENDER_DEPLOY_HOOK (opcional)
+# Sube SMTP a Render (env vars + secret smtp.env) y redespliega.
+# Secrets en GitHub → Settings → Secrets → Actions:
+#   RENDER_API_KEY (obligatorio)
+#   SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
+#   SMTP_PORT, SMTP_FROM_NAME, SMTP_USE_TLS (opcionales)
+#   RENDER_DEPLOY_HOOK (opcional, recomendado)
 name: Sync SMTP to Render
 
 on:
@@ -14,12 +14,42 @@ env:
 
 jobs:
   sync:
-    if: ${{ secrets.RENDER_API_KEY != '' && secrets.SMTP_HOST != '' && secrets.SMTP_PASSWORD != '' }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Read expected build_id
+        id: build
+        run: |
+          BUILD_ID=$(grep -E '^API_BUILD_ID\s*=' backend/app/main.py | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "expected=$BUILD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Validate secrets
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in RENDER_API_KEY SMTP_HOST SMTP_USER SMTP_PASSWORD SMTP_FROM_EMAIL; do
+            eval "val=\${$name:-}"
+            if [ -z "$val" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Faltan secrets en GitHub:$missing"
+            echo "Configura los secrets y vuelve a ejecutar este workflow (workflow_dispatch)."
+            exit 1
+          fi
+
       - name: Push SMTP env vars to Render
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
@@ -27,26 +57,33 @@ jobs:
           SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
           SMTP_FROM_NAME: ${{ secrets.SMTP_FROM_NAME }}
           SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
-          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
           set -euo pipefail
           SERVICE_ID="${RENDER_SERVICE_ID:-srv-d82dvanaqgkc739362u0}"
           PORT="${SMTP_PORT:-587}"
           FROM_NAME="${SMTP_FROM_NAME:-Ferragro}"
           USE_TLS="${SMTP_USE_TLS:-true}"
+          FROM_EMAIL="${SMTP_FROM_EMAIL}"
+          USER="${SMTP_USER}"
+          if [ "$(echo "$FROM_EMAIL" | tr '[:upper:]' '[:lower:]')" != "$(echo "$USER" | tr '[:upper:]' '[:lower:]')" ]; then
+            echo "Alineando SMTP_FROM_EMAIL a SMTP_USER (Gmail)"
+            FROM_EMAIL="$USER"
+          fi
+          PASS="$(echo "$SMTP_PASSWORD" | tr -d '[:space:]')"
           for pair in \
+            "SMTP_PROFILE=gmail" \
             "SMTP_HOST=${SMTP_HOST}" \
             "SMTP_PORT=${PORT}" \
-            "SMTP_USER=${SMTP_USER}" \
-            "SMTP_PASSWORD=${SMTP_PASSWORD}" \
-            "SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL}" \
+            "SMTP_USER=${USER}" \
+            "SMTP_PASSWORD=${PASS}" \
+            "SMTP_FROM_EMAIL=${FROM_EMAIL}" \
             "SMTP_FROM_NAME=${FROM_NAME}" \
             "SMTP_USE_TLS=${USE_TLS}" \
             "SMTP_USE_SSL=false"
           do
             KEY="${pair%%=*}"
             VAL="${pair#*=}"
-            JSON=$(printf '{"key":"%s","value":"%s"}' "$KEY" "$VAL")
+            JSON=$(python3 -c 'import json,sys; print(json.dumps({"key":sys.argv[1],"value":sys.argv[2]}))' "$KEY" "$VAL")
             HTTP=$(curl -sS -o /tmp/render-env.out -w "%{http_code}" \
               -X PUT "https://api.render.com/v1/services/${SERVICE_ID}/env-vars/${KEY}" \
               -H "Authorization: Bearer ${RENDER_API_KEY}" \
@@ -60,35 +97,98 @@ jobs:
             echo "OK ${KEY}"
           done
 
-      - name: Trigger Render deploy
-        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+      - name: Upload smtp.env secret file
         env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+          SMTP_FROM_NAME: ${{ secrets.SMTP_FROM_NAME }}
+          SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
+        run: |
+          set -euo pipefail
+          SERVICE_ID="${RENDER_SERVICE_ID:-srv-d82dvanaqgkc739362u0}"
+          FROM_EMAIL="${SMTP_FROM_EMAIL}"
+          USER="${SMTP_USER}"
+          if [ "$(echo "$FROM_EMAIL" | tr '[:upper:]' '[:lower:]')" != "$(echo "$USER" | tr '[:upper:]' '[:lower:]')" ]; then
+            FROM_EMAIL="$USER"
+          fi
+          PASS="$(echo "$SMTP_PASSWORD" | tr -d '[:space:]')"
+          BODY=$(SMTP_HOST="$SMTP_HOST" SMTP_PORT="${SMTP_PORT:-587}" SMTP_USER="$USER" \
+            SMTP_PASSWORD="$PASS" SMTP_FROM_EMAIL="$FROM_EMAIL" \
+            SMTP_FROM_NAME="${SMTP_FROM_NAME:-Ferragro}" SMTP_USE_TLS="${SMTP_USE_TLS:-true}" \
+            python3 <<'PY'
+          import json, os
+          lines = [
+              "SMTP_PROFILE=gmail",
+              f"SMTP_HOST={os.environ['SMTP_HOST']}",
+              f"SMTP_PORT={os.environ.get('SMTP_PORT', '587')}",
+              f"SMTP_USER={os.environ['SMTP_USER']}",
+              f"SMTP_PASSWORD={os.environ['SMTP_PASSWORD']}",
+              f"SMTP_FROM_EMAIL={os.environ['SMTP_FROM_EMAIL']}",
+              f"SMTP_FROM_NAME={os.environ.get('SMTP_FROM_NAME', 'Ferragro')}",
+              "SMTP_USE_SSL=false",
+              f"SMTP_USE_TLS={os.environ.get('SMTP_USE_TLS', 'true')}",
+          ]
+          content = "\n".join(lines)
+          print(json.dumps({"name": "smtp.env", "content": content}))
+          PY
+          )
+          HTTP=$(curl -sS -o /tmp/render-secret.out -w "%{http_code}" \
+            -X PUT "https://api.render.com/v1/services/${SERVICE_ID}/secret-files/smtp.env" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+          if [ "$HTTP" -lt 200 ] || [ "$HTTP" -ge 300 ]; then
+            echo "::warning::secret file smtp.env HTTP ${HTTP} (env vars ya aplicadas)"
+            cat /tmp/render-secret.out || true
+          else
+            echo "OK secret file smtp.env"
+          fi
+
+      - name: Trigger Render deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
-          curl -fsS -X POST "$DEPLOY_HOOK"
-          echo "Deploy solicitado."
+          set -euo pipefail
+          SERVICE_ID="${RENDER_SERVICE_ID:-srv-d82dvanaqgkc739362u0}"
+          if [ -n "${DEPLOY_HOOK:-}" ]; then
+            HTTP=$(curl -sS -o /tmp/hook.out -w "%{http_code}" -X POST "$DEPLOY_HOOK")
+            echo "Deploy hook HTTP $HTTP"
+            cat /tmp/hook.out || true
+          fi
+          if [ -n "${RENDER_API_KEY:-}" ]; then
+            HTTP=$(curl -sS -o /tmp/deploy.out -w "%{http_code}" \
+              -X POST "https://api.render.com/v1/services/${SERVICE_ID}/deploys" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d '{}')
+            echo "Render API deploy HTTP $HTTP"
+            cat /tmp/deploy.out || true
+          fi
 
-      - name: Wait for email_enabled
+      - name: Wait for build_id and smtp_login_ok
         env:
-          EXPECTED: "2026-05-29-smtp-prod-v1"
+          EXPECTED: ${{ steps.build.outputs.expected }}
         run: |
-          for i in $(seq 1 24); do
-            sleep 20
-            BODY=$(curl -fsS --max-time 90 "https://ferragro-api.onrender.com/health" || echo "{}")
-            ENABLED=$(echo "$BODY" | grep -o '"email_enabled":[^,}]*' | head -1)
-            BUILD=$(echo "$BODY" | grep -o '"build_id":"[^"]*"' | head -1 | cut -d'"' -f4)
-            echo "intento $i: $ENABLED build_id=$BUILD"
-            if echo "$BODY" | grep -q '"email_enabled":true'; then
-              echo "Correo activo en producción."
+          set -euo pipefail
+          API="https://ferragro-api.onrender.com"
+          for i in $(seq 1 30); do
+            sleep 25
+            HEALTH=$(curl -fsS --max-time 90 "${API}/health" || echo "{}")
+            BUILD_ID=$(echo "$HEALTH" | grep -o '"build_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+            DEEP=$(curl -fsS --max-time 120 "${API}/health/deep" || echo "{}")
+            LOGIN=$(echo "$DEEP" | grep -o '"smtp_login_ok":[^,}]*' | head -1)
+            echo "intento $i: build_id=${BUILD_ID:-?} $LOGIN"
+            if [ "$BUILD_ID" = "$EXPECTED" ] && echo "$DEEP" | grep -q '"smtp_login_ok":true'; then
+              echo "Producción lista: build_id=$EXPECTED y smtp_login_ok=true"
               exit 0
             fi
           done
-          echo "::warning::email_enabled sigue en false tras 8 min. Revisa Environment en Render."
-
-  remind:
-    if: ${{ secrets.RENDER_API_KEY == '' || secrets.SMTP_HOST == '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          echo "::notice::Configura en GitHub Secrets: RENDER_API_KEY, SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL"
-          echo "Luego ejecuta este workflow de nuevo (workflow_dispatch)."
+          echo "::warning::Tras 12 min no se confirmó build_id=$EXPECTED con smtp_login_ok=true."
+          echo "Revisa Render → ferragro-api → Logs y Environment."

@@ -103,17 +103,41 @@ function Invoke-RenderDeployHook {
     return $true
 }
 
+function Invoke-RenderApiDeploy {
+    param([string] $Token, [string] $Service)
+    $uri = "https://api.render.com/v1/services/$Service/deploys"
+    $headers = @{
+        Authorization  = "Bearer $Token"
+        Accept         = "application/json"
+        "Content-Type" = "application/json"
+    }
+    Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body "{}" | Out-Null
+}
+
 function Wait-EmailEnabled {
-    param([int] $MaxAttempts = 24)
+    param([int] $MaxAttempts = 24, [string] $ExpectedBuildId = "")
     $healthUrl = "https://ferragro-api.onrender.com/health"
+    $deepUrl = "https://ferragro-api.onrender.com/health/deep"
     for ($i = 1; $i -le $MaxAttempts; $i++) {
-        Start-Sleep -Seconds 15
+        Start-Sleep -Seconds 20
         try {
             $h = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 90
             $enabled = $h.data.email_enabled
-            $host = $h.data.smtp_host
-            Write-Host "  intento $i : email_enabled=$enabled smtp_host=$host"
-            if ($enabled) { return $h.data }
+            $smtpHost = $h.data.smtp_host
+            $buildId = $h.data.build_id
+            Write-Host "  intento $i : email_enabled=$enabled build_id=$buildId"
+            if ($ExpectedBuildId -and $buildId -ne $ExpectedBuildId) { continue }
+            if ($enabled) {
+                try {
+                    $d = Invoke-RestMethod -Uri $deepUrl -TimeoutSec 120
+                    $loginOk = $d.data.smtp_login_ok
+                    Write-Host "           smtp_login_ok=$loginOk"
+                    if ($loginOk -eq $true) { return $h.data }
+                } catch {
+                    Write-Host "           /health/deep aun no disponible"
+                }
+                if (-not $ExpectedBuildId) { return $h.data }
+            }
         } catch {
             Write-Host "  intento $i : API aun desplegando..."
         }
@@ -187,14 +211,29 @@ try {
 }
 
 if (-not $SkipDeploy) {
+    $deployed = $false
     if (Invoke-RenderDeployHook -RepoRoot $repoRoot -DotEnv $envMap) {
         Write-Host "Deploy disparado (hook)." -ForegroundColor Green
-    } else {
-        Write-Host "Sin deploy hook: haz Manual Deploy en Render." -ForegroundColor Yellow
-        Start-Process "https://dashboard.render.com/web/$ServiceId"
+        $deployed = $true
     }
-    Write-Host "Esperando email_enabled en /health..."
-    $ok = Wait-EmailEnabled
+    try {
+        Invoke-RenderApiDeploy -Token $ApiKey -Service $ServiceId
+        Write-Host "Deploy disparado (Render API)." -ForegroundColor Green
+        $deployed = $true
+    } catch {
+        if (-not $deployed) {
+            Write-Host "Sin deploy hook/API: haz Manual Deploy en Render." -ForegroundColor Yellow
+            Start-Process "https://dashboard.render.com/web/$ServiceId"
+        }
+    }
+    $expectedBuild = ""
+    $mainPy = Join-Path $repoRoot "backend\app\main.py"
+    if (Test-Path -LiteralPath $mainPy) {
+        $content = Get-Content -LiteralPath $mainPy -Raw
+        if ($content -match 'API_BUILD_ID\s*=\s*"([^"]+)"') { $expectedBuild = $Matches[1] }
+    }
+    Write-Host "Esperando email_enabled y smtp_login_ok en /health..."
+    $ok = Wait-EmailEnabled -ExpectedBuildId $expectedBuild
     if ($ok) {
         Write-Host "Correo activo en produccion." -ForegroundColor Green
         exit 0

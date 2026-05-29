@@ -202,9 +202,7 @@ def refresh_smtp_settings(*, force_secret_overlay: bool = False) -> bool:
     Relee SMTP desde variables de entorno y archivos secretos de Render.
     force_secret_overlay: recuperar contraseña / diagnóstico — prioriza /etc/secrets/smtp.env.
     """
-    applied = bootstrap_smtp_from_secret_files(
-        overlay=settings.is_production or force_secret_overlay
-    )
+    applied = bootstrap_smtp_from_secret_files(overlay=force_secret_overlay)
     for attr, env_key, target_type in _SMTP_ENV_KEYS:
         raw = os.getenv(env_key)
         if raw is None or not str(raw).strip():

@@ -43,7 +43,7 @@ def _smtp_delivery_attempts() -> list[tuple[str, object]]:
 
 def smtp_login_probe() -> bool:
     """Prueba login SMTP (mismos intentos que el envío real)."""
-    refresh_smtp_settings(force_secret_overlay=settings.is_production)
+    refresh_smtp_settings()
     if not settings.smtp_send_ready:
         return False
     for label, client_factory in _smtp_delivery_attempts():
@@ -292,10 +292,11 @@ def send_temporary_password_email_with_retry(
     *,
     account_email: str | None = None,
     attempts: int = 2,
+    force_secret_overlay: bool = False,
 ) -> bool:
-    """Recuperación de contraseña: re-lee secretos SMTP y reintenta (Render)."""
+    """Recuperación de contraseña: re-lee SMTP y reintenta (Render)."""
     for attempt in range(1, max(1, attempts) + 1):
-        refresh_smtp_settings(force_secret_overlay=True)
+        refresh_smtp_settings(force_secret_overlay=force_secret_overlay)
         if not settings.smtp_send_ready:
             logger.warning("SMTP no listo para recuperación (intento %s)", attempt)
             continue

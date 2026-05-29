@@ -409,51 +409,72 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
     db.commit()
 
     sent = False
-    smtp_ready = refresh_smtp_settings(force_secret_overlay=True)
-    if smtp_ready:
+    smtp_auth_error: smtplib.SMTPAuthenticationError | None = None
+    smtp_other_error: Exception | None = None
+    for use_secret_overlay in (False, True):
+        smtp_ready = refresh_smtp_settings(force_secret_overlay=use_secret_overlay)
+        if not smtp_ready:
+            continue
         try:
             sent = send_temporary_password_email_with_retry(
                 account_email,
                 temporary_password,
                 account_email=account_email,
-                attempts=3,
+                attempts=2,
+                force_secret_overlay=use_secret_overlay,
             )
-        except smtplib.SMTPAuthenticationError:
-            logger.exception("SMTP autenticación fallida al enviar recuperación a %s", account_email)
-            logger.warning(
-                "SMTP_RECOVERY correo=%s clave_temporal=%s",
+            if sent:
+                break
+        except smtplib.SMTPAuthenticationError as exc:
+            smtp_auth_error = exc
+            logger.exception(
+                "SMTP autenticación fallida (overlay=%s) al enviar recuperación a %s",
+                use_secret_overlay,
                 account_email,
-                temporary_password,
             )
-            return ok_response(
-                {
-                    "email_sent": False,
-                    "smtp_configured": True,
-                    "must_change_password": True,
-                },
-                "La contraseña temporal ya está activa, pero Gmail rechazó el envío. "
-                "En Render → ferragro-api → Secret File smtp.env: SMTP_USER y SMTP_FROM_EMAIL deben ser la misma cuenta, "
-                "y SMTP_PASSWORD debe ser una contraseña de aplicación de Google (16 caracteres, sin espacios). "
-                "Luego Manual Deploy. Diagnóstico: /health/deep",
-            )
-        except Exception:
-            logger.exception("Error SMTP al enviar recuperación a %s", account_email)
-            logger.warning(
-                "SMTP_RECOVERY correo=%s clave_temporal=%s (usa esta clave para ingresar)",
+        except Exception as exc:
+            smtp_other_error = exc
+            logger.exception(
+                "Error SMTP (overlay=%s) al enviar recuperación a %s",
+                use_secret_overlay,
                 account_email,
-                temporary_password,
             )
-            return ok_response(
-                {
-                    "email_sent": False,
-                    "smtp_configured": True,
-                    "must_change_password": True,
-                },
-                "La contraseña temporal ya está activa, pero no se pudo enviar el correo. "
-                "Revisa en Render el archivo smtp.env (Gmail) y vuelve a desplegar. "
-                "Diagnóstico: https://ferragro-api.onrender.com/health/deep (smtp_login_ok). "
-                "Mientras tanto, el admin puede ver la clave en los logs del API (SMTP_RECOVERY).",
-            )
+
+    if smtp_auth_error and not sent:
+        logger.warning(
+            "SMTP_RECOVERY correo=%s clave_temporal=%s",
+            account_email,
+            temporary_password,
+        )
+        return ok_response(
+            {
+                "email_sent": False,
+                "smtp_configured": True,
+                "must_change_password": True,
+            },
+            "La contraseña temporal ya está activa, pero Gmail rechazó el envío. "
+            "En Render → ferragro-api → Secret File smtp.env: SMTP_USER y SMTP_FROM_EMAIL deben ser la misma cuenta, "
+            "y SMTP_PASSWORD debe ser una contraseña de aplicación de Google (16 caracteres, sin espacios). "
+            "Luego Manual Deploy. Diagnóstico: /health/deep",
+        )
+
+    if smtp_other_error and not sent:
+        logger.warning(
+            "SMTP_RECOVERY correo=%s clave_temporal=%s (usa esta clave para ingresar)",
+            account_email,
+            temporary_password,
+        )
+        return ok_response(
+            {
+                "email_sent": False,
+                "smtp_configured": True,
+                "must_change_password": True,
+            },
+            "La contraseña temporal ya está activa, pero no se pudo enviar el correo. "
+            "Revisa en Render el archivo smtp.env (Gmail) y vuelve a desplegar. "
+            "Diagnóstico: https://ferragro-api.onrender.com/health/deep (smtp_login_ok). "
+            "Mientras tanto, el admin puede ver la clave en los logs del API (SMTP_RECOVERY).",
+        )
 
     if not sent:
         logger.warning(
@@ -465,7 +486,7 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
             {
                 "email_sent": False,
                 "smtp_configured": settings.smtp_configured,
-                "smtp_send_ready": smtp_ready,
+                "smtp_send_ready": settings.smtp_send_ready,
                 "must_change_password": True,
             },
             "Contraseña temporal generada, pero falta SMTP completo en Render "

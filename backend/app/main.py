@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-forgot-password-v1"
+API_BUILD_ID = "2026-05-29-forgot-password-v2"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -558,12 +558,15 @@ def health_deep():
                 admin_email = user.credential.email
     except Exception:
         logger.exception("health/deep: fallo de BD")
-    smtp_ok = refresh_smtp_settings(force_secret_overlay=True)
+    smtp_ok = refresh_smtp_settings()
     smtp_login_ok: bool | None = None
     if settings.smtp_send_ready:
         from app.services.mailer import smtp_login_probe_with_timeout
 
         smtp_login_ok = smtp_login_probe_with_timeout(timeout_seconds=18.0)
+        if smtp_login_ok is False:
+            refresh_smtp_settings(force_secret_overlay=True)
+            smtp_login_ok = smtp_login_probe_with_timeout(timeout_seconds=18.0)
     return ok_response(
         {
             "status": "ok" if db_ok and smtp_login_ok is not False else "degraded",
