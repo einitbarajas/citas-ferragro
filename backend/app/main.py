@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-recovery-smtp-v1"
+API_BUILD_ID = "2026-05-29-recovery-smtp-v2"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -559,20 +559,19 @@ def health_deep():
     except Exception:
         logger.exception("health/deep: fallo de BD")
     smtp_ok = refresh_smtp_settings()
-    smtp_login_ok = False
-    if smtp_ok:
-        try:
-            from app.services.mailer import smtp_login_probe
+    smtp_login_ok: bool | None = None
+    if settings.smtp_send_ready:
+        from app.services.mailer import smtp_login_probe_with_timeout
 
-            smtp_login_ok = smtp_login_probe()
-        except Exception:
-            logger.exception("health/deep: fallo probe SMTP")
+        smtp_login_ok = smtp_login_probe_with_timeout(timeout_seconds=18.0)
     return ok_response(
         {
-            "status": "ok" if db_ok else "degraded",
+            "status": "ok" if db_ok and smtp_login_ok is not False else "degraded",
             "build_id": API_BUILD_ID,
+            "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
             "database_ok": db_ok,
-            "email_enabled": smtp_ok,
+            "email_enabled": settings.smtp_configured,
+            "smtp_send_ready": settings.smtp_send_ready,
             "smtp_login_ok": smtp_login_ok,
             "admin_email": admin_email,
         },

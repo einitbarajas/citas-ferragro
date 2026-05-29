@@ -1,6 +1,7 @@
 """Utilidad simple de correo SMTP (fallback a logs si no hay SMTP_HOST)."""
 import logging
 import smtplib
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from contextlib import contextmanager
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
@@ -55,6 +56,7 @@ COMPANY_ADDRESS = "Carrera 41 #46-167, Itagui-Ant"
 COMPANY_WEBSITE = "https://www.ferragro.com"
 LOGO_PATH = Path(__file__).resolve().parents[3] / "frontend" / "public" / "ferragro-blan-bord.png"
 LOGO_CID = "ferragro-logo-watermark"
+SMTP_TIMEOUT_SECONDS = 12
 
 
 def _smtp_envelope_from() -> str:
@@ -69,7 +71,7 @@ def _smtp_client(*, use_ssl: bool | None = None, port: int | None = None, use_tl
     tls_mode = settings.smtp_use_tls if use_tls is None else use_tls
 
     if ssl_mode:
-        client = smtplib.SMTP_SSL(settings.smtp_host, smtp_port, timeout=30)
+        client = smtplib.SMTP_SSL(settings.smtp_host, smtp_port, timeout=SMTP_TIMEOUT_SECONDS)
         try:
             client.ehlo()
             if settings.smtp_user:
@@ -79,7 +81,7 @@ def _smtp_client(*, use_ssl: bool | None = None, port: int | None = None, use_tl
             client.quit()
         return
 
-    client = smtplib.SMTP(settings.smtp_host, smtp_port, timeout=30)
+    client = smtplib.SMTP(settings.smtp_host, smtp_port, timeout=SMTP_TIMEOUT_SECONDS)
     try:
         client.ehlo()
         if tls_mode:
