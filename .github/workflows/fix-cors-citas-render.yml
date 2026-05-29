@@ -1,0 +1,89 @@
+# Actualiza CORS_ORIGINS en Render y redespliega ferragro-api.
+# Secrets: RENDER_API_KEY (obligatorio para este workflow), RENDER_DEPLOY_HOOK (opcional).
+name: Fix CORS citas on Render
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "backend/app/main.py"
+      - ".github/workflows/fix-cors-citas-render.yml"
+
+env:
+  RENDER_SERVICE_ID: srv-d82dvanaqgkc739362u0
+  CORS_ORIGINS: https://frontend-ferragro.vercel.app,https://citas.ferragro.vercel.app
+  EXPECTED_BUILD_ID: "2026-05-29-cors-citas-v1"
+
+jobs:
+  fix-cors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set CORS_ORIGINS on Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::Falta secret RENDER_API_KEY en GitHub → Settings → Secrets → Actions"
+            exit 1
+          fi
+          SERVICE_ID="${RENDER_SERVICE_ID:-srv-d82dvanaqgkc739362u0}"
+          JSON=$(printf '{"key":"CORS_ORIGINS","value":"%s"}' "$CORS_ORIGINS")
+          HTTP=$(curl -sS -o /tmp/render-cors.out -w "%{http_code}" \
+            -X PUT "https://api.render.com/v1/services/${SERVICE_ID}/env-vars/CORS_ORIGINS" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$JSON")
+          if [ "$HTTP" -lt 200 ] || [ "$HTTP" -ge 300 ]; then
+            echo "::error::CORS_ORIGINS HTTP ${HTTP}"
+            cat /tmp/render-cors.out || true
+            exit 1
+          fi
+          echo "OK CORS_ORIGINS=${CORS_ORIGINS}"
+
+      - name: Trigger Render deploy
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "${DEPLOY_HOOK:-}" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK no configurado; haz Manual Deploy en Render."
+            exit 0
+          fi
+          HTTP=$(curl -sS -o /tmp/hook.out -w "%{http_code}" -X POST "$DEPLOY_HOOK")
+          cat /tmp/hook.out || true
+          if [ "$HTTP" -lt 200 ] || [ "$HTTP" -ge 300 ]; then
+            echo "::error::Deploy Hook HTTP ${HTTP}"
+            exit 1
+          fi
+          echo "Deploy solicitado (HTTP ${HTTP})."
+
+      - name: Wait for CORS and build_id
+        run: |
+          set -euo pipefail
+          ORIGIN="https://citas.ferragro.vercel.app"
+          API="https://ferragro-api.onrender.com"
+          for i in $(seq 1 30); do
+            sleep 20
+            CORS_HTTP=$(curl -sS -o /tmp/cors.hdr -w "%{http_code}" -X OPTIONS \
+              "${API}/api/v1/auth/login" \
+              -H "Origin: ${ORIGIN}" \
+              -H "Access-Control-Request-Method: POST" \
+              -H "Access-Control-Request-Headers: content-type" || echo "000")
+            ALLOW=$(grep -i "^access-control-allow-origin:" /tmp/cors.hdr 2>/dev/null | tr -d '\r' || true)
+            BODY=$(curl -fsS --max-time 90 "${API}/health" || echo "{}")
+            BUILD_ID=$(echo "$BODY" | grep -o '"build_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+            echo "intento $i: cors_http=${CORS_HTTP} allow=${ALLOW:-none} build_id=${BUILD_ID:-?}"
+            if [ "$CORS_HTTP" = "200" ] && echo "$ALLOW" | grep -q "citas.ferragro.vercel.app"; then
+              echo "CORS OK para ${ORIGIN}"
+              if [ "${BUILD_ID:-}" = "$EXPECTED_BUILD_ID" ]; then
+                echo "build_id=$EXPECTED_BUILD_ID en producción."
+              fi
+              exit 0
+            fi
+          done
+          echo "::error::Tras 10 min CORS sigue sin aceptar ${ORIGIN}. Revisa deploy en Render."
+          exit 1

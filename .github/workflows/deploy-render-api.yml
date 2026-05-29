@@ -14,7 +14,6 @@ on:
 
 jobs:
   deploy:
-    if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +29,11 @@ jobs:
         env:
           DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
+          if [ -z "${DEPLOY_HOOK:-}" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK no configurado. Haz Manual Deploy en Render."
+            echo "https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0"
+            exit 0
+          fi
           HTTP_CODE=$(curl -sS -o /tmp/render-hook.out -w "%{http_code}" -X POST "$DEPLOY_HOOK")
           cat /tmp/render-hook.out || true
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
@@ -42,6 +46,10 @@ jobs:
         env:
           EXPECTED: ${{ steps.build.outputs.expected }}
         run: |
+          if [ -z "${{ secrets.RENDER_DEPLOY_HOOK }}" ]; then
+            echo "Sin hook: no se espera build_id nuevo."
+            exit 0
+          fi
           API="https://ferragro-api.onrender.com/health"
           for i in $(seq 1 24); do
             sleep 20
@@ -56,11 +64,3 @@ jobs:
           done
           echo "::warning::Tras 8 min el API aún no muestra build_id=$EXPECTED."
           echo "Render → Manual Deploy → https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0"
-
-  remind-hook:
-    if: ${{ secrets.RENDER_DEPLOY_HOOK == '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          echo "::notice::RENDER_DEPLOY_HOOK no configurado. El push no despliega Render automáticamente."
-          echo "Opciones: GitHub Secrets → RENDER_DEPLOY_HOOK, o Render → Manual Deploy, o .\scripts\desplegar-produccion.ps1"
