@@ -82,19 +82,35 @@ jobs:
       - name: Trigger Render deploy
         env:
           DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
-          if [ -z "${DEPLOY_HOOK:-}" ]; then
-            echo "::warning::RENDER_DEPLOY_HOOK no configurado. Haz Manual Deploy en Render."
+          set -euo pipefail
+          SERVICE_ID="srv-d82dvanaqgkc739362u0"
+          DEPLOYED=0
+          if [ -n "${RENDER_API_KEY:-}" ]; then
+            HTTP=$(curl -sS -o /tmp/render-deploy.out -w "%{http_code}" \
+              -X POST "https://api.render.com/v1/services/${SERVICE_ID}/deploys" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d '{"clearCache":"clear"}')
+            cat /tmp/render-deploy.out || true
+            echo "Render API deploy HTTP ${HTTP}"
+            if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ]; then
+              DEPLOYED=1
+            fi
+          fi
+          if [ -n "${DEPLOY_HOOK:-}" ]; then
+            HTTP_CODE=$(curl -sS -o /tmp/render-hook.out -w "%{http_code}" -X POST "$DEPLOY_HOOK")
+            cat /tmp/render-hook.out || true
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              DEPLOYED=1
+            fi
+            echo "Deploy hook HTTP ${HTTP_CODE}"
+          fi
+          if [ "$DEPLOYED" -eq 0 ]; then
+            echo "::warning::Sin deploy hook ni RENDER_API_KEY. Haz Manual Deploy en Render."
             echo "https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0"
-            exit 0
           fi
-          HTTP_CODE=$(curl -sS -o /tmp/render-hook.out -w "%{http_code}" -X POST "$DEPLOY_HOOK")
-          cat /tmp/render-hook.out || true
-          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "::error::Deploy Hook respondió HTTP $HTTP_CODE"
-            exit 1
-          fi
-          echo "Deploy solicitado en Render (HTTP $HTTP_CODE)."
 
       - name: Wait for new build on /health
         env:
