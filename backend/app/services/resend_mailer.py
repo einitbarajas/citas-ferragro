@@ -33,12 +33,14 @@ def send_resend_email(
     if not resend_configured():
         return False
 
-    from_email = normalize_email(settings.resend_from_email) or normalize_email(settings.smtp_from_email)
-    if not from_email:
-        logger.error("Resend sin remitente (RESEND_FROM_EMAIL o SMTP_FROM_EMAIL)")
-        return False
-
-    from_header = f"{settings.smtp_from_name} <{from_email}>"
+    if settings.resend_sandbox:
+        from_header = f"{settings.smtp_from_name} <onboarding@resend.dev>"
+    else:
+        from_email = normalize_email(settings.resend_from_email) or normalize_email(settings.smtp_from_email)
+        if not from_email:
+            logger.error("Resend sin remitente (RESEND_FROM_EMAIL o dominio verificado en resend.com)")
+            return False
+        from_header = f"{settings.smtp_from_name} <{from_email}>"
     payload = {
         "from": from_header,
         "to": [delivery],

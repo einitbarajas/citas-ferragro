@@ -1,33 +1,51 @@
-# Por qué no llega el correo (y cómo arreglarlo)
+# Correo en producción — pasos correctos
 
-## Causa real
+## Error que viste en Resend
 
-**Render plan free bloquea los puertos SMTP (25, 465 y 587).**  
-Gmail funciona en tu PC, pero el servidor en Render **no puede conectar** a `smtp.gmail.com`. Por eso `smtp_login_ok: false` y el mensaje *“no se pudo enviar el correo”*.
+**No pongas** `https://ferragro-api.onrender.com` en **Domains**.  
+Eso es la URL del API, no un dominio de correo. Resend lo marca en rojo.
 
-No es un bug del front ni del typo del correo (usa `nataliabarajas412@gmail.com`).
+## Opción rápida (5 minutos, sin DNS)
 
-## Solución recomendada: Resend (gratis, HTTPS)
+1. [resend.com/api-keys](https://resend.com/api-keys) → **Create API Key** → copia `re_...`
+2. En tu PC, en la carpeta del proyecto:
 
-1. Crea cuenta en [resend.com](https://resend.com) (plan free).
-2. **Domains** o **Emails** → verifica el remitente `nataliabarajas412@gmail.com` (te llega un enlace de confirmación).
-3. **API Keys** → crea una key (`re_...`).
-4. En [Render → ferragro-api → Environment](https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0/env) añade:
-
-```env
-RESEND_API_KEY=re_xxxxxxxx
-RESEND_FROM_EMAIL=nataliabarajas412@gmail.com
+```powershell
+.\scripts\activar-correo-render.ps1
 ```
 
-5. **Save** → **Manual Deploy** (o espera auto-deploy de `main`).
-6. Comprueba: https://ferragro-api.onrender.com/health → `email_provider: "resend"`, `resend_ready: true`
-7. Prueba **Olvidé mi contraseña** en citas.
+3. Pega la `re_...` cuando lo pida.
+4. Pega tu **RENDER_API_KEY** (`rnd_...` desde [Render → Account → API Keys](https://dashboard.render.com/u/settings#api-keys))
+5. El script sube variables y despliega solo.
 
-## Alternativa: plan de pago en Render
+Modo automático: usa `RESEND_SANDBOX=true` → envía desde `onboarding@resend.dev` a tu Gmail (`nataliabarajas412@gmail.com`). **No hace falta verificar dominio.**
 
-Si subes **ferragro-api** a un plan de pago (Starter), SMTP Gmail vuelve a funcionar con `smtp-render.env` en Secret File `smtp.env`.
+## Para todos los correos (@ferragro.com, proveedores, etc.)
 
-## Qué ya no sirve solo
+En Resend → **Domains** → nombre: **`ferragro.com`** (solo eso, sin https).
 
-- Pegar `smtp-render.env` en Render **sin Resend ni plan de pago** → seguirá fallando (puertos bloqueados).
-- Más cambios de contraseña de aplicación Gmail → solo ayuda en local, no en Render free.
+Quien administre el DNS de [ferragro.com](https://www.ferragro.com) debe añadir los registros TXT/MX que muestra Resend. Luego en Render:
+
+```env
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=notificaciones@ferragro.com
+RESEND_SANDBOX=false
+```
+
+## Alternativa Brevo (sin dominio, solo verificar Gmail)
+
+1. [app.brevo.com](https://app.brevo.com) → **Senders** → añade `nataliabarajas412@gmail.com` → confirma el enlace en Gmail.
+2. **SMTP & API** → API key `xkeysib-...`
+3. `.\scripts\activar-correo-render.ps1` y pega la key de Brevo.
+
+## Por qué Gmail SMTP no sirve en Render free
+
+Render **bloquea** los puertos 587/465. Por eso `smtp-render.env` no funciona aunque esté bien pegado.
+
+## Comprobar
+
+https://ferragro-api.onrender.com/health debe mostrar:
+
+- `email_provider`: `"resend"` o `"brevo"`
+- `resend_ready` o `brevo_ready`: `true`
+- `build_id`: contiene `email-https-v2`

@@ -14,7 +14,7 @@ services:
     repo: https://github.com/einitbarajas/citas-ferragro
     branch: main
     autoDeploy: true
-    # Rebuild trigger: 2026-05-29-smtp-secret-overlay-v1
+    # Rebuild trigger: 2026-05-29-email-https-v2
     rootDir: backend
     # No ejecutar scripts de BD en build (si fallan, Render no publica). El arranque corrige el Admin.
     buildCommand: bash build.sh
@@ -52,6 +52,10 @@ services:
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL
+        sync: false
+      - key: RESEND_SANDBOX
+        sync: false
+      - key: BREVO_API_KEY
         sync: false
       - key: REFRESH_COOKIE_SECURE
         value: "true"

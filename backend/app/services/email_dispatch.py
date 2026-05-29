@@ -33,7 +33,7 @@ atexit.register(shutdown_email_executor)
 
 def _prepare_smtp_for_send() -> bool:
     """SMTP (local/paid Render) o Resend (HTTPS en Render free)."""
-    if settings.resend_send_ready:
+    if settings.brevo_send_ready or settings.resend_send_ready:
         return True
     if not settings.is_production:
         return settings.smtp_send_ready

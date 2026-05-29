@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # Render plan free bloquea SMTP; usar Resend (HTTPS, puerto 443).
     resend_api_key: str = ""
     resend_from_email: str = ""
+    # true = usa onboarding@resend.dev (solo pruebas; destinatario = cuenta Resend).
+    resend_sandbox: bool = False
+    # Brevo/Sendinblue HTTPS (alternativa; verifica remitente por correo, sin dominio propio).
+    brevo_api_key: str = ""
     # Solo para emergencias: POST /auth/maintenance/reset-admin-password con header X-Maintenance-Token.
     # Déjalo vacío en producción normal; quítalo tras usarlo.
     maintenance_token: str = ""
@@ -125,15 +129,26 @@ class Settings(BaseSettings):
 
     @property
     def resend_send_ready(self) -> bool:
+        if not self.resend_api_key.strip():
+            return False
+        if self.resend_sandbox:
+            return True
         from_email = self.resend_from_email.strip() or self.smtp_from_email.strip()
-        return bool(self.resend_api_key.strip() and from_email)
+        return bool(from_email)
+
+    @property
+    def brevo_send_ready(self) -> bool:
+        from_email = self.smtp_from_email.strip() or self.resend_from_email.strip()
+        return bool(self.brevo_api_key.strip() and from_email)
 
     @property
     def email_send_ready(self) -> bool:
-        return self.resend_send_ready or self.smtp_send_ready
+        return self.brevo_send_ready or self.resend_send_ready or self.smtp_send_ready
 
     @property
     def email_provider(self) -> str:
+        if self.brevo_send_ready:
+            return "brevo"
         if self.resend_send_ready:
             return "resend"
         if self.smtp_send_ready:

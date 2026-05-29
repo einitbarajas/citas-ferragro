@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-resend-email-v1"
+API_BUILD_ID = "2026-05-29-email-https-v2"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -547,11 +547,13 @@ def health():
             "email_enabled": settings.email_send_ready,
             "email_provider": settings.email_provider,
             "resend_ready": settings.resend_send_ready,
+            "resend_sandbox": settings.resend_sandbox,
+            "brevo_ready": settings.brevo_send_ready,
             "smtp_send_ready": settings.smtp_send_ready,
             "smtp_host": settings.smtp_host or None,
             "render_smtp_blocked_hint": (
-                "Render free bloquea puertos SMTP; usa RESEND_API_KEY o plan de pago."
-                if settings.is_production and not settings.resend_send_ready
+                "Render free bloquea SMTP; configura RESEND_API_KEY (y RESEND_SANDBOX=true) o BREVO_API_KEY."
+                if settings.is_production and not settings.brevo_send_ready and not settings.resend_send_ready
                 else None
             ),
             "smtp_diag": {
@@ -593,9 +595,12 @@ def health_deep():
     smtp_ok = refresh_smtp_settings()
     smtp_login_ok: bool | None = None
     smtp_profile_label: str | None = None
-    if settings.resend_send_ready:
+    if settings.brevo_send_ready:
         smtp_login_ok = True
-        smtp_profile_label = "resend_https"
+        smtp_profile_label = "brevo_https"
+    elif settings.resend_send_ready:
+        smtp_login_ok = True
+        smtp_profile_label = "resend_https" + ("_sandbox" if settings.resend_sandbox else "")
     elif settings.smtp_send_ready:
         from app.services.mailer import smtp_login_probe_with_timeout
         from app.services.smtp_resolver import resolved_smtp_label
@@ -605,7 +610,8 @@ def health_deep():
     return ok_response(
         {
             "status": "ok"
-            if db_ok and (smtp_login_ok is True or settings.resend_send_ready)
+            if db_ok
+            and (smtp_login_ok is True or settings.brevo_send_ready or settings.resend_send_ready)
             else "degraded",
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
@@ -613,6 +619,7 @@ def health_deep():
             "email_enabled": settings.email_send_ready,
             "email_provider": settings.email_provider,
             "resend_ready": settings.resend_send_ready,
+            "brevo_ready": settings.brevo_send_ready,
             "smtp_send_ready": settings.smtp_send_ready,
             "smtp_login_ok": smtp_login_ok if settings.smtp_send_ready else None,
             "smtp_profile": smtp_profile_label,
