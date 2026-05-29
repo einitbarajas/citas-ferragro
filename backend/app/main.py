@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-deploy-live-v1"
+API_BUILD_ID = "2026-05-29-smtp-gmail-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -516,19 +516,24 @@ def root():
 @app.get("/health")
 def health():
     # Respuesta rápida para health check de Render (sin BD ni SMTP en cada ping).
-    smtp_ok = refresh_smtp_settings()
+    refresh_smtp_settings()
     return ok_response(
         {
             "status": "ok",
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
-            "email_enabled": smtp_ok,
+            "email_enabled": settings.smtp_configured,
+            "smtp_send_ready": settings.smtp_send_ready,
             "smtp_host": settings.smtp_host or None,
             "smtp_diag": {
                 "host_set": bool(settings.smtp_host.strip()),
                 "user_set": bool(settings.smtp_user.strip()),
                 "password_set": bool(settings.smtp_password.strip()),
                 "from_email_set": bool(settings.smtp_from_email.strip()),
+                "user_matches_from": (
+                    (settings.smtp_user or "").strip().lower()
+                    == (settings.smtp_from_email or "").strip().lower()
+                ),
             },
         },
         "Servicio activo",

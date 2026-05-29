@@ -112,9 +112,20 @@ class Settings(BaseSettings):
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host.strip() and self.smtp_from_email.strip())
 
+    @property
+    def smtp_send_ready(self) -> bool:
+        return bool(
+            self.smtp_configured
+            and self.smtp_user.strip()
+            and self.smtp_password.strip()
+        )
+
     @model_validator(mode="after")
     def apply_smtp_profile_defaults(self) -> "Settings":
         _apply_smtp_profile_defaults(self)
+        from app.services.smtp_settings import finalize_smtp_settings
+
+        finalize_smtp_settings(self)
         return self
 
     @model_validator(mode="after")
@@ -204,8 +215,11 @@ def refresh_smtp_settings() -> bool:
     if ssl is not None and str(ssl).strip():
         object.__setattr__(settings, "smtp_use_ssl", _coerce_env_value(str(ssl), bool))
     _apply_smtp_profile_defaults(settings)
+    from app.services.smtp_settings import finalize_smtp_settings
+
+    finalize_smtp_settings(settings)
     if applied:
         import logging
 
         logging.getLogger(__name__).info("SMTP cargado desde archivos: %s", ", ".join(applied))
-    return settings.smtp_configured
+    return settings.smtp_send_ready

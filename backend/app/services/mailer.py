@@ -36,11 +36,19 @@ LOGO_PATH = Path(__file__).resolve().parents[3] / "frontend" / "public" / "ferra
 LOGO_CID = "ferragro-logo-watermark"
 
 
+def _smtp_envelope_from() -> str:
+    return normalize_email(settings.smtp_from_email) or normalize_email(settings.smtp_user) or ""
+
+
 @contextmanager
-def _smtp_client():
-    """Conexión unificada: STARTTLS (587) o SSL directo (465), según configuración."""
-    if settings.smtp_use_ssl:
-        client = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=30)
+def _smtp_client(*, use_ssl: bool | None = None, port: int | None = None, use_tls: bool | None = None):
+    """Conexión STARTTLS (587) o SSL directo (465), según configuración."""
+    ssl_mode = settings.smtp_use_ssl if use_ssl is None else use_ssl
+    smtp_port = settings.smtp_port if port is None else port
+    tls_mode = settings.smtp_use_tls if use_tls is None else use_tls
+
+    if ssl_mode:
+        client = smtplib.SMTP_SSL(settings.smtp_host, smtp_port, timeout=30)
         try:
             client.ehlo()
             if settings.smtp_user:
@@ -50,10 +58,10 @@ def _smtp_client():
             client.quit()
         return
 
-    client = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30)
+    client = smtplib.SMTP(settings.smtp_host, smtp_port, timeout=30)
     try:
         client.ehlo()
-        if settings.smtp_use_tls:
+        if tls_mode:
             client.starttls()
             client.ehlo()
         if settings.smtp_user:
@@ -61,6 +69,36 @@ def _smtp_client():
         yield client
     finally:
         client.quit()
+
+
+def _deliver_smtp_message(message: MIMEMultipart, delivery: str) -> None:
+    from_addr = _smtp_envelope_from()
+    if not from_addr:
+        raise ValueError("SMTP sin remitente (SMTP_FROM_EMAIL / SMTP_USER)")
+
+    payload = message.as_string()
+    attempts = [("primary", lambda: _smtp_client())]
+    if "gmail.com" in (settings.smtp_host or "").lower() and not settings.smtp_use_ssl:
+        attempts.append(
+            (
+                "gmail_ssl_465",
+                lambda: _smtp_client(use_ssl=True, port=465, use_tls=False),
+            )
+        )
+
+    last_error: Exception | None = None
+    for label, client_factory in attempts:
+        try:
+            with client_factory() as client:
+                client.sendmail(from_addr, [delivery], payload)
+            if label != "primary":
+                logger.info("Correo enviado con fallback SMTP %s", label)
+            return
+        except Exception as exc:
+            last_error = exc
+            logger.warning("SMTP intento %s falló para %s: %s", label, delivery, exc)
+    if last_error is not None:
+        raise last_error
 
 
 def _reply_to_address() -> str:
@@ -128,17 +166,18 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
     html_body = _build_mail_layout(content_html)
 
     refresh_smtp_settings()
-    if not settings.smtp_configured:
+    if not settings.smtp_send_ready:
         logger.warning(
-            "Correo no enviado (SMTP no configurado). to=%s subject=%s",
+            "Correo no enviado (SMTP incompleto: host/from/user/password). to=%s subject=%s",
             delivery,
             subject,
         )
         return False
 
+    from_addr = _smtp_envelope_from() or settings.smtp_from_email
     message = MIMEMultipart("related")
     message["Subject"] = subject
-    message["From"] = formataddr((settings.smtp_from_name, settings.smtp_from_email))
+    message["From"] = formataddr((settings.smtp_from_name, from_addr))
     message["To"] = delivery
     message["Reply-To"] = _reply_to_address()
     alternative_part = MIMEMultipart("alternative")
@@ -153,8 +192,7 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
         message.attach(logo_mime)
 
     try:
-        with _smtp_client() as client:
-            client.sendmail(settings.smtp_from_email, [delivery], message.as_string())
+        _deliver_smtp_message(message, delivery)
         return True
     except smtplib.SMTPAuthenticationError as exc:
         logger.error(

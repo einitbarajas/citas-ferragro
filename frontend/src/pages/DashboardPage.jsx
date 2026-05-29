@@ -1250,8 +1250,11 @@ export default function DashboardPage() {
         throw new Error(payload.message);
       }
       const today = todayISO();
-      const openDays = Array.isArray(payload.data?.open_days) ? payload.data.open_days : [];
-      setProviderAvailableDays(openDays.filter((d) => String(d) >= today));
+      // Solo franjas publicadas por fecha (mismo criterio que verde oscuro del admin), no la plantilla semanal.
+      const publishedDays = Array.isArray(payload.data?.override_days)
+        ? payload.data.override_days
+        : [];
+      setProviderAvailableDays(publishedDays.filter((d) => String(d) >= today));
     },
     [session, isProveedor, selectedWarehouseId, activeProviderUnloadTeamId]
   );
@@ -4072,10 +4075,11 @@ export default function DashboardPage() {
                   if (!cell) return <div key={`prov-empty-${idx}`} />;
                   const teamReady = Boolean(activeProviderUnloadTeamId);
                   const isPast = cell.isPast || cell.dateISO < todayValue;
-                  const hasFranja = !isPast && providerAvailableDays.includes(cell.dateISO);
-                  const hasAppointment =
-                    hasFranja && providerDaysWithAppointments.has(cell.dateISO);
-                  const canPickDay = teamReady && hasFranja;
+                  const hasPublishedFranja =
+                    !isPast && providerAvailableDays.includes(cell.dateISO);
+                  const hasAppointment = providerDaysWithAppointments.has(cell.dateISO);
+                  const canPickDay =
+                    teamReady && !isPast && (hasPublishedFranja || hasAppointment);
                   return (
                     <button
                       type="button"
@@ -4097,10 +4101,10 @@ export default function DashboardPage() {
                           ? "Este día ya pasó; no puedes agendar aquí"
                           : !teamReady
                             ? "Selecciona un muelle para ver el calendario de ese equipo"
-                            : !hasFranja
-                              ? "Sin franja para este muelle en esta fecha"
-                              : hasAppointment
-                                ? "Ya tienes cita este día; puedes agendar otro turno si hay cupo"
+                            : hasAppointment
+                              ? "Ya tienes cita este día; puedes agendar otro turno si hay cupo"
+                              : !hasPublishedFranja
+                                ? "Sin franja publicada para este muelle en esta fecha"
                                 : "Hay franja publicada: puedes agendar"
                       }
                     >
@@ -4110,8 +4114,8 @@ export default function DashboardPage() {
                 })}
               </div>
               <p className="mt-2 text-[11px] text-slate-600">
-                Verde claro: día con franja (puedes agendar). Verde oscuro: ya tienes cita ese día. Gris: sin franja, día pasado o sin
-                muelle seleccionado (no se puede hacer clic).
+                Verde claro: día con franja publicada por la empresa (puedes agendar). Verde oscuro: ya tienes cita ese día. Gris: sin
+                franja publicada, día pasado o sin muelle seleccionado (no se puede hacer clic).
               </p>
             </div>
             <div className={card}>
