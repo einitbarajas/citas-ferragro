@@ -261,9 +261,14 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
       setForgotRequested(true);
       setForgotCooldownSeconds(60);
       if (payload.data?.email_sent === false) {
+        const hint =
+          payload.message?.includes("no se pudo enviar") ||
+          payload.message?.includes("contraseña temporal ya está activa")
+            ? " Verifica que el correo sea exactamente el de tu registro (nataliabarajas412@gmail.com, una sola «l» en natalia)."
+            : "";
         setError(
-          payload.message ||
-            "No se pudo enviar el correo. Configura SMTP en Render o revisa los logs del API (SMTP_RECOVERY)."
+          (payload.message ||
+            "No se pudo enviar el correo. Revisa spam o contacta a soporte Ferragro.") + hint
         );
       } else {
         setError("");

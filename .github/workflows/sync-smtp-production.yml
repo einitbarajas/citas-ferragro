@@ -8,7 +8,9 @@ on:
     branches: [main]
     paths:
       - "backend/app/services/email_dispatch.py"
+      - "backend/app/services/mailer.py"
       - "backend/app/services/smtp_resolver.py"
+      - "backend/app/core/config.py"
       - "backend/app/main.py"
       - ".github/workflows/sync-smtp-production.yml"
       - ".github/workflows/deploy-render-api.yml"

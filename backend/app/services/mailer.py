@@ -20,25 +20,44 @@ def _smtp_delivery_attempts() -> list[tuple[str, object]]:
     if "gmail.com" not in host:
         return [("primary", lambda: _smtp_client())]
 
-    # En Render, 465 SSL suele funcionar mejor que 587 STARTTLS para Gmail.
     attempts: list[tuple[str, object]] = []
-    if settings.is_production:
-        attempts.append(
-            ("gmail_ssl_465", lambda: _smtp_client(use_ssl=True, port=465, use_tls=False)),
-        )
-    if not settings.smtp_use_ssl:
-        attempts.append(("gmail_starttls_587", lambda: _smtp_client()))
-        if not settings.is_production:
-            attempts.insert(
-                0,
-                ("gmail_ssl_465", lambda: _smtp_client(use_ssl=True, port=465, use_tls=False)),
-            )
+    seen: set[str] = set()
+
+    def _add(label: str, factory) -> None:
+        if label in seen:
+            return
+        seen.add(label)
+        attempts.append((label, factory))
+
+    # Usar primero el perfil que smtp_resolver ya validó (evita 465 fallido + timeout en 587).
+    if settings.smtp_use_ssl:
+        _add("current_ssl", lambda: _smtp_client())
     else:
-        attempts.append(("gmail_ssl_465", lambda: _smtp_client()))
-        attempts.append(
-            ("gmail_starttls_587", lambda: _smtp_client(use_ssl=False, port=587, use_tls=True)),
-        )
+        _add("current_starttls", lambda: _smtp_client())
+    _add(
+        "gmail_ssl_465",
+        lambda: _smtp_client(use_ssl=True, port=465, use_tls=False),
+    )
+    _add(
+        "gmail_starttls_587",
+        lambda: _smtp_client(use_ssl=False, port=587, use_tls=True),
+    )
     return attempts
+
+
+def _refresh_smtp_for_delivery() -> bool:
+    """Mantiene el perfil SMTP activo; en Render prioriza smtp.env sobre env sueltas."""
+    if settings.is_production:
+        from app.core.smtp_env_loader import overlay_render_smtp_secret
+        from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
+
+        overlay_render_smtp_secret()
+        refresh_smtp_settings()
+        if resolved_smtp_label():
+            return settings.smtp_send_ready
+        return ensure_smtp_login_ready()
+    refresh_smtp_settings()
+    return settings.smtp_send_ready
 
 
 def smtp_login_probe() -> bool:
@@ -81,7 +100,11 @@ SUPPORT_PHONE = "+57 3142254819"
 SUPPORT_WHATSAPP_URL = "https://wa.me/573142254819"
 COMPANY_ADDRESS = "Carrera 41 #46-167, Itagui-Ant"
 COMPANY_WEBSITE = "https://www.ferragro.com"
-LOGO_PATH = Path(__file__).resolve().parents[3] / "frontend" / "public" / "ferragro-blan-bord.png"
+_LOGO_CANDIDATES = (
+    Path(__file__).resolve().parents[2] / "static" / "ferragro-blan-bord.png",
+    Path(__file__).resolve().parents[3] / "frontend" / "public" / "ferragro-blan-bord.png",
+)
+LOGO_PATH = next((p for p in _LOGO_CANDIDATES if p.is_file()), _LOGO_CANDIDATES[0])
 LOGO_CID = "ferragro-logo-watermark"
 SMTP_TIMEOUT_SECONDS = 8
 
@@ -127,9 +150,9 @@ def _deliver_smtp_message(message: MIMEMultipart, delivery: str) -> None:
         raise ValueError("SMTP sin remitente (SMTP_FROM_EMAIL / SMTP_USER)")
 
     if settings.is_production:
-        from app.services.smtp_resolver import ensure_smtp_login_ready
+        from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
 
-        if not ensure_smtp_login_ready():
+        if not resolved_smtp_label() and not ensure_smtp_login_ready():
             raise smtplib.SMTPAuthenticationError(
                 535,
                 b"Gmail no acepto login desde Render; revisa smtp.env y contrasena de aplicacion",
@@ -215,8 +238,7 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
 
     html_body = _build_mail_layout(content_html)
 
-    refresh_smtp_settings()
-    if not settings.smtp_send_ready:
+    if not _refresh_smtp_for_delivery():
         logger.warning(
             "Correo no enviado (SMTP incompleto: host/from/user/password). to=%s subject=%s",
             delivery,
@@ -309,7 +331,12 @@ def send_temporary_password_email_with_retry(
 ) -> bool:
     """Recuperación de contraseña: re-lee SMTP y reintenta (Render)."""
     for attempt in range(1, max(1, attempts) + 1):
-        refresh_smtp_settings(force_secret_overlay=force_secret_overlay)
+        if settings.is_production:
+            if not _refresh_smtp_for_delivery():
+                logger.warning("SMTP no listo para recuperación (intento %s)", attempt)
+                continue
+        else:
+            refresh_smtp_settings(force_secret_overlay=force_secret_overlay)
         if not settings.smtp_send_ready:
             logger.warning("SMTP no listo para recuperación (intento %s)", attempt)
             continue

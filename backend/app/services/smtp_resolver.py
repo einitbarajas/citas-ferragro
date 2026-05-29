@@ -5,6 +5,7 @@ import logging
 import smtplib
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator
 
 from app.core.config import refresh_smtp_settings, settings
@@ -67,6 +68,18 @@ def _probe_client(
         client.quit()
 
 
+def _ordered_candidates() -> tuple[_SmtpCandidate, ...]:
+    """En Render, smtp.env suele ser la fuente correcta; probarla antes que env sueltas."""
+    if Path("/etc/secrets/smtp.env").is_file():
+        return (
+            _CANDIDATES[1],
+            _CANDIDATES[3],
+            _CANDIDATES[0],
+            _CANDIDATES[2],
+        )
+    return _CANDIDATES
+
+
 def _apply_candidate(candidate: _SmtpCandidate) -> None:
     refresh_smtp_settings(force_secret_overlay=candidate.force_secret_overlay)
     object.__setattr__(settings, "smtp_use_ssl", candidate.use_ssl)
@@ -105,10 +118,10 @@ def ensure_smtp_login_ready(*, force: bool = False) -> bool:
     if not settings.smtp_send_ready and not refresh_smtp_settings():
         return False
 
-    ordered = _CANDIDATES
+    ordered = _ordered_candidates()
     if _resolved_label:
-        ordered = tuple(c for c in _CANDIDATES if c.label == _resolved_label) + tuple(
-            c for c in _CANDIDATES if c.label != _resolved_label
+        ordered = tuple(c for c in ordered if c.label == _resolved_label) + tuple(
+            c for c in ordered if c.label != _resolved_label
         )
 
     for candidate in ordered:

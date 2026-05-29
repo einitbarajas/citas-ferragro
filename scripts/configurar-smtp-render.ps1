@@ -145,12 +145,27 @@ function Wait-EmailEnabled {
     return $null
 }
 
+$smtpRenderPath = Join-Path $repoRoot "smtp-render.env"
+if (-not (Test-Path -LiteralPath $EnvFile)) {
+    if (Test-Path -LiteralPath $smtpRenderPath) {
+        $EnvFile = $smtpRenderPath
+        Write-Host "Usando $smtpRenderPath (no hay .env con SMTP)." -ForegroundColor Cyan
+    }
+}
 $envMap = Read-DotEnv -Path $EnvFile
 $required = @("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM_EMAIL")
-foreach ($k in $required) {
-    if ([string]::IsNullOrWhiteSpace($envMap[$k])) {
-        throw "Falta $k en $EnvFile"
+$missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace($envMap[$_]) })
+if ($missing.Count -gt 0 -and (Test-Path -LiteralPath $smtpRenderPath)) {
+    $smtpMap = Read-DotEnv -Path $smtpRenderPath
+    foreach ($k in $required) {
+        if ([string]::IsNullOrWhiteSpace($envMap[$k]) -and $smtpMap[$k]) {
+            $envMap[$k] = $smtpMap[$k]
+        }
     }
+    $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace($envMap[$_]) })
+}
+foreach ($k in $missing) {
+    throw "Falta $k en $EnvFile (o en smtp-render.env)"
 }
 
 $toSet = @{

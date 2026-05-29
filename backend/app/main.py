@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-recovery-email-sync-v1"
+API_BUILD_ID = "2026-05-29-smtp-secret-overlay-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -580,26 +580,17 @@ def health_deep():
                 admin_email = user.credential.email
     except Exception:
         logger.exception("health/deep: fallo de BD")
+    from app.core.smtp_env_loader import overlay_render_smtp_secret
+
+    overlay_render_smtp_secret()
     smtp_ok = refresh_smtp_settings()
     smtp_login_ok: bool | None = None
     smtp_profile_label: str | None = None
     if settings.smtp_send_ready:
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+        from app.services.mailer import smtp_login_probe_with_timeout
+        from app.services.smtp_resolver import resolved_smtp_label
 
-        from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
-
-        def _probe_smtp() -> bool:
-            if ensure_smtp_login_ready():
-                return True
-            return bool(ensure_smtp_login_ready(force=True))
-
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(_probe_smtp)
-            try:
-                smtp_login_ok = future.result(timeout=14.0)
-            except FuturesTimeoutError:
-                logger.warning("health/deep: probe SMTP excedió 14s")
-                smtp_login_ok = None
+        smtp_login_ok = smtp_login_probe_with_timeout(40.0)
         smtp_profile_label = resolved_smtp_label()
     return ok_response(
         {

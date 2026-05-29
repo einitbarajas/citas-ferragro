@@ -8,7 +8,6 @@ from app.services.email_utils import dedupe_emails, is_deliverable_email, normal
 from app.services.mailer import (
     send_internal_welcome_email,
     send_notification_email,
-    send_temporary_password_email_with_retry,
     send_welcome_email,
 )
 
@@ -120,12 +119,12 @@ def send_recovery_password_email(account_email: str, temporary_password: str) ->
                 account_email,
             )
             return False
-        sent = send_temporary_password_email_with_retry(
+        from app.services.mailer import send_temporary_password_email
+
+        sent = send_temporary_password_email(
             account_email,
             temporary_password,
             account_email=account_email,
-            attempts=2,
-            force_secret_overlay=False,
         )
         if not sent:
             logger.warning(
