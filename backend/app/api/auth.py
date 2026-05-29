@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import SecurityPrincipal, get_db, get_security_principal
-from app.core.config import settings
+from app.core.config import refresh_smtp_settings, settings
 from app.core.rate_limit import limiter
 from app.core.responses import ok_response
 from app.core.security import create_access_token, create_refresh_token, get_password_hash, verify_password
@@ -408,7 +408,8 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
     db.commit()
 
     sent = False
-    if settings.smtp_configured:
+    smtp_ready = refresh_smtp_settings()
+    if smtp_ready:
         try:
             sent = send_temporary_password_email(
                 account_email,
@@ -441,7 +442,7 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
         return ok_response(
             {
                 "email_sent": False,
-                "smtp_configured": False,
+                "smtp_configured": smtp_ready,
                 "must_change_password": True,
             },
             "Contraseña temporal generada, pero el servidor no tiene SMTP configurado. "

@@ -8,7 +8,7 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from pathlib import Path
 
-from app.core.config import settings
+from app.core.config import refresh_smtp_settings, settings
 from app.services.email_utils import is_deliverable_email, normalize_email
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,7 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
 
     html_body = _build_mail_layout(content_html)
 
+    refresh_smtp_settings()
     if not settings.smtp_configured:
         logger.warning(
             "Correo no enviado (SMTP no configurado). to=%s subject=%s",

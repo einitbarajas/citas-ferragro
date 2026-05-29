@@ -76,7 +76,7 @@ function Set-RenderEnvVar {
         [string] $Service
     )
     $uri = "https://api.render.com/v1/services/$Service/env-vars/$Key"
-    $body = @{ key = $Key; value = $Value } | ConvertTo-Json -Compress
+    $body = (@{ key = $Key; value = $Value } | ConvertTo-Json -Compress)
     $headers = @{
         Authorization = "Bearer $Token"
         Accept        = "application/json"
@@ -143,7 +143,7 @@ foreach ($entry in $toSet.GetEnumerator() | Sort-Object Name) {
     $lines += "$($entry.Key)=$($entry.Value)"
 }
 $smtpFileBody = $lines -join "`n"
-Set-Content -LiteralPath $exportPath -Value $smtpFileBody -Encoding UTF8 -NoNewline
+[System.IO.File]::WriteAllText($exportPath, $smtpFileBody, [System.Text.UTF8Encoding]::new($false))
 
 if (-not $ApiKey) {
     Write-Host ""

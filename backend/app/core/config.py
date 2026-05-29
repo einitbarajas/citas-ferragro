@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic import model_validator
@@ -113,40 +114,44 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def apply_smtp_profile_defaults(self) -> "Settings":
-        profile = self.smtp_profile.strip().lower()
-        presets: dict[str, dict[str, object]] = {
-            "office365": {
-                "host": "smtp.office365.com",
-                "port": 587,
-                "use_tls": True,
-                "use_ssl": False,
-            },
-            "outlook": {
-                "host": "smtp.office365.com",
-                "port": 587,
-                "use_tls": True,
-                "use_ssl": False,
-            },
-            "gmail": {
-                "host": "smtp.gmail.com",
-                "port": 587,
-                "use_tls": True,
-                "use_ssl": False,
-            },
-            "gmail_ssl": {
-                "host": "smtp.gmail.com",
-                "port": 465,
-                "use_tls": False,
-                "use_ssl": True,
-            },
-        }
-        if profile in presets and not self.smtp_host.strip():
-            preset = presets[profile]
-            object.__setattr__(self, "smtp_host", str(preset["host"]))
-            object.__setattr__(self, "smtp_port", int(preset["port"]))
-            object.__setattr__(self, "smtp_use_tls", bool(preset["use_tls"]))
-            object.__setattr__(self, "smtp_use_ssl", bool(preset["use_ssl"]))
+        _apply_smtp_profile_defaults(self)
         return self
+
+
+def _apply_smtp_profile_defaults(target: Settings) -> None:
+    profile = target.smtp_profile.strip().lower()
+    presets: dict[str, dict[str, object]] = {
+        "office365": {
+            "host": "smtp.office365.com",
+            "port": 587,
+            "use_tls": True,
+            "use_ssl": False,
+        },
+        "outlook": {
+            "host": "smtp.office365.com",
+            "port": 587,
+            "use_tls": True,
+            "use_ssl": False,
+        },
+        "gmail": {
+            "host": "smtp.gmail.com",
+            "port": 587,
+            "use_tls": True,
+            "use_ssl": False,
+        },
+        "gmail_ssl": {
+            "host": "smtp.gmail.com",
+            "port": 465,
+            "use_tls": False,
+            "use_ssl": True,
+        },
+    }
+    if profile in presets and not target.smtp_host.strip():
+        preset = presets[profile]
+        object.__setattr__(target, "smtp_host", str(preset["host"]))
+        object.__setattr__(target, "smtp_port", int(preset["port"]))
+        object.__setattr__(target, "smtp_use_tls", bool(preset["use_tls"]))
+        object.__setattr__(target, "smtp_use_ssl", bool(preset["use_ssl"]))
 
     @model_validator(mode="after")
     def apply_production_defaults(self) -> "Settings":
@@ -160,3 +165,47 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+_SMTP_ENV_KEYS: tuple[tuple[str, str, type], ...] = (
+    ("smtp_profile", "SMTP_PROFILE", str),
+    ("smtp_host", "SMTP_HOST", str),
+    ("smtp_port", "SMTP_PORT", int),
+    ("smtp_user", "SMTP_USER", str),
+    ("smtp_password", "SMTP_PASSWORD", str),
+    ("smtp_from_email", "SMTP_FROM_EMAIL", str),
+    ("smtp_from_name", "SMTP_FROM_NAME", str),
+    ("smtp_reply_to", "SMTP_REPLY_TO", str),
+)
+
+
+def _coerce_env_value(raw: str, target_type: type):
+    if target_type is bool:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    if target_type is int:
+        return int(raw.strip())
+    return raw.strip()
+
+
+def refresh_smtp_settings() -> bool:
+    """
+    Relee SMTP desde variables de entorno y archivos secretos de Render.
+    Útil si el proceso arrancó antes de montar /etc/secrets o las vars se añadieron después.
+    """
+    applied = bootstrap_smtp_from_secret_files()
+    for attr, env_key, target_type in _SMTP_ENV_KEYS:
+        raw = os.getenv(env_key)
+        if raw is None or not str(raw).strip():
+            continue
+        object.__setattr__(settings, attr, _coerce_env_value(str(raw), target_type))
+    tls = os.getenv("SMTP_USE_TLS")
+    if tls is not None and str(tls).strip():
+        object.__setattr__(settings, "smtp_use_tls", _coerce_env_value(str(tls), bool))
+    ssl = os.getenv("SMTP_USE_SSL")
+    if ssl is not None and str(ssl).strip():
+        object.__setattr__(settings, "smtp_use_ssl", _coerce_env_value(str(ssl), bool))
+    _apply_smtp_profile_defaults(settings)
+    if applied:
+        import logging
+
+        logging.getLogger(__name__).info("SMTP cargado desde archivos: %s", ", ".join(applied))
+    return settings.smtp_configured

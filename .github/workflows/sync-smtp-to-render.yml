@@ -70,7 +70,7 @@ jobs:
 
       - name: Wait for email_enabled
         env:
-          EXPECTED: "2026-05-28-smtp-fix-v1"
+          EXPECTED: "2026-05-29-smtp-prod-v1"
         run: |
           for i in $(seq 1 24); do
             sleep 20

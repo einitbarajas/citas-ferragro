@@ -21,12 +21,16 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def _smtp_env_nonempty(key: str) -> bool:
+    return bool(os.getenv(key, "").strip())
+
+
 def bootstrap_smtp_from_secret_files() -> list[str]:
     """
     Si SMTP_HOST no está en el entorno, lee /etc/secrets/smtp.env (Render) u otros paths.
     Devuelve nombres de archivos aplicados.
     """
-    if os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM_EMAIL", "").strip():
+    if _smtp_env_nonempty("SMTP_HOST") and _smtp_env_nonempty("SMTP_FROM_EMAIL"):
         return []
 
     backend_dir = Path(__file__).resolve().parents[2]

@@ -19,7 +19,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 
 from app.api import admin, appointments, auth, crud, notifications
-from app.core.config import settings
+from app.core.config import refresh_smtp_settings, settings
 from app.core.rate_limit import limiter
 from app.core.responses import error_response, ok_response
 from app.db.base import Base
@@ -33,7 +33,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-cors-citas-v1"
+API_BUILD_ID = "2026-05-29-smtp-prod-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -49,6 +49,7 @@ SUSPICIOUS_QUERY_PATTERNS = [
 
 
 def _warn_if_smtp_missing_in_production() -> None:
+    refresh_smtp_settings()
     if settings.is_production and not settings.smtp_configured:
         logger.warning(
             "SMTP no configurado en producción (SMTP_HOST / SMTP_FROM_EMAIL). "
@@ -460,12 +461,13 @@ def health():
                     admin_email = user.credential.email
         except Exception:
             logger.exception("No se pudo consultar Admin en health")
+    smtp_ok = refresh_smtp_settings()
     return ok_response(
         {
             "status": "ok",
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
-            "email_enabled": settings.smtp_configured,
+            "email_enabled": smtp_ok,
             "smtp_host": settings.smtp_host or None,
             "smtp_diag": {
                 "host_set": bool(settings.smtp_host.strip()),
