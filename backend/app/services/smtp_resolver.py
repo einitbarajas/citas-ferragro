@@ -12,7 +12,7 @@ from app.services.email_utils import normalize_email
 
 logger = logging.getLogger(__name__)
 
-_SMTP_TIMEOUT = 10
+_SMTP_TIMEOUT = 7
 _resolved_label: str | None = None
 
 
@@ -105,7 +105,13 @@ def ensure_smtp_login_ready(*, force: bool = False) -> bool:
     if not settings.smtp_send_ready and not refresh_smtp_settings():
         return False
 
-    for candidate in _CANDIDATES:
+    ordered = _CANDIDATES
+    if _resolved_label:
+        ordered = tuple(c for c in _CANDIDATES if c.label == _resolved_label) + tuple(
+            c for c in _CANDIDATES if c.label != _resolved_label
+        )
+
+    for candidate in ordered:
         if _try_login(candidate):
             _resolved_label = candidate.label
             logger.info("SMTP operativo en Render con perfil %s", candidate.label)

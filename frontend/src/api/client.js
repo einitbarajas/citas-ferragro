@@ -288,7 +288,7 @@ export function parseApiError(error) {
       return "El servidor tardó demasiado en despertar (Render). Espera unos segundos y pulsa Continuar de nuevo; no hace falta recargar la página.";
     }
     if (authPath.includes("/auth/forgot-password")) {
-      return "El servidor tardó demasiado. Espera un momento y vuelve a solicitar la contraseña temporal.";
+      return "El servidor tardó demasiado. La contraseña pudo haberse generado igual: espera 1 minuto, revisa tu correo (y spam) e intenta iniciar sesión con la clave temporal.";
     }
     return "El servidor tardó demasiado en responder. Revisa «Ver mis citas» por si la operación sí se guardó antes de volver a intentar (el API en Render puede despertar al primer intento).";
   }

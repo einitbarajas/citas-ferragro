@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-gmail-render-v1"
+API_BUILD_ID = "2026-05-29-fast-recovery-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -581,7 +581,9 @@ def health_deep():
     if settings.smtp_send_ready:
         from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
 
-        smtp_login_ok = ensure_smtp_login_ready(force=True)
+        smtp_login_ok = ensure_smtp_login_ready()
+        if smtp_login_ok is False:
+            smtp_login_ok = ensure_smtp_login_ready(force=True)
         smtp_profile_label = resolved_smtp_label()
     return ok_response(
         {

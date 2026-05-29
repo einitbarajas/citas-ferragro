@@ -1,17 +1,16 @@
 from datetime import timedelta
 import logging
 import secrets
-import smtplib
 import string
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from jose import JWTError, jwt
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import SecurityPrincipal, get_db, get_security_principal
-from app.core.config import refresh_smtp_settings, settings
+from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.responses import ok_response
 from app.core.security import create_access_token, create_refresh_token, get_password_hash, verify_password
@@ -35,7 +34,7 @@ from app.services.credential_cleanup import credential_has_active_owner, purge_o
 from app.services.login_policy import is_login_blocked, record_login_failure, reset_login_failures
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
 from app.services.admin_password_reset import reset_admin_password
-from app.services.mailer import send_temporary_password_email_with_retry
+from app.services.email_dispatch import send_recovery_password_email_background
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +367,12 @@ def _prepare_bootstrap_admin_for_recovery(db: Session, email: str) -> None:
 
 @router.post("/forgot-password")
 @limiter.limit(f"{settings.rate_limit_per_minute_auth}/minute")
-def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     from datetime import datetime, timezone
 
     email = str(payload.email).strip()
@@ -408,96 +412,21 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
     account_email = cred.email.strip()
     db.commit()
 
-    sent = False
-    smtp_auth_error: smtplib.SMTPAuthenticationError | None = None
-    smtp_other_error: Exception | None = None
-    for use_secret_overlay in (False, True):
-        smtp_ready = refresh_smtp_settings(force_secret_overlay=use_secret_overlay)
-        if not smtp_ready:
-            continue
-        try:
-            sent = send_temporary_password_email_with_retry(
-                account_email,
-                temporary_password,
-                account_email=account_email,
-                attempts=2,
-                force_secret_overlay=use_secret_overlay,
-            )
-            if sent:
-                break
-        except smtplib.SMTPAuthenticationError as exc:
-            smtp_auth_error = exc
-            logger.exception(
-                "SMTP autenticación fallida (overlay=%s) al enviar recuperación a %s",
-                use_secret_overlay,
-                account_email,
-            )
-        except Exception as exc:
-            smtp_other_error = exc
-            logger.exception(
-                "Error SMTP (overlay=%s) al enviar recuperación a %s",
-                use_secret_overlay,
-                account_email,
-            )
-
-    if smtp_auth_error and not sent:
-        logger.warning(
-            "SMTP_RECOVERY correo=%s clave_temporal=%s",
-            account_email,
-            temporary_password,
-        )
-        return ok_response(
-            {
-                "email_sent": False,
-                "smtp_configured": True,
-                "must_change_password": True,
-            },
-            "La contraseña temporal ya está activa, pero Gmail rechazó el envío. "
-            "En Render → ferragro-api → Secret File smtp.env: SMTP_USER y SMTP_FROM_EMAIL deben ser la misma cuenta, "
-            "y SMTP_PASSWORD debe ser una contraseña de aplicación de Google (16 caracteres, sin espacios). "
-            "Luego Manual Deploy. Diagnóstico: /health/deep",
-        )
-
-    if smtp_other_error and not sent:
-        logger.warning(
-            "SMTP_RECOVERY correo=%s clave_temporal=%s (usa esta clave para ingresar)",
-            account_email,
-            temporary_password,
-        )
-        return ok_response(
-            {
-                "email_sent": False,
-                "smtp_configured": True,
-                "must_change_password": True,
-            },
-            "La contraseña temporal ya está activa, pero no se pudo enviar el correo. "
-            "Revisa en Render el archivo smtp.env (Gmail) y vuelve a desplegar. "
-            "Diagnóstico: https://ferragro-api.onrender.com/health/deep (smtp_login_ok). "
-            "Mientras tanto, el admin puede ver la clave en los logs del API (SMTP_RECOVERY).",
-        )
-
-    if not sent:
-        logger.warning(
-            "SMTP_RECOVERY correo=%s clave_temporal=%s (SMTP incompleto en Render)",
-            account_email,
-            temporary_password,
-        )
-        return ok_response(
-            {
-                "email_sent": False,
-                "smtp_configured": settings.smtp_configured,
-                "smtp_send_ready": settings.smtp_send_ready,
-                "must_change_password": True,
-            },
-            "Contraseña temporal generada, pero falta SMTP completo en Render "
-            "(SMTP_HOST, SMTP_USER, SMTP_PASSWORD y SMTP_FROM_EMAIL en smtp.env). "
-            "Revisa /health y los logs SMTP_RECOVERY.",
-        )
+    # Respuesta rápida: el correo se envía en segundo plano (SMTP en Render puede tardar 30+ s).
+    background_tasks.add_task(
+        send_recovery_password_email_background,
+        account_email,
+        temporary_password,
+    )
 
     return ok_response(
-        {"email_sent": True, "must_change_password": True},
-        "Contraseña temporal enviada a tu correo. Revisa bandeja de entrada y correo no deseado. "
-        "Ingresa con esa clave (no la anterior); el sistema te pedirá cambiarla.",
+        {
+            "email_sent": True,
+            "must_change_password": True,
+            "email_pending": True,
+        },
+        "Contraseña temporal activada. Revisa tu correo en 1–2 minutos (también spam). "
+        "Ingresa con esa clave; el sistema te pedirá cambiarla.",
     )
 
 

@@ -83,7 +83,7 @@ COMPANY_ADDRESS = "Carrera 41 #46-167, Itagui-Ant"
 COMPANY_WEBSITE = "https://www.ferragro.com"
 LOGO_PATH = Path(__file__).resolve().parents[3] / "frontend" / "public" / "ferragro-blan-bord.png"
 LOGO_CID = "ferragro-logo-watermark"
-SMTP_TIMEOUT_SECONDS = 12
+SMTP_TIMEOUT_SECONDS = 8
 
 
 def _smtp_envelope_from() -> str:

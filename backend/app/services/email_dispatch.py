@@ -5,7 +5,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from app.core.config import settings
 from app.services.email_utils import dedupe_emails, is_deliverable_email, normalize_email
-from app.services.mailer import send_internal_welcome_email, send_notification_email, send_welcome_email
+from app.services.mailer import (
+    send_internal_welcome_email,
+    send_notification_email,
+    send_temporary_password_email_with_retry,
+    send_welcome_email,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +85,35 @@ def dispatch_welcome_staff(to_email: str, recipient_name: str, role_name: str) -
     if not normalized:
         return
     _run_in_email_pool(_send_welcome_staff_blocking, normalized, recipient_name, role_name)
+
+
+def send_recovery_password_email_background(account_email: str, temporary_password: str) -> None:
+    """Envío de recuperación (tarea en segundo plano; no bloquea la respuesta HTTP)."""
+    try:
+        from app.services.smtp_resolver import ensure_smtp_login_ready
+
+        if not ensure_smtp_login_ready():
+            ensure_smtp_login_ready(force=True)
+        sent = send_temporary_password_email_with_retry(
+            account_email,
+            temporary_password,
+            account_email=account_email,
+            attempts=2,
+            force_secret_overlay=False,
+        )
+        if not sent:
+            logger.warning(
+                "SMTP_RECOVERY correo=%s clave_temporal=%s (correo no enviado)",
+                account_email,
+                temporary_password,
+            )
+    except Exception:
+        logger.exception("SMTP_RECOVERY fallo al enviar a %s", account_email)
+        logger.warning(
+            "SMTP_RECOVERY correo=%s clave_temporal=%s",
+            account_email,
+            temporary_password,
+        )
 
 
 def dispatch_notification_email(to_email: str, title: str, message: str) -> None:
