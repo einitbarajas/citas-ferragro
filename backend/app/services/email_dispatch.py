@@ -115,6 +115,11 @@ def send_recovery_password_email_background(account_email: str, temporary_passwo
     """Envío de recuperación (tarea en segundo plano; no bloquea la respuesta HTTP)."""
     try:
         if not _prepare_smtp_for_send():
+            logger.warning(
+                "SMTP no listo; recuperación no enviada a %s (clave en BD/logs SMTP_RECOVERY)",
+                account_email,
+            )
+            return
         sent = send_temporary_password_email_with_retry(
             account_email,
             temporary_password,

@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-smtp-all-v1"
+API_BUILD_ID = "2026-05-29-smtp-deploy-fix-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -335,8 +335,9 @@ class PatchOpenApiDocsCspMiddleware:
             if message["type"] == "http.response.start":
                 hdrs = MutableHeaders(raw=list(message.get("headers") or []))
                 hdrs["content-security-policy"] = _DOC_CSP
-                hdrs.pop("cross-origin-opener-policy", None)
-                hdrs.pop("cross-origin-resource-policy", None)
+                for _hop in ("cross-origin-opener-policy", "cross-origin-resource-policy"):
+                    if _hop in hdrs:
+                        del hdrs[_hop]
                 message = {**message, "headers": hdrs.raw}
             await send(message)
 
