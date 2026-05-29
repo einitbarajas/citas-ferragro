@@ -33,7 +33,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-28-smtp-fix-v1"
+API_BUILD_ID = "2026-05-29-cors-citas-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -158,11 +158,20 @@ origins = [origin.strip() for origin in settings.cors_origins.split(",") if orig
 _cors_lan_regex = (
     r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$"
 )
+# Producción: dominios Vercel del equipo ferragro (citas.ferragro, frontend-ferragro, previews).
+_cors_vercel_ferragro_regex = r"^https://(?:[a-z0-9-]+\.ferragro|[a-z0-9-]+-ferragro)\.vercel\.app$"
+
+if settings.cors_allow_private_network and not settings.is_production:
+    _cors_origin_regex = _cors_lan_regex
+elif settings.is_production:
+    _cors_origin_regex = _cors_vercel_ferragro_regex
+else:
+    _cors_origin_regex = None
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=_cors_lan_regex if (settings.cors_allow_private_network and not settings.is_production) else None,
+    allow_origin_regex=_cors_origin_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],

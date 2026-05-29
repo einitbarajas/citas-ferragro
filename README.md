@@ -4,7 +4,7 @@ Portal web para agendar y operar citas de entrega en bodegas Ferragro: proveedor
 
 | Entorno | URL |
 |---------|-----|
-| Frontend (producción) | https://frontend-ferragro.vercel.app |
+| Frontend (producción) | https://citas.ferragro.vercel.app (alias: https://frontend-ferragro.vercel.app) |
 | API (producción) | https://ferragro-api.onrender.com |
 | Health / versión API | https://ferragro-api.onrender.com/health |
 | Swagger (producción) | https://ferragro-api.onrender.com/docs |
@@ -548,7 +548,7 @@ cd frontend; npx vercel deploy --prod --yes   # front sin depender del auto-depl
 
 ### 6.3) Enlazar front y back
 
-1. En Render, `CORS_ORIGINS=https://frontend-ferragro.vercel.app` (y otros dominios si aplica).
+1. En Render, `CORS_ORIGINS=https://frontend-ferragro.vercel.app,https://citas.ferragro.vercel.app` (o ejecuta `.\scripts\fix-cors-citas-render.ps1` con `RENDER_API_KEY`).
 2. Redespliega el API tras cambiar CORS.
 3. Redespliega Vercel si cambiaste `VITE_API_URL`.
 4. Prueba login, refresh, logout y panel (recarga forzada Ctrl+F5 si el navegador cachea el JS).
