@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-smtp-secret-overlay-v1"
+API_BUILD_ID = "2026-05-29-resend-email-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -544,9 +544,16 @@ def health():
             "status": "ok",
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
-            "email_enabled": settings.smtp_configured,
+            "email_enabled": settings.email_send_ready,
+            "email_provider": settings.email_provider,
+            "resend_ready": settings.resend_send_ready,
             "smtp_send_ready": settings.smtp_send_ready,
             "smtp_host": settings.smtp_host or None,
+            "render_smtp_blocked_hint": (
+                "Render free bloquea puertos SMTP; usa RESEND_API_KEY o plan de pago."
+                if settings.is_production and not settings.resend_send_ready
+                else None
+            ),
             "smtp_diag": {
                 "host_set": bool(settings.smtp_host.strip()),
                 "user_set": bool(settings.smtp_user.strip()),
@@ -586,7 +593,10 @@ def health_deep():
     smtp_ok = refresh_smtp_settings()
     smtp_login_ok: bool | None = None
     smtp_profile_label: str | None = None
-    if settings.smtp_send_ready:
+    if settings.resend_send_ready:
+        smtp_login_ok = True
+        smtp_profile_label = "resend_https"
+    elif settings.smtp_send_ready:
         from app.services.mailer import smtp_login_probe_with_timeout
         from app.services.smtp_resolver import resolved_smtp_label
 
@@ -594,13 +604,17 @@ def health_deep():
         smtp_profile_label = resolved_smtp_label()
     return ok_response(
         {
-            "status": "ok" if db_ok and smtp_login_ok is True else "degraded",
+            "status": "ok"
+            if db_ok and (smtp_login_ok is True or settings.resend_send_ready)
+            else "degraded",
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
             "database_ok": db_ok,
-            "email_enabled": settings.smtp_configured,
+            "email_enabled": settings.email_send_ready,
+            "email_provider": settings.email_provider,
+            "resend_ready": settings.resend_send_ready,
             "smtp_send_ready": settings.smtp_send_ready,
-            "smtp_login_ok": smtp_login_ok,
+            "smtp_login_ok": smtp_login_ok if settings.smtp_send_ready else None,
             "smtp_profile": smtp_profile_label,
             "admin_email": admin_email,
         },

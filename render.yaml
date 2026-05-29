@@ -48,6 +48,11 @@ services:
         value: Ferragro
       - key: SMTP_USE_TLS
         value: "true"
+      # Render free bloquea SMTP; correo en producción vía Resend (HTTPS):
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false
       - key: REFRESH_COOKIE_SECURE
         value: "true"
       - key: REFRESH_COOKIE_SAMESITE

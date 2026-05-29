@@ -32,7 +32,9 @@ atexit.register(shutdown_email_executor)
 
 
 def _prepare_smtp_for_send() -> bool:
-    """Gmail en Render: aplica perfil SMTP que ya funcionó (o lo descubre una vez)."""
+    """SMTP (local/paid Render) o Resend (HTTPS en Render free)."""
+    if settings.resend_send_ready:
+        return True
     if not settings.is_production:
         return settings.smtp_send_ready
     from app.core.config import refresh_smtp_settings

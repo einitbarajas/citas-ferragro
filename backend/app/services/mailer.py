@@ -238,6 +238,16 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
 
     html_body = _build_mail_layout(content_html)
 
+    if settings.resend_send_ready:
+        from app.services.resend_mailer import send_resend_email
+
+        return send_resend_email(
+            to_email=delivery,
+            subject=subject,
+            plain_body=plain_body,
+            html_body=html_body,
+        )
+
     if not _refresh_smtp_for_delivery():
         logger.warning(
             "Correo no enviado (SMTP incompleto: host/from/user/password). to=%s subject=%s",

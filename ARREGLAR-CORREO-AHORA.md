@@ -1,41 +1,33 @@
-# Arreglar correo en producción (2 minutos)
+# Por qué no llega el correo (y cómo arreglarlo)
 
-El API en Render **tiene una contraseña SMTP distinta** a la de tu `.env` local. Por eso la clave temporal se guarda en la BD pero **no llega el correo**.
+## Causa real
 
-## Pasos (obligatorio)
+**Render plan free bloquea los puertos SMTP (25, 465 y 587).**  
+Gmail funciona en tu PC, pero el servidor en Render **no puede conectar** a `smtp.gmail.com`. Por eso `smtp_login_ok: false` y el mensaje *“no se pudo enviar el correo”*.
 
-1. Abre [Render → ferragro-api → Environment](https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0/env)
+No es un bug del front ni del typo del correo (usa `nataliabarajas412@gmail.com`).
 
-2. **Secret Files** → archivo **`smtp.env`** (nombre exacto) → pega el contenido de `smtp-render.env` → **Save**
+## Solución recomendada: Resend (gratis, HTTPS)
 
-3. En **Environment Variables**, revisa que `SMTP_USER` y `SMTP_PASSWORD` coincidan con `smtp-render.env`  
-   (si dudas, **borra** `SMTP_PASSWORD` y deja solo el Secret File).
-
-4. **Manual Deploy** → **Deploy latest commit** (debe quedar `build_id`: `2026-05-29-smtp-secret-overlay-v1`)
-
-5. Comprueba: https://ferragro-api.onrender.com/health/deep → `smtp_login_ok: true`
-
-6. En https://citas.ferragro.vercel.app → **Olvidé mi contraseña** con `nataliabarajas412@gmail.com`
-
-## Automático (si tienes API key de Render)
-
-En `.env` añade una línea:
+1. Crea cuenta en [resend.com](https://resend.com) (plan free).
+2. **Domains** o **Emails** → verifica el remitente `nataliabarajas412@gmail.com` (te llega un enlace de confirmación).
+3. **API Keys** → crea una key (`re_...`).
+4. En [Render → ferragro-api → Environment](https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0/env) añade:
 
 ```env
-RENDER_API_KEY=rnd_...
+RESEND_API_KEY=re_xxxxxxxx
+RESEND_FROM_EMAIL=nataliabarajas412@gmail.com
 ```
 
-Luego:
+5. **Save** → **Manual Deploy** (o espera auto-deploy de `main`).
+6. Comprueba: https://ferragro-api.onrender.com/health → `email_provider: "resend"`, `resend_ready: true`
+7. Prueba **Olvidé mi contraseña** en citas.
 
-```powershell
-.\scripts\subir-smtp-ahora.ps1
-```
+## Alternativa: plan de pago en Render
 
-## Automático (GitHub)
+Si subes **ferragro-api** a un plan de pago (Starter), SMTP Gmail vuelve a funcionar con `smtp-render.env` en Secret File `smtp.env`.
 
-```powershell
-gh auth login
-.\scripts\instalar-smtp-github-secrets.ps1
-```
+## Qué ya no sirve solo
 
-Eso sube SMTP y dispara deploy desde Actions.
+- Pegar `smtp-render.env` en Render **sin Resend ni plan de pago** → seguirá fallando (puertos bloqueados).
+- Más cambios de contraseña de aplicación Gmail → solo ayuda en local, no en Render free.

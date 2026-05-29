@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     # true = conexión SSL directa (puerto 465, p. ej. algunos Gmail); false = STARTTLS (587).
     smtp_use_ssl: bool = False
     smtp_reply_to: str = ""
+    # Render plan free bloquea SMTP; usar Resend (HTTPS, puerto 443).
+    resend_api_key: str = ""
+    resend_from_email: str = ""
     # Solo para emergencias: POST /auth/maintenance/reset-admin-password con header X-Maintenance-Token.
     # Déjalo vacío en producción normal; quítalo tras usarlo.
     maintenance_token: str = ""
@@ -119,6 +122,23 @@ class Settings(BaseSettings):
             and self.smtp_user.strip()
             and self.smtp_password.strip()
         )
+
+    @property
+    def resend_send_ready(self) -> bool:
+        from_email = self.resend_from_email.strip() or self.smtp_from_email.strip()
+        return bool(self.resend_api_key.strip() and from_email)
+
+    @property
+    def email_send_ready(self) -> bool:
+        return self.resend_send_ready or self.smtp_send_ready
+
+    @property
+    def email_provider(self) -> str:
+        if self.resend_send_ready:
+            return "resend"
+        if self.smtp_send_ready:
+            return "smtp"
+        return "none"
 
     @model_validator(mode="after")
     def apply_smtp_profile_defaults(self) -> "Settings":
