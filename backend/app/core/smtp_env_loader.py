@@ -32,11 +32,27 @@ def _smtp_env_nonempty(key: str) -> bool:
     return bool(os.getenv(key, "").strip())
 
 
+def overlay_render_smtp_secret() -> bool:
+    """
+    En Render, smtp.env es la fuente de verdad (sobrescribe env vars sueltas con password vieja).
+  """
+    render_path = Path("/etc/secrets/smtp.env")
+    if not render_path.is_file():
+        return False
+    for key, value in _parse_env_file(render_path).items():
+        os.environ[key] = value
+    return True
+
+
 def bootstrap_smtp_from_secret_files(*, overlay: bool = False) -> list[str]:
     """
     Lee /etc/secrets/smtp.env (Render) u otros paths.
     overlay=True: en producción re-aplica el archivo aunque ya existan vars (corrige password vieja).
     """
+    if overlay:
+        if overlay_render_smtp_secret():
+            return ["/etc/secrets/smtp.env"]
+
     if not overlay and not _smtp_needs_secret_files():
         return []
 

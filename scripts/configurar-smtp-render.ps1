@@ -130,14 +130,19 @@ foreach ($k in $required) {
 }
 
 $toSet = @{
+    SMTP_PROFILE      = if ($envMap["SMTP_PROFILE"]) { $envMap["SMTP_PROFILE"] } else { "gmail" }
     SMTP_HOST         = $envMap["SMTP_HOST"]
     SMTP_PORT         = if ($envMap["SMTP_PORT"]) { $envMap["SMTP_PORT"] } else { "587" }
     SMTP_USER         = $envMap["SMTP_USER"]
-    SMTP_PASSWORD     = $envMap["SMTP_PASSWORD"]
+    SMTP_PASSWORD     = ($envMap["SMTP_PASSWORD"] -replace '\s', '')
     SMTP_FROM_EMAIL   = $envMap["SMTP_FROM_EMAIL"]
     SMTP_FROM_NAME    = if ($envMap["SMTP_FROM_NAME"]) { $envMap["SMTP_FROM_NAME"] } else { "Ferragro" }
     SMTP_USE_TLS      = if ($null -ne $envMap["SMTP_USE_TLS"]) { $envMap["SMTP_USE_TLS"] } else { "true" }
     SMTP_USE_SSL      = if ($null -ne $envMap["SMTP_USE_SSL"]) { $envMap["SMTP_USE_SSL"] } else { "false" }
+}
+if ($toSet["SMTP_FROM_EMAIL"] -ne $toSet["SMTP_USER"]) {
+    Write-Host "Aviso: SMTP_FROM_EMAIL se igualara a SMTP_USER (requerido por Gmail)." -ForegroundColor Yellow
+    $toSet["SMTP_FROM_EMAIL"] = $toSet["SMTP_USER"]
 }
 if ($envMap["SMTP_REPLY_TO"]) { $toSet["SMTP_REPLY_TO"] = $envMap["SMTP_REPLY_TO"] }
 if ($envMap["SMTP_PROFILE"]) { $toSet["SMTP_PROFILE"] = $envMap["SMTP_PROFILE"] }

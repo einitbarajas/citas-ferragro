@@ -16,22 +16,34 @@ logger = logging.getLogger(__name__)
 
 
 def _smtp_delivery_attempts() -> list[tuple[str, object]]:
-    attempts: list[tuple[str, object]] = [("primary", lambda: _smtp_client())]
-    if "gmail.com" in (settings.smtp_host or "").lower():
-        if not settings.smtp_use_ssl:
-            attempts.append(
+    host = (settings.smtp_host or "").lower()
+    if "gmail.com" not in host:
+        return [("primary", lambda: _smtp_client())]
+
+    # En Render, 465 SSL suele funcionar mejor que 587 STARTTLS para Gmail.
+    attempts: list[tuple[str, object]] = []
+    if settings.is_production:
+        attempts.append(
+            ("gmail_ssl_465", lambda: _smtp_client(use_ssl=True, port=465, use_tls=False)),
+        )
+    if not settings.smtp_use_ssl:
+        attempts.append(("gmail_starttls_587", lambda: _smtp_client()))
+        if not settings.is_production:
+            attempts.insert(
+                0,
                 ("gmail_ssl_465", lambda: _smtp_client(use_ssl=True, port=465, use_tls=False)),
             )
-        elif int(settings.smtp_port) == 465:
-            attempts.append(
-                ("gmail_starttls_587", lambda: _smtp_client(use_ssl=False, port=587, use_tls=True)),
-            )
+    else:
+        attempts.append(("gmail_ssl_465", lambda: _smtp_client()))
+        attempts.append(
+            ("gmail_starttls_587", lambda: _smtp_client(use_ssl=False, port=587, use_tls=True)),
+        )
     return attempts
 
 
 def smtp_login_probe() -> bool:
     """Prueba login SMTP (mismos intentos que el envío real)."""
-    refresh_smtp_settings()
+    refresh_smtp_settings(force_secret_overlay=settings.is_production)
     if not settings.smtp_send_ready:
         return False
     for label, client_factory in _smtp_delivery_attempts():
@@ -283,7 +295,7 @@ def send_temporary_password_email_with_retry(
 ) -> bool:
     """Recuperación de contraseña: re-lee secretos SMTP y reintenta (Render)."""
     for attempt in range(1, max(1, attempts) + 1):
-        refresh_smtp_settings()
+        refresh_smtp_settings(force_secret_overlay=True)
         if not settings.smtp_send_ready:
             logger.warning("SMTP no listo para recuperación (intento %s)", attempt)
             continue

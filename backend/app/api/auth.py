@@ -409,7 +409,7 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
     db.commit()
 
     sent = False
-    smtp_ready = refresh_smtp_settings()
+    smtp_ready = refresh_smtp_settings(force_secret_overlay=True)
     if smtp_ready:
         try:
             sent = send_temporary_password_email_with_retry(

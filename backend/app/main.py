@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-recovery-smtp-v2"
+API_BUILD_ID = "2026-05-29-forgot-password-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -558,7 +558,7 @@ def health_deep():
                 admin_email = user.credential.email
     except Exception:
         logger.exception("health/deep: fallo de BD")
-    smtp_ok = refresh_smtp_settings()
+    smtp_ok = refresh_smtp_settings(force_secret_overlay=True)
     smtp_login_ok: bool | None = None
     if settings.smtp_send_ready:
         from app.services.mailer import smtp_login_probe_with_timeout
