@@ -622,9 +622,9 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
         )}
         {forgotRequested && !isRegister && !error && (
           <p className="mt-2 text-xs text-emerald-700">
-            Revisa tu bandeja de entrada y correo no deseado. Entra con la{" "}
-            <strong>contraseña temporal del correo</strong> (no uses FerragroPortal2026! ni la clave
-            antigua); el sistema te pedirá cambiarla al ingresar.
+            Revisa tu bandeja de entrada y correo no deseado. Usa la{" "}
+            <strong>contraseña temporal</strong> que te enviamos; al ingresar el sistema te pedirá
+            cambiarla.
           </p>
         )}
         </div>

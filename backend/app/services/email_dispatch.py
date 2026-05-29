@@ -111,15 +111,15 @@ def dispatch_welcome_staff(to_email: str, recipient_name: str, role_name: str) -
     _run_in_email_pool(_send_welcome_staff_blocking, normalized, recipient_name, role_name)
 
 
-def send_recovery_password_email_background(account_email: str, temporary_password: str) -> None:
-    """Envío de recuperación (tarea en segundo plano; no bloquea la respuesta HTTP)."""
+def send_recovery_password_email(account_email: str, temporary_password: str) -> bool:
+    """Envío de recuperación (síncrono en Render para no perder el correo tras cerrar la petición)."""
     try:
         if not _prepare_smtp_for_send():
             logger.warning(
                 "SMTP no listo; recuperación no enviada a %s (clave en BD/logs SMTP_RECOVERY)",
                 account_email,
             )
-            return
+            return False
         sent = send_temporary_password_email_with_retry(
             account_email,
             temporary_password,
@@ -133,6 +133,7 @@ def send_recovery_password_email_background(account_email: str, temporary_passwo
                 account_email,
                 temporary_password,
             )
+        return bool(sent)
     except Exception:
         logger.exception("SMTP_RECOVERY fallo al enviar a %s", account_email)
         logger.warning(
@@ -140,6 +141,12 @@ def send_recovery_password_email_background(account_email: str, temporary_passwo
             account_email,
             temporary_password,
         )
+        return False
+
+
+def send_recovery_password_email_background(account_email: str, temporary_password: str) -> None:
+    """Alias para tareas en segundo plano (dev)."""
+    send_recovery_password_email(account_email, temporary_password)
 
 
 def dispatch_notification_email(to_email: str, title: str, message: str) -> None:

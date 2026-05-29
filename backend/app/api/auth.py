@@ -4,7 +4,7 @@ import secrets
 import string
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from jose import JWTError, jwt
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -34,7 +34,7 @@ from app.services.credential_cleanup import credential_has_active_owner, purge_o
 from app.services.login_policy import is_login_blocked, record_login_failure, reset_login_failures
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
 from app.services.admin_password_reset import reset_admin_password
-from app.services.email_dispatch import send_recovery_password_email_background
+from app.services.email_dispatch import send_recovery_password_email
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +370,6 @@ def _prepare_bootstrap_admin_for_recovery(db: Session, email: str) -> None:
 def forgot_password(
     payload: ForgotPasswordRequest,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     from datetime import datetime, timezone
@@ -412,20 +411,30 @@ def forgot_password(
     account_email = cred.email.strip()
     db.commit()
 
-    # Respuesta rápida: el correo se envía en segundo plano (SMTP en Render puede tardar 30+ s).
-    background_tasks.add_task(
-        send_recovery_password_email_background,
-        account_email,
-        temporary_password,
-    )
+    # Envío síncrono: en Render las tareas en segundo plano a menudo no completan el SMTP.
+    sent = send_recovery_password_email(account_email, temporary_password)
+
+    if not sent:
+        logger.warning(
+            "SMTP_RECOVERY correo=%s clave_temporal=%s",
+            account_email,
+            temporary_password,
+        )
+        return ok_response(
+            {
+                "email_sent": False,
+                "must_change_password": True,
+            },
+            "La contraseña temporal ya está activa, pero no se pudo enviar el correo. "
+            "Revisa spam o contacta a soporte Ferragro.",
+        )
 
     return ok_response(
         {
             "email_sent": True,
             "must_change_password": True,
-            "email_pending": True,
         },
-        "Contraseña temporal activada. Revisa tu correo en 1–2 minutos (también spam). "
+        "Contraseña temporal enviada a tu correo. Revisa bandeja de entrada y correo no deseado. "
         "Ingresa con esa clave; el sistema te pedirá cambiarla.",
     )
 
