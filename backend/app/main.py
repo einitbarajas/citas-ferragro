@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -33,13 +34,41 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-health-fast-v1"
+API_BUILD_ID = "2026-05-29-deploy-db-v1"
 
-import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
+import app.models  # noqa: F401 — registra tablas en Base.metadata
 
 logger = logging.getLogger(__name__)
 
-Base.metadata.create_all(bind=engine)
+
+def _init_database_schema(*, max_attempts: int = 6, delay_seconds: float = 5.0) -> None:
+    """
+    Sincroniza tablas al arranque (no en import: Render health check necesita que uvicorn suba rápido).
+    Reintenta: la BD interna a veces no acepta conexiones en los primeros segundos del deploy.
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            if attempt > 1:
+                logger.info("Esquema BD listo en intento %s/%s", attempt, max_attempts)
+            return
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Esquema BD: intento %s/%s falló (%s: %s)",
+                attempt,
+                max_attempts,
+                type(exc).__name__,
+                exc,
+            )
+            if attempt < max_attempts:
+                time.sleep(delay_seconds)
+    logger.error(
+        "No se pudo conectar a PostgreSQL tras %s intentos. "
+        "Revisa en Render que ferragro-api tenga DATABASE_URL del Postgres vinculado.",
+        max_attempts,
+    )
 
 SUSPICIOUS_QUERY_PATTERNS = [
     re.compile(r"(?i)(?:')\s*or\s*(?:'?\d+'?\s*=\s*'?\d+'?|true)"),
@@ -87,6 +116,7 @@ def _ensure_production_admin_on_startup() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _warn_if_smtp_missing_in_production()
+    _init_database_schema()
     _purge_orphan_credentials_on_startup()
     _ensure_production_admin_on_startup()
     stop_event = asyncio.Event()
@@ -448,21 +478,7 @@ def root():
 
 @app.get("/health")
 def health():
-    admin_email: str | None = None
-    if settings.is_production:
-        try:
-            from sqlalchemy import select
-
-            from app.models.user import User
-
-            with SessionLocal() as db:
-                user = db.execute(select(User).where(User.document_id == "90000001")).scalar_one_or_none()
-                if user and user.credential:
-                    admin_email = user.credential.email
-        except Exception:
-            logger.exception("No se pudo consultar Admin en health")
-    # No hacer login SMTP aquí: Render llama /health en cada deploy y Gmail puede tardar 30s
-    # (el probe bloqueaba el health check y el deploy quedaba en fallo).
+    # Respuesta rápida para health check de Render (sin BD ni SMTP en cada ping).
     smtp_ok = refresh_smtp_settings()
     return ok_response(
         {
@@ -470,19 +486,55 @@ def health():
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
             "email_enabled": smtp_ok,
-            "smtp_login_ok": None,
             "smtp_host": settings.smtp_host or None,
-            "smtp_user": settings.smtp_user or None,
-            "smtp_from_email": settings.smtp_from_email or None,
             "smtp_diag": {
                 "host_set": bool(settings.smtp_host.strip()),
                 "user_set": bool(settings.smtp_user.strip()),
                 "password_set": bool(settings.smtp_password.strip()),
                 "from_email_set": bool(settings.smtp_from_email.strip()),
             },
-            "admin_email": admin_email,
         },
         "Servicio activo",
+    )
+
+
+@app.get("/health/deep")
+def health_deep():
+    """Diagnóstico manual: BD + admin bootstrap (no usar como health check de Render)."""
+    admin_email: str | None = None
+    db_ok = False
+    try:
+        from sqlalchemy import select, text
+
+        from app.models.user import User
+
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+            db_ok = True
+            user = db.execute(select(User).where(User.document_id == "90000001")).scalar_one_or_none()
+            if user and user.credential:
+                admin_email = user.credential.email
+    except Exception:
+        logger.exception("health/deep: fallo de BD")
+    smtp_ok = refresh_smtp_settings()
+    smtp_login_ok = False
+    if smtp_ok:
+        try:
+            from app.services.mailer import smtp_login_probe
+
+            smtp_login_ok = smtp_login_probe()
+        except Exception:
+            logger.exception("health/deep: fallo probe SMTP")
+    return ok_response(
+        {
+            "status": "ok" if db_ok else "degraded",
+            "build_id": API_BUILD_ID,
+            "database_ok": db_ok,
+            "email_enabled": smtp_ok,
+            "smtp_login_ok": smtp_login_ok,
+            "admin_email": admin_email,
+        },
+        "Diagnóstico profundo",
     )
 
 
