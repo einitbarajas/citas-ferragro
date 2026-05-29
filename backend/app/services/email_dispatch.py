@@ -32,6 +32,21 @@ def shutdown_email_executor() -> None:
 atexit.register(shutdown_email_executor)
 
 
+def _prepare_smtp_for_send() -> bool:
+    """Gmail en Render: aplica perfil SMTP que ya funcionó (o lo descubre una vez)."""
+    if not settings.is_production:
+        return settings.smtp_send_ready
+    from app.core.config import refresh_smtp_settings
+    from app.core.smtp_env_loader import overlay_render_smtp_secret
+    from app.services.smtp_resolver import ensure_smtp_login_ready
+
+    overlay_render_smtp_secret()
+    refresh_smtp_settings()
+    if ensure_smtp_login_ready():
+        return True
+    return ensure_smtp_login_ready(force=True)
+
+
 def _run_in_email_pool(fn, *args, **kwargs) -> None:
     # En Render el hilo en background a veces no termina tras cerrar la petición HTTP.
     # En producción enviamos en el mismo hilo (como forgot-password) para no perder avisos.
@@ -43,6 +58,9 @@ def _run_in_email_pool(fn, *args, **kwargs) -> None:
 
 def _send_notification_email_blocking(to_email: str, title: str, message: str) -> None:
     try:
+        if not _prepare_smtp_for_send():
+            logger.warning("SMTP no listo; aviso no enviado a %s | %s", to_email, title)
+            return
         logger.info("Enviando aviso por correo a %s | %s", to_email, title)
         if not send_notification_email(to_email, title, message):
             logger.warning("Correo de aviso no enviado a %s | %s", to_email, title)
@@ -52,6 +70,9 @@ def _send_notification_email_blocking(to_email: str, title: str, message: str) -
 
 def _send_welcome_provider_blocking(to_email: str, recipient_name: str) -> None:
     try:
+        if not _prepare_smtp_for_send():
+            logger.warning("SMTP no listo; bienvenida proveedor no enviada a %s", to_email)
+            return
         if not send_welcome_email(to_email, recipient_name):
             logger.warning("Correo de bienvenida (proveedor) no enviado a %s", to_email)
     except Exception:
@@ -60,6 +81,9 @@ def _send_welcome_provider_blocking(to_email: str, recipient_name: str) -> None:
 
 def _send_welcome_staff_blocking(to_email: str, recipient_name: str, role_name: str) -> None:
     try:
+        if not _prepare_smtp_for_send():
+            logger.warning("SMTP no listo; bienvenida staff no enviada a %s", to_email)
+            return
         if not send_internal_welcome_email(to_email, recipient_name, role_name):
             logger.warning("Correo de bienvenida (staff) no enviado a %s", to_email)
     except Exception:
@@ -90,10 +114,7 @@ def dispatch_welcome_staff(to_email: str, recipient_name: str, role_name: str) -
 def send_recovery_password_email_background(account_email: str, temporary_password: str) -> None:
     """Envío de recuperación (tarea en segundo plano; no bloquea la respuesta HTTP)."""
     try:
-        from app.services.smtp_resolver import ensure_smtp_login_ready
-
-        if not ensure_smtp_login_ready():
-            ensure_smtp_login_ready(force=True)
+        if not _prepare_smtp_for_send():
         sent = send_temporary_password_email_with_retry(
             account_email,
             temporary_password,

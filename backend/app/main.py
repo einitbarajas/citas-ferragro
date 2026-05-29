@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-fast-recovery-v1"
+API_BUILD_ID = "2026-05-29-smtp-all-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -133,8 +133,12 @@ def _warm_smtp_on_startup() -> None:
     if not settings.is_production or not settings.smtp_send_ready:
         return
     try:
+        from app.core.config import refresh_smtp_settings
+        from app.core.smtp_env_loader import overlay_render_smtp_secret
         from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
 
+        overlay_render_smtp_secret()
+        refresh_smtp_settings()
         if ensure_smtp_login_ready():
             logger.info("SMTP Gmail listo al arranque (%s)", resolved_smtp_label())
         else:
