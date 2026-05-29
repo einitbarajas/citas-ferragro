@@ -1,5 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import api, { API_PREFIX, getRetryAfterSeconds, parseApiError, parseApiResponse, postLogin, warmApi } from "../api/client";
+import api, {
+  API_AUTH_TIMEOUT_MS,
+  API_PREFIX,
+  getRetryAfterSeconds,
+  parseApiError,
+  parseApiResponse,
+  postLogin,
+  warmApi,
+} from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import BrandLogo from "../components/BrandLogo";
 import PasswordVisibilityButton from "../components/PasswordVisibilityButton";
@@ -85,7 +93,7 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
   }, [passwordScore]);
 
   useEffect(() => {
-    warmApi();
+    void warmApi();
   }, []);
 
   useEffect(() => {
@@ -182,16 +190,21 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
         if (form.password !== confirmPassword) {
           throw new Error("Las contraseñas no coinciden.");
         }
-        const registerResponse = await api.post(`${API_PREFIX}/auth/register`, {
-          document_id: form.nit,
-          email: form.correo_empresa,
-          full_name: form.nombre_empresa,
-          password: form.password,
-          role_name: "Proveedor",
-          digito_verificacion: form.digito_verificacion,
-          nombre_persona_responsable: form.nombre_persona_responsable,
-          documento_persona_responsable: form.documento_persona_responsable,
-        });
+        await warmApi();
+        const registerResponse = await api.post(
+          `${API_PREFIX}/auth/register`,
+          {
+            document_id: form.nit,
+            email: form.correo_empresa,
+            full_name: form.nombre_empresa,
+            password: form.password,
+            role_name: "Proveedor",
+            digito_verificacion: form.digito_verificacion,
+            nombre_persona_responsable: form.nombre_persona_responsable,
+            documento_persona_responsable: form.documento_persona_responsable,
+          },
+          { timeout: API_AUTH_TIMEOUT_MS }
+        );
         const registerPayload = parseApiResponse(registerResponse);
         if (!registerPayload.success) {
           throw new Error(registerPayload.message);
@@ -237,7 +250,12 @@ export default function LoginPage({ initialMode = "login", onBack, showInfoPanel
     setForgotRequested(false);
     setIsSubmittingForgot(true);
     try {
-      const response = await api.post(`${API_PREFIX}/auth/forgot-password`, { email });
+      await warmApi();
+      const response = await api.post(
+        `${API_PREFIX}/auth/forgot-password`,
+        { email },
+        { timeout: API_AUTH_TIMEOUT_MS }
+      );
       const payload = parseApiResponse(response);
       if (!payload.success) throw new Error(payload.message);
       setForgotRequested(true);

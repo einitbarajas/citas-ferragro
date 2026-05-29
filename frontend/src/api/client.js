@@ -43,10 +43,16 @@ function parseTimeoutMs(raw, fallback) {
 }
 
 /** Peticiones normales (listados, disponibilidad). En dev igual que prod: Render/local pueden tardar >10 s. */
-export const API_TIMEOUT_MS = parseTimeoutMs(import.meta.env.VITE_API_TIMEOUT_MS, 45000);
+export const API_TIMEOUT_MS = parseTimeoutMs(import.meta.env.VITE_API_TIMEOUT_MS, 60000);
 
 /** Crear/reprogramar citas: el cold start de Render puede superar el timeout habitual. */
-export const API_SLOW_TIMEOUT_MS = parseTimeoutMs(import.meta.env.VITE_API_SLOW_TIMEOUT_MS, 90000);
+export const API_SLOW_TIMEOUT_MS = parseTimeoutMs(import.meta.env.VITE_API_SLOW_TIMEOUT_MS, 120000);
+
+/** Login, registro y recuperar contraseña (cold start + bcrypt + BD en Render free). */
+export const API_AUTH_TIMEOUT_MS = parseTimeoutMs(
+  import.meta.env.VITE_API_AUTH_TIMEOUT_MS,
+  API_SLOW_TIMEOUT_MS
+);
 
 let apiWakePromise = null;
 
@@ -55,19 +61,45 @@ export function isApiTimeoutError(error) {
   return error?.code === "ECONNABORTED" || error?.code === "ETIMEDOUT";
 }
 
-/** Despierta el API (/health) antes de operaciones lentas. En dev usa el proxy de Vite. */
-export function warmApi() {
+/** Despierta el API (/health) antes de login u operaciones lentas (reintentos hasta ~90 s). */
+export async function warmApi({ maxWaitMs = 90000 } = {}) {
   const base = resolveApiBaseUrl();
   const healthUrl = base ? `${base}/health` : "/health";
-  if (!apiWakePromise) {
-    apiWakePromise = fetch(healthUrl, { method: "GET", credentials: "omit" })
-      .catch(() => {})
-      .finally(() => {
-        setTimeout(() => {
-          apiWakePromise = null;
-        }, 20000);
-      });
+  if (apiWakePromise) {
+    return apiWakePromise;
   }
+
+  apiWakePromise = (async () => {
+    const deadline = Date.now() + maxWaitMs;
+    let attempt = 0;
+    while (Date.now() < deadline) {
+      attempt += 1;
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 28000);
+      try {
+        const res = await fetch(healthUrl, {
+          method: "GET",
+          credentials: "omit",
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          return;
+        }
+      } catch {
+        /* Render free: primer intento suele fallar o abortar mientras despierta */
+      } finally {
+        window.clearTimeout(timer);
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, Math.min(4000, Math.max(1500, attempt * 800)));
+      });
+    }
+  })().finally(() => {
+    window.setTimeout(() => {
+      apiWakePromise = null;
+    }, 15000);
+  });
+
   return apiWakePromise;
 }
 
@@ -114,6 +146,14 @@ export function clearAccessToken() {
 
 api.interceptors.request.use(async (config) => {
   const url = String(config?.url || "");
+  const isAuthRoute =
+    url.includes("/auth/login") ||
+    url.includes("/auth/register") ||
+    url.includes("/auth/forgot-password") ||
+    url.includes("/auth/change-password");
+  if (isAuthRoute && config.timeout == null) {
+    config.timeout = API_AUTH_TIMEOUT_MS;
+  }
   const isRefreshRequest = url.includes("/auth/refresh");
   if (refreshPromise && !isRefreshRequest) {
     try {
@@ -170,16 +210,35 @@ api.interceptors.response.use(
   }
 );
 
-/** Login (un solo intento; el API ya resuelve correo sin distinguir mayúsculas). */
-export async function postLogin(email, password) {
+/** Login con reintentos tras cold start de Render. */
+export async function postLogin(email, password, { maxAttempts = 2 } = {}) {
   await warmApi();
   const trimmed = String(email || "").trim();
-  const response = await api.post(`${API_PREFIX}/auth/login`, { email: trimmed, password });
-  const payload = parseApiResponse(response);
-  if (payload.success) {
-    return { payload, emailUsed: trimmed };
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await api.post(
+        `${API_PREFIX}/auth/login`,
+        { email: trimmed, password },
+        { timeout: API_AUTH_TIMEOUT_MS }
+      );
+      const payload = parseApiResponse(response);
+      if (payload.success) {
+        return { payload, emailUsed: trimmed };
+      }
+      throw new Error(payload.message || "Email o contraseña inválidos");
+    } catch (error) {
+      lastError = error;
+      const canRetry = attempt < maxAttempts && isApiTimeoutError(error);
+      if (!canRetry) {
+        throw error;
+      }
+      await warmApi({ maxWaitMs: 60000 });
+    }
   }
-  throw new Error(payload.message || "Email o contraseña inválidos");
+
+  throw lastError || new Error("No se pudo iniciar sesión");
 }
 
 export function parseApiResponse(response) {
@@ -224,6 +283,13 @@ export function parseApiError(error) {
     if (first?.msg) return String(first.msg);
   }
   if (isApiTimeoutError(error)) {
+    const authPath = String(error?.config?.url || "");
+    if (authPath.includes("/auth/login")) {
+      return "El servidor tardó demasiado en despertar (Render). Espera unos segundos y pulsa Continuar de nuevo; no hace falta recargar la página.";
+    }
+    if (authPath.includes("/auth/forgot-password")) {
+      return "El servidor tardó demasiado. Espera un momento y vuelve a solicitar la contraseña temporal.";
+    }
     return "El servidor tardó demasiado en responder. Revisa «Ver mis citas» por si la operación sí se guardó antes de volver a intentar (el API en Render puede despertar al primer intento).";
   }
   if (error?.code === "ERR_NETWORK" || error?.message === "Network Error") {
