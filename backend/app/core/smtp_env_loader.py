@@ -16,6 +16,8 @@ def _parse_env_file(path: Path) -> dict[str, str]:
         if not key.startswith("SMTP_"):
             continue
         value = raw.strip().strip('"').strip("'").replace("\r", "").replace("\n", "")
+        if key == "SMTP_PASSWORD" and value:
+            value = value.replace(" ", "")
         if value:
             values[key] = value
     return values
@@ -30,12 +32,12 @@ def _smtp_env_nonempty(key: str) -> bool:
     return bool(os.getenv(key, "").strip())
 
 
-def bootstrap_smtp_from_secret_files() -> list[str]:
+def bootstrap_smtp_from_secret_files(*, overlay: bool = False) -> list[str]:
     """
-    Si SMTP_HOST no está en el entorno, lee /etc/secrets/smtp.env (Render) u otros paths.
-    Devuelve nombres de archivos aplicados.
+    Lee /etc/secrets/smtp.env (Render) u otros paths.
+    overlay=True: en producción re-aplica el archivo aunque ya existan vars (corrige password vieja).
     """
-    if not _smtp_needs_secret_files():
+    if not overlay and not _smtp_needs_secret_files():
         return []
 
     backend_dir = Path(__file__).resolve().parents[2]
@@ -57,9 +59,14 @@ def bootstrap_smtp_from_secret_files() -> list[str]:
         if not path.is_file():
             continue
         for key, value in _parse_env_file(path).items():
-            if not os.getenv(key, "").strip():
+            if overlay or not os.getenv(key, "").strip():
                 os.environ[key] = value
         applied.append(str(path))
-        if os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM_EMAIL", "").strip():
+        if (
+            os.getenv("SMTP_HOST", "").strip()
+            and os.getenv("SMTP_FROM_EMAIL", "").strip()
+            and os.getenv("SMTP_USER", "").strip()
+            and os.getenv("SMTP_PASSWORD", "").strip()
+        ):
             break
     return applied

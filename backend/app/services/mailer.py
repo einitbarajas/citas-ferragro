@@ -14,17 +14,38 @@ from app.services.email_utils import is_deliverable_email, normalize_email
 logger = logging.getLogger(__name__)
 
 
+def _smtp_delivery_attempts() -> list[tuple[str, object]]:
+    attempts: list[tuple[str, object]] = [("primary", lambda: _smtp_client())]
+    if "gmail.com" in (settings.smtp_host or "").lower():
+        if not settings.smtp_use_ssl:
+            attempts.append(
+                ("gmail_ssl_465", lambda: _smtp_client(use_ssl=True, port=465, use_tls=False)),
+            )
+        elif int(settings.smtp_port) == 465:
+            attempts.append(
+                ("gmail_starttls_587", lambda: _smtp_client(use_ssl=False, port=587, use_tls=True)),
+            )
+    return attempts
+
+
 def smtp_login_probe() -> bool:
-    """Prueba EHLO + login SMTP sin enviar correo (diagnóstico en /health)."""
+    """Prueba login SMTP (mismos intentos que el envío real)."""
     refresh_smtp_settings()
-    if not settings.smtp_configured:
+    if not settings.smtp_send_ready:
         return False
-    try:
-        with _smtp_client():
-            return True
-    except Exception:
-        logger.exception("SMTP login probe failed (host=%s user=%s)", settings.smtp_host, settings.smtp_user)
-        return False
+    for label, client_factory in _smtp_delivery_attempts():
+        try:
+            with client_factory():
+                return True
+        except Exception as exc:
+            logger.warning("SMTP login probe %s falló: %s", label, exc)
+    logger.error(
+        "SMTP login probe falló (host=%s user=%s from=%s)",
+        settings.smtp_host,
+        settings.smtp_user,
+        settings.smtp_from_email,
+    )
+    return False
 
 
 SUPPORT_EMAIL = "ecommerce@ferragro.com"
@@ -77,17 +98,8 @@ def _deliver_smtp_message(message: MIMEMultipart, delivery: str) -> None:
         raise ValueError("SMTP sin remitente (SMTP_FROM_EMAIL / SMTP_USER)")
 
     payload = message.as_string()
-    attempts = [("primary", lambda: _smtp_client())]
-    if "gmail.com" in (settings.smtp_host or "").lower() and not settings.smtp_use_ssl:
-        attempts.append(
-            (
-                "gmail_ssl_465",
-                lambda: _smtp_client(use_ssl=True, port=465, use_tls=False),
-            )
-        )
-
     last_error: Exception | None = None
-    for label, client_factory in attempts:
+    for label, client_factory in _smtp_delivery_attempts():
         try:
             with client_factory() as client:
                 client.sendmail(from_addr, [delivery], payload)
@@ -247,6 +259,31 @@ def send_temporary_password_email(
           </p>
 """
     return send_branded_email(subject, delivery, plain_body, content_html)
+
+
+def send_temporary_password_email_with_retry(
+    to_email: str,
+    temporary_password: str,
+    *,
+    account_email: str | None = None,
+    attempts: int = 2,
+) -> bool:
+    """Recuperación de contraseña: re-lee secretos SMTP y reintenta (Render)."""
+    for attempt in range(1, max(1, attempts) + 1):
+        refresh_smtp_settings()
+        if not settings.smtp_send_ready:
+            logger.warning("SMTP no listo para recuperación (intento %s)", attempt)
+            continue
+        try:
+            if send_temporary_password_email(
+                to_email,
+                temporary_password,
+                account_email=account_email,
+            ):
+                return True
+        except Exception:
+            logger.exception("Recuperación SMTP intento %s falló para %s", attempt, to_email)
+    return False
 
 
 def send_welcome_email(to_email: str, recipient_name: str) -> bool:

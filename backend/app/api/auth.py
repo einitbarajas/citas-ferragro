@@ -35,7 +35,7 @@ from app.services.credential_cleanup import credential_has_active_owner, purge_o
 from app.services.login_policy import is_login_blocked, record_login_failure, reset_login_failures
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
 from app.services.admin_password_reset import reset_admin_password
-from app.services.mailer import send_temporary_password_email
+from app.services.mailer import send_temporary_password_email_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -412,10 +412,11 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
     smtp_ready = refresh_smtp_settings()
     if smtp_ready:
         try:
-            sent = send_temporary_password_email(
+            sent = send_temporary_password_email_with_retry(
                 account_email,
                 temporary_password,
                 account_email=account_email,
+                attempts=3,
             )
         except smtplib.SMTPAuthenticationError:
             logger.exception("SMTP autenticación fallida al enviar recuperación a %s", account_email)

@@ -202,7 +202,7 @@ def refresh_smtp_settings() -> bool:
     Relee SMTP desde variables de entorno y archivos secretos de Render.
     Útil si el proceso arrancó antes de montar /etc/secrets o las vars se añadieron después.
     """
-    applied = bootstrap_smtp_from_secret_files()
+    applied = bootstrap_smtp_from_secret_files(overlay=settings.is_production)
     for attr, env_key, target_type in _SMTP_ENV_KEYS:
         raw = os.getenv(env_key)
         if raw is None or not str(raw).strip():
