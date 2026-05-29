@@ -584,11 +584,22 @@ def health_deep():
     smtp_login_ok: bool | None = None
     smtp_profile_label: str | None = None
     if settings.smtp_send_ready:
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
         from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
 
-        smtp_login_ok = ensure_smtp_login_ready()
-        if smtp_login_ok is False:
-            smtp_login_ok = ensure_smtp_login_ready(force=True)
+        def _probe_smtp() -> bool:
+            if ensure_smtp_login_ready():
+                return True
+            return bool(ensure_smtp_login_ready(force=True))
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_probe_smtp)
+            try:
+                smtp_login_ok = future.result(timeout=14.0)
+            except FuturesTimeoutError:
+                logger.warning("health/deep: probe SMTP excedió 14s")
+                smtp_login_ok = None
         smtp_profile_label = resolved_smtp_label()
     return ok_response(
         {
