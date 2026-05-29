@@ -141,8 +141,16 @@ def list_team_override_days_in_month(
 def list_team_provider_bookable_days_in_month(
     db: Session, year: int, month: int, warehouse_id: int, warehouse_unload_team_id: int
 ) -> list[str]:
-    """Días futuros del mes en los que el proveedor puede agendar (franja por fecha o regla semanal)."""
-    return list_team_open_days_in_month(db, year, month, warehouse_id, warehouse_unload_team_id)
+    """Días futuros del mes con franja publicada por fecha (AppointmentDateWindow)."""
+    tz = ZoneInfo(settings.business_timezone)
+    local_today = datetime.now(tz).date()
+    return [
+        day_iso
+        for day_iso in list_team_override_days_in_month(
+            db, year, month, warehouse_id, warehouse_unload_team_id
+        )
+        if date.fromisoformat(day_iso) >= local_today
+    ]
 
 
 def list_team_open_days_in_month(

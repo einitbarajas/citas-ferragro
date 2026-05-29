@@ -17,7 +17,8 @@ from app.models.user_notification import UserNotification
 from app.services.auth_sessions import revoke_all_refresh_for_credential
 from app.services.credential_cleanup import delete_credential_fully
 from app.services.email_dispatch import dispatch_provider_account_notice
-from app.services.notification_service import _staff_emails_for_role
+from app.services.email_utils import dedupe_emails
+from app.services.notification_service import admin_notification_emails
 
 
 def provider_purge_after_days() -> int:
@@ -60,11 +61,14 @@ def notify_provider_and_admins(
     action: str,
     detail: str,
     actor_label: str,
+    actor_email: str | None = None,
 ) -> None:
     email = provider.company_email
     if provider.credential and provider.credential.email:
         email = provider.credential.email
-    admin_emails = _staff_emails_for_role(db, "Admin")
+    admin_emails = admin_notification_emails(db)
+    if actor_email:
+        admin_emails = dedupe_emails([*admin_emails, actor_email])
     dispatch_provider_account_notice(
         provider_email=str(email),
         provider_name=provider.company_name,
@@ -136,6 +140,7 @@ def suspend_provider(
     *,
     reason: str,
     actor_id: str,
+    actor_email: str | None = None,
 ) -> Provider:
     if provider.status == ProviderAccountStatus.suspendido:
         raise HTTPException(status_code=400, detail="El proveedor ya está suspendido")
@@ -157,6 +162,7 @@ def suspend_provider(
             f"salvo registros de auditoría."
         ),
         actor_label=f"Admin {actor_id}",
+        actor_email=actor_email,
     )
     return provider
 

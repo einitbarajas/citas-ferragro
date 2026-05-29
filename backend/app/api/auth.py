@@ -430,7 +430,8 @@ def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Sessio
                     "must_change_password": True,
                 },
                 "La contraseña temporal ya está activa, pero no se pudo enviar el correo. "
-                "Revisa SMTP en Render (Outlook: smtp.office365.com) o los logs del API (busca SMTP_RECOVERY).",
+                "En Render → ferragro-api → Environment vuelve a pegar el archivo smtp.env (Gmail: smtp.gmail.com y contraseña de aplicación). "
+                "Comprueba /health (smtp_login_ok debe ser true). Mientras tanto, el admin puede ver la clave en los logs del API (SMTP_RECOVERY).",
             )
 
     if not sent:

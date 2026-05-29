@@ -51,9 +51,10 @@ Ejecuta workflow **Sync SMTP to Render** en la pestaña Actions.
 ## Opción D — Script con API key
 
 ```powershell
-$env:RENDER_API_KEY = "rnd_..."
 cd "c:\dev\trabajo ferragro"
+# Añade en .env (no se sube a Git): RENDER_API_KEY=rnd_...
 .\scripts\configurar-smtp-render.ps1
+# o: $env:RENDER_API_KEY = "rnd_..."; .\scripts\configurar-smtp-render.ps1
 ```
 
 ## Probar

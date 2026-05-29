@@ -4,6 +4,7 @@
 
   Uso:
     .\scripts\activar-correo-ahora.ps1
+    # En .env: RENDER_API_KEY=rnd_...  (recomendado) o:
     $env:RENDER_API_KEY = "rnd_..."
     .\scripts\activar-correo-ahora.ps1 -SubirAutomatico
 #>
@@ -19,7 +20,13 @@ Write-Host ""
 Write-Host "=== Activar correo en Render (Ferragro) ===" -ForegroundColor Cyan
 Write-Host ""
 
-& (Join-Path $repoRoot "scripts\configurar-smtp-render.ps1")
+$envSource = Join-Path $repoRoot ".env"
+if (Test-Path -LiteralPath $exportPath) {
+    $envSource = $exportPath
+    Write-Host "Usando variables de: smtp-render.env" -ForegroundColor DarkGray
+}
+
+& (Join-Path $repoRoot "scripts\configurar-smtp-render.ps1") -EnvFile $envSource
 if ($LASTEXITCODE -ne 0 -and -not $SubirAutomatico) {
     Write-Host ""
     Write-Host "Paso manual obligatorio:" -ForegroundColor Yellow
@@ -39,7 +46,7 @@ if ($LASTEXITCODE -ne 0 -and -not $SubirAutomatico) {
 }
 
 if ($SubirAutomatico -or $env:RENDER_API_KEY) {
-    & (Join-Path $repoRoot "scripts\configurar-smtp-render.ps1")
+    & (Join-Path $repoRoot "scripts\configurar-smtp-render.ps1") -EnvFile $envSource
 }
 
 Write-Host ""

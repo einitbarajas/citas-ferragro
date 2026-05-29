@@ -19,6 +19,7 @@ from app.models.appointment_date_window import AppointmentDateWindow
 from app.models.credential import Credential
 from app.models.provider import Provider
 from app.models.warehouse import Warehouse
+from app.models.warehouse_unload_team import WarehouseUnloadTeam
 from app.models.profile_photo import ProfilePhoto
 from app.models.reminder_run import ReminderExecution
 from app.models.role import Role
@@ -33,7 +34,11 @@ from app.services.provider_account import (
     reactivate_provider,
     suspend_provider,
 )
-from app.services.notification_service import notify_provider_appointment_updated, notify_staff_review_needed
+from app.services.notification_service import (
+    notify_provider_appointment_updated,
+    notify_staff_review_needed,
+    notify_warehouse_schedule_updated,
+)
 from app.schemas.crud import (
     AppointmentDateWindowReplace,
     AppointmentDateWindowBulkReplace,
@@ -142,6 +147,43 @@ def _appointments_count_on_local_day(
     if warehouse_unload_team_id is not None:
         stmt = stmt.where(Appointment.warehouse_unload_team_id == warehouse_unload_team_id)
     return int(db.execute(stmt).scalar_one() or 0)
+
+
+def _schedule_actor_label(principal: SecurityPrincipal) -> str:
+    return f"{principal.role_name} ({principal.document_id})"
+
+
+def _principal_actor_email(db: Session, principal: SecurityPrincipal) -> str | None:
+    if principal.user is None or not principal.user.credential_id:
+        return None
+    cred = db.get(Credential, principal.user.credential_id)
+    return str(cred.email).strip() if cred and cred.email else None
+
+
+def _warehouse_team_labels(db: Session, warehouse_id: int, team_id: int) -> tuple[str, str]:
+    warehouse = db.get(Warehouse, warehouse_id)
+    team = db.get(WarehouseUnloadTeam, team_id)
+    wh_name = warehouse.name if warehouse else f"Bodega #{warehouse_id}"
+    team_name = team.name if team else f"Equipo #{team_id}"
+    return wh_name, team_name
+
+
+def _franjas_ranges_text(franjas: list) -> str:
+    parts: list[str] = []
+    for row in franjas:
+        if isinstance(row, dict):
+            start = str(row.get("start_local", ""))
+            end = str(row.get("end_local", ""))
+        else:
+            start = getattr(row, "start_local", "")
+            end = getattr(row, "end_local", "")
+            if hasattr(start, "strftime"):
+                start = start.strftime("%H:%M")
+            if hasattr(end, "strftime"):
+                end = end.strftime("%H:%M")
+        if start and end:
+            parts.append(f"{start}–{end}")
+    return ", ".join(parts) if parts else "(sin franjas)"
 
 
 def _window_to_out(window) -> dict:
@@ -930,7 +972,14 @@ def suspend_provider_account(
     provider = db.get(Provider, nit)
     if not provider:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
-    suspend_provider(db, provider, reason=payload.reason, actor_id=principal.document_id)
+    actor_email = _principal_actor_email(db, principal)
+    suspend_provider(
+        db,
+        provider,
+        reason=payload.reason,
+        actor_id=principal.document_id,
+        actor_email=actor_email,
+    )
     _log_admin_event(
         db=db,
         actor_id=principal.document_id,
@@ -1603,6 +1652,16 @@ def replace_appointment_franjas(
     )
     wins = replace_windows(db, payload.warehouse_id, parsed, team_id)
     data = [_window_to_out(x) for x in wins]
+    wh_name, team_name = _warehouse_team_labels(db, payload.warehouse_id, team_id)
+    notify_warehouse_schedule_updated(
+        db,
+        warehouse_id=payload.warehouse_id,
+        summary=(
+            f"Franjas semanales actualizadas en {wh_name}, muelle «{team_name}». "
+            f"Turnos: {_franjas_ranges_text(data)} ({settings.business_timezone})."
+        ),
+        actor_label=_schedule_actor_label(principal),
+    )
     return ok_response(
         {
             "warehouse_id": payload.warehouse_id,
@@ -1721,6 +1780,16 @@ def replace_appointment_franjas_for_date(
     parsed = _parse_and_validate_windows(payload.franjas, "Franjas por fecha inválidas")
     wins = replace_date_windows(db, day, payload.warehouse_id, parsed, team_id)
     data = [_window_to_out(x) for x in wins]
+    wh_name, team_name = _warehouse_team_labels(db, payload.warehouse_id, team_id)
+    notify_warehouse_schedule_updated(
+        db,
+        warehouse_id=payload.warehouse_id,
+        summary=(
+            f"Franjas del día {day.isoformat()} en {wh_name}, muelle «{team_name}». "
+            f"Turnos: {_franjas_ranges_text(data)} ({settings.business_timezone})."
+        ),
+        actor_label=_schedule_actor_label(principal),
+    )
     return ok_response(
         {"day": str(day), "warehouse_id": payload.warehouse_id, "franjas": data},
         "Franjas por fecha actualizadas correctamente",
@@ -1748,6 +1817,16 @@ def delete_appointment_franjas_for_date(
             detail="No se puede quitar la excepción porque este muelle ya tiene citas ese día.",
         )
     clear_date_windows(db, day, warehouse_id, team_id)
+    wh_name, team_name = _warehouse_team_labels(db, warehouse_id, team_id)
+    notify_warehouse_schedule_updated(
+        db,
+        warehouse_id=warehouse_id,
+        summary=(
+            f"Se quitaron las franjas especiales del {day.isoformat()} en {wh_name}, "
+            f"muelle «{team_name}» (vuelve el horario semanal)."
+        ),
+        actor_label=_schedule_actor_label(principal),
+    )
     return ok_response(
         {"day": str(day), "warehouse_id": warehouse_id, "unload_team_id": team_id},
         "Franjas por fecha eliminadas correctamente",
@@ -1795,6 +1874,18 @@ def replace_appointment_franjas_for_date_bulk(
         replace_date_windows(db, cursor, payload.warehouse_id, parsed, team_id)
         applied_days.append(str(cursor))
         cursor += timedelta(days=1)
+    if applied_days:
+        wh_name, team_name = _warehouse_team_labels(db, payload.warehouse_id, team_id)
+        notify_warehouse_schedule_updated(
+            db,
+            warehouse_id=payload.warehouse_id,
+            summary=(
+                f"Franjas por lote en {wh_name}, muelle «{team_name}», "
+                f"{len(applied_days)} día(s) ({applied_days[0]} … {applied_days[-1]}). "
+                f"Turnos: {_franjas_ranges_text(payload.franjas)} ({settings.business_timezone})."
+            ),
+            actor_label=_schedule_actor_label(principal),
+        )
     return ok_response(
         {"applied_days": applied_days, "skipped_days": skipped_days},
         "Franjas por lote aplicadas correctamente",

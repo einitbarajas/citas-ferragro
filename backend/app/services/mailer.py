@@ -13,6 +13,20 @@ from app.services.email_utils import is_deliverable_email, normalize_email
 
 logger = logging.getLogger(__name__)
 
+
+def smtp_login_probe() -> bool:
+    """Prueba EHLO + login SMTP sin enviar correo (diagnóstico en /health)."""
+    refresh_smtp_settings()
+    if not settings.smtp_configured:
+        return False
+    try:
+        with _smtp_client():
+            return True
+    except Exception:
+        logger.exception("SMTP login probe failed (host=%s user=%s)", settings.smtp_host, settings.smtp_user)
+        return False
+
+
 SUPPORT_EMAIL = "ecommerce@ferragro.com"
 SUPPORT_PHONE = "+57 3142254819"
 SUPPORT_WHATSAPP_URL = "https://wa.me/573142254819"

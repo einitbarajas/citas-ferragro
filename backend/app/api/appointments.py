@@ -223,7 +223,7 @@ def create_appointment(
     get_active_warehouse_or_raise(db, payload.warehouse_id)
     team = get_unload_team_or_raise(db, payload.warehouse_id, payload.warehouse_unload_team_id)
     windows, source = resolve_team_windows_for_day(db, day_local, payload.warehouse_id, team.id)
-    if not windows or source not in ("date_override", "weekly"):
+    if not windows or source != "date_override":
         raise HTTPException(
             status_code=400,
             detail=(
@@ -457,7 +457,7 @@ def list_available_slots_for_provider_day(
         assert_warehouse_access(db, principal, warehouse_id)
     team = get_unload_team_or_raise(db, warehouse_id, unload_team_id)
     windows, source = resolve_team_windows_for_day(db, day, warehouse_id, team.id)
-    if not windows or (not is_staff and source not in ("date_override", "weekly")):
+    if not windows or (not is_staff and source != "date_override"):
         return ok_response(
             {
                 "day": str(day),
@@ -694,11 +694,14 @@ def provider_reschedule_appointment(
     provider_team_index = payload.provider_team_index or appt.provider_team_index
     team = get_unload_team_or_raise(db, appt.warehouse_id, team_id)
     day_local = payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).date()
-    windows, _ = resolve_team_windows_for_day(db, day_local, appt.warehouse_id, team.id)
-    if not windows:
+    windows, source = resolve_team_windows_for_day(db, day_local, appt.warehouse_id, team.id)
+    if not windows or source != "date_override":
         raise HTTPException(
             status_code=400,
-            detail="Este día no tiene turnos habilitados para el equipo seleccionado.",
+            detail=(
+                "La empresa aún no ha publicado horarios para agendar en esta fecha. "
+                "Elige un día marcado en verde claro en el calendario."
+            ),
         )
     enforce_minimum_notice(payload.start_time, minimum_hours=settings.appointment_minimum_notice_hours)
     assert_appointment_slot(

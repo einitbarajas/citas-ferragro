@@ -3,6 +3,7 @@ import atexit
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
+from app.core.config import settings
 from app.services.email_utils import dedupe_emails, is_deliverable_email, normalize_email
 from app.services.mailer import send_internal_welcome_email, send_notification_email, send_welcome_email
 
@@ -27,11 +28,17 @@ atexit.register(shutdown_email_executor)
 
 
 def _run_in_email_pool(fn, *args, **kwargs) -> None:
+    # En Render el hilo en background a veces no termina tras cerrar la petición HTTP.
+    # En producción enviamos en el mismo hilo (como forgot-password) para no perder avisos.
+    if settings.is_production:
+        fn(*args, **kwargs)
+        return
     _email_executor.submit(fn, *args, **kwargs)
 
 
 def _send_notification_email_blocking(to_email: str, title: str, message: str) -> None:
     try:
+        logger.info("Enviando aviso por correo a %s | %s", to_email, title)
         if not send_notification_email(to_email, title, message):
             logger.warning("Correo de aviso no enviado a %s | %s", to_email, title)
     except Exception:
@@ -92,6 +99,13 @@ def dispatch_provider_account_notice(
     detail: str,
     actor_label: str,
 ) -> None:
+    admins = dedupe_emails(admin_emails)
+    logger.info(
+        "Aviso cuenta proveedor action=%s | proveedor=%s | admins=%s",
+        action,
+        provider_email,
+        admins,
+    )
     title = _PROVIDER_ACTION_TITLES.get(action, "Aviso de cuenta proveedor")
     provider_body = (
         f"Hola {provider_name},\n\n"
@@ -110,7 +124,7 @@ def dispatch_provider_account_notice(
     )
     seen: set[str] = set()
     provider_key = (normalize_email(provider_email) or "").lower()
-    for admin_email in dedupe_emails(admin_emails):
+    for admin_email in admins:
         key = admin_email.lower()
         if key in seen:
             continue

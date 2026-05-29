@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,8 @@ from app.models.user_warehouse import UserWarehouse
 from app.services.email_dispatch import dispatch_notification_email
 from app.services.email_utils import dedupe_emails
 
+logger = logging.getLogger(__name__)
+
 WAREHOUSE_SCOPED_STAFF_ROLES = (UserRole.logistica, UserRole.admin_bodega)
 INTERNAL_STAFF_ROLES = (UserRole.admin,) + WAREHOUSE_SCOPED_STAFF_ROLES
 
@@ -22,6 +25,15 @@ INTERNAL_STAFF_ROLES = (UserRole.admin,) + WAREHOUSE_SCOPED_STAFF_ROLES
 def _format_start_local(appointment: Appointment) -> str:
     tz = ZoneInfo(settings.business_timezone)
     return appointment.start_time.astimezone(tz).strftime("%d/%m/%Y %H:%M")
+
+
+def admin_notification_emails(db: Session) -> list[str]:
+    """Correos Admin en BD + admin de bootstrap (p. ej. ebarajas@ferragro.com)."""
+    emails = _staff_emails_for_role(db, UserRole.admin)
+    bootstrap = str(settings.admin_bootstrap_email or "").strip()
+    if bootstrap:
+        emails = dedupe_emails([*emails, bootstrap])
+    return emails
 
 
 def _staff_emails_for_role(db: Session, role_name: str) -> list[str]:
@@ -47,7 +59,7 @@ def _staff_emails_for_warehouse_role(db: Session, warehouse_id: int, role_name: 
 
 def _warehouse_staff_emails(db: Session, warehouse_id: int) -> list[str]:
     emails: list[str] = []
-    emails.extend(_staff_emails_for_role(db, UserRole.admin))
+    emails.extend(admin_notification_emails(db))
     for role in WAREHOUSE_SCOPED_STAFF_ROLES:
         emails.extend(_staff_emails_for_warehouse_role(db, warehouse_id, role))
     return dedupe_emails(emails)
@@ -241,6 +253,28 @@ def notify_staff_finalization_window_started(
         message=message,
         include_provider=False,
     )
+
+
+def notify_warehouse_schedule_updated(
+    db: Session,
+    *,
+    warehouse_id: int,
+    summary: str,
+    actor_label: str,
+) -> None:
+    """
+    Aviso por correo al guardar franjas (semanales, por fecha o lote).
+    No crea notificación in-app: el modelo exige IdCita y las franjas no tienen cita.
+    """
+    title = "Horarios de agendamiento actualizados"
+    message = (
+        f"{summary}\n\n"
+        f"Acción realizada por: {actor_label}.\n"
+        "Revisa el panel Ferragro en Franjas horarias."
+    )
+    emails = _warehouse_staff_emails(db, warehouse_id)
+    logger.info("Aviso de franjas horarias: %d destinatario(s)", len(emails))
+    _dispatch_notification_emails(emails, title=title, message=message)
 
 
 def notify_staff_no_presentada_auto(db: Session, appointment: Appointment) -> None:

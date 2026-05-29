@@ -41,8 +41,11 @@ function Read-DotEnv {
 }
 
 function Get-ApiKey {
-    param([string] $Explicit)
+    param([string] $Explicit, [hashtable] $DotEnv = @{})
     if (-not [string]::IsNullOrWhiteSpace($Explicit)) { return $Explicit.Trim() }
+    if ($DotEnv["RENDER_API_KEY"] -and $DotEnv["RENDER_API_KEY"].Trim()) {
+        return $DotEnv["RENDER_API_KEY"].Trim()
+    }
     $keyFile = Join-Path $repoRoot ".render-api-key.local"
     if (Test-Path -LiteralPath $keyFile) {
         $fromFile = (Get-Content -LiteralPath $keyFile -Raw).Trim()
@@ -86,9 +89,12 @@ function Set-RenderEnvVar {
 }
 
 function Invoke-RenderDeployHook {
-    param([string] $RepoRoot)
+    param([string] $RepoRoot, [hashtable] $DotEnv = @{})
     $hookFile = Join-Path $RepoRoot ".render-hook.local"
     $hook = $env:RENDER_DEPLOY_HOOK
+    if (-not $hook -and $DotEnv["RENDER_DEPLOY_HOOK"]) {
+        $hook = $DotEnv["RENDER_DEPLOY_HOOK"].Trim()
+    }
     if (-not $hook -and (Test-Path -LiteralPath $hookFile)) {
         $hook = (Get-Content -LiteralPath $hookFile -Raw).Trim()
     }
@@ -136,7 +142,10 @@ $toSet = @{
 if ($envMap["SMTP_REPLY_TO"]) { $toSet["SMTP_REPLY_TO"] = $envMap["SMTP_REPLY_TO"] }
 if ($envMap["SMTP_PROFILE"]) { $toSet["SMTP_PROFILE"] = $envMap["SMTP_PROFILE"] }
 
-$ApiKey = Get-ApiKey -Explicit $ApiKey
+$ApiKey = Get-ApiKey -Explicit $ApiKey -DotEnv $envMap
+if ($envMap["RENDER_DEPLOY_HOOK"] -and -not $env:RENDER_DEPLOY_HOOK) {
+    $env:RENDER_DEPLOY_HOOK = $envMap["RENDER_DEPLOY_HOOK"].Trim()
+}
 $exportPath = Join-Path $repoRoot "smtp-render.env"
 $lines = @()
 foreach ($entry in $toSet.GetEnumerator() | Sort-Object Name) {
@@ -154,7 +163,7 @@ if (-not $ApiKey) {
     Write-Host "Opcion B: Secret File nombre smtp.env con el mismo contenido (el API lo lee en /etc/secrets/smtp.env)"
     Write-Host ""
     Write-Host "Para automatizar: API key en https://dashboard.render.com/u/settings#api-keys" -ForegroundColor Cyan
-    Write-Host '  $env:RENDER_API_KEY = "rnd_..."'
+    Write-Host '  Añade en .env: RENDER_API_KEY=rnd_...  (o $env:RENDER_API_KEY = "rnd_...")'
     Write-Host "  .\scripts\configurar-smtp-render.ps1"
     Start-Process "https://dashboard.render.com/web/$ServiceId/env"
     exit 1
@@ -173,7 +182,7 @@ try {
 }
 
 if (-not $SkipDeploy) {
-    if (Invoke-RenderDeployHook -RepoRoot $repoRoot) {
+    if (Invoke-RenderDeployHook -RepoRoot $repoRoot -DotEnv $envMap) {
         Write-Host "Deploy disparado (hook)." -ForegroundColor Green
     } else {
         Write-Host "Sin deploy hook: haz Manual Deploy en Render." -ForegroundColor Yellow
