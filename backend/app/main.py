@@ -33,7 +33,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-notify-franjas-v1"
+API_BUILD_ID = "2026-05-29-health-fast-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata antes de create_all
 
@@ -461,22 +461,16 @@ def health():
                     admin_email = user.credential.email
         except Exception:
             logger.exception("No se pudo consultar Admin en health")
+    # No hacer login SMTP aquí: Render llama /health en cada deploy y Gmail puede tardar 30s
+    # (el probe bloqueaba el health check y el deploy quedaba en fallo).
     smtp_ok = refresh_smtp_settings()
-    smtp_login_ok = False
-    if smtp_ok:
-        try:
-            from app.services.mailer import smtp_login_probe
-
-            smtp_login_ok = smtp_login_probe()
-        except Exception:
-            logger.exception("No se pudo ejecutar smtp_login_probe")
     return ok_response(
         {
             "status": "ok",
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
             "email_enabled": smtp_ok,
-            "smtp_login_ok": smtp_login_ok,
+            "smtp_login_ok": None,
             "smtp_host": settings.smtp_host or None,
             "smtp_user": settings.smtp_user or None,
             "smtp_from_email": settings.smtp_from_email or None,
