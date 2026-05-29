@@ -199,6 +199,8 @@ $smtpFileBody = $lines -join "`n"
 [System.IO.File]::WriteAllText($exportPath, $smtpFileBody, [System.Text.UTF8Encoding]::new($false))
 
 if (-not $ApiKey) {
+    $clipPath = Join-Path $repoRoot "ARREGLAR-CORREO-AHORA.md"
+    if (Test-Path -LiteralPath $clipPath) { Start-Process $clipPath }
     Write-Host ""
     Write-Host "Falta RENDER_API_KEY. Archivo listo:" -ForegroundColor Yellow
     Write-Host "  $exportPath"

@@ -69,14 +69,12 @@ def _probe_client(
 
 
 def _ordered_candidates() -> tuple[_SmtpCandidate, ...]:
-    """En Render, smtp.env suele ser la fuente correcta; probarla antes que env sueltas."""
-    if Path("/etc/secrets/smtp.env").is_file():
-        return (
-            _CANDIDATES[1],
-            _CANDIDATES[3],
-            _CANDIDATES[0],
-            _CANDIDATES[2],
-        )
+    """En Render, smtp.env es la fuente de verdad; evita 4× timeout si env tiene password vieja."""
+    secret_path = Path("/etc/secrets/smtp.env")
+    if secret_path.is_file():
+        return (_CANDIDATES[1], _CANDIDATES[3])
+    if settings.is_production:
+        return (_CANDIDATES[1], _CANDIDATES[0], _CANDIDATES[3], _CANDIDATES[2])
     return _CANDIDATES
 
 
