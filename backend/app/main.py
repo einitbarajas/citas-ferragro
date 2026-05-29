@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-email-https-v2"
+API_BUILD_ID = "2026-05-29-smtp-email-v3"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -130,23 +130,38 @@ def _log_database_target() -> None:
 
 
 def _warm_smtp_on_startup() -> None:
-    if not settings.is_production or not settings.smtp_send_ready:
+    if not settings.is_production:
         return
     try:
         from app.core.config import refresh_smtp_settings
         from app.core.smtp_env_loader import overlay_render_smtp_secret
+        from app.services.email_transport import email_delivery_ready, render_smtp_blocked
         from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
 
         overlay_render_smtp_secret()
         refresh_smtp_settings()
-        if ensure_smtp_login_ready():
-            logger.info("SMTP Gmail listo al arranque (%s)", resolved_smtp_label())
-        else:
-            logger.warning(
-                "SMTP configurado pero Gmail no aceptó login; revisa smtp.env en Render"
+        if settings.resend_send_ready:
+            logger.info(
+                "Correo en producción vía Resend (sandbox=%s)",
+                settings.resend_sandbox,
             )
+            return
+        if settings.brevo_send_ready:
+            logger.info("Correo en producción vía Brevo API")
+            return
+        if settings.smtp_send_ready and not render_smtp_blocked():
+            if ensure_smtp_login_ready():
+                logger.info("SMTP Gmail listo al arranque (%s)", resolved_smtp_label())
+            else:
+                logger.warning("SMTP configurado pero login falló; revisa smtp.env")
+        elif settings.smtp_send_ready:
+            logger.warning(
+                "Render bloquea SMTP (587/465). Añade RESEND_API_KEY en Environment o sube a plan Starter."
+            )
+        elif not email_delivery_ready():
+            logger.warning("Correo no configurado en producción")
     except Exception:
-        logger.exception("Fallo al validar SMTP al arranque")
+        logger.exception("Fallo al validar correo al arranque")
 
 
 def _blocking_startup() -> None:

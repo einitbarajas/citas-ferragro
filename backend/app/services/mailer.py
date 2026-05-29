@@ -238,25 +238,31 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
 
     html_body = _build_mail_layout(content_html)
 
-    if settings.brevo_send_ready:
-        from app.services.brevo_mailer import send_brevo_email
+    from app.services.email_transport import production_should_use_https_email
 
-        return send_brevo_email(
-            to_email=delivery,
-            subject=subject,
-            plain_body=plain_body,
-            html_body=html_body,
+    if production_should_use_https_email() or settings.brevo_send_ready:
+        if settings.brevo_send_ready:
+            from app.services.brevo_mailer import send_brevo_email
+
+            return send_brevo_email(
+                to_email=delivery,
+                subject=subject,
+                plain_body=plain_body,
+                html_body=html_body,
+            )
+        if settings.resend_send_ready:
+            from app.services.resend_mailer import send_resend_email
+
+            return send_resend_email(
+                to_email=delivery,
+                subject=subject,
+                plain_body=plain_body,
+                html_body=html_body,
+            )
+        logger.error(
+            "Render bloquea SMTP; falta RESEND_API_KEY o BREVO_API_KEY en Environment/smtp.env"
         )
-
-    if settings.resend_send_ready:
-        from app.services.resend_mailer import send_resend_email
-
-        return send_resend_email(
-            to_email=delivery,
-            subject=subject,
-            plain_body=plain_body,
-            html_body=html_body,
-        )
+        return False
 
     if not _refresh_smtp_for_delivery():
         logger.warning(

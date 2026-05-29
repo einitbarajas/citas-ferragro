@@ -13,7 +13,11 @@ def _parse_env_file(path: Path) -> dict[str, str]:
             continue
         key, _, raw = stripped.partition("=")
         key = key.strip()
-        if not key.startswith("SMTP_"):
+        if not (
+            key.startswith("SMTP_")
+            or key.startswith("RESEND_")
+            or key.startswith("BREVO_")
+        ):
             continue
         value = raw.strip().strip('"').strip("'").replace("\r", "").replace("\n", "")
         if key == "SMTP_PASSWORD" and value:
@@ -40,7 +44,10 @@ def overlay_render_smtp_secret() -> bool:
     if not render_path.is_file():
         return False
     for key, value in _parse_env_file(render_path).items():
-        os.environ[key] = value
+        if key == "RESEND_SANDBOX":
+            os.environ[key] = "true" if value else "false"
+        else:
+            os.environ[key] = str(value)
     return True
 
 
@@ -76,7 +83,7 @@ def bootstrap_smtp_from_secret_files(*, overlay: bool = False) -> list[str]:
             continue
         for key, value in _parse_env_file(path).items():
             if overlay or not os.getenv(key, "").strip():
-                os.environ[key] = value
+                os.environ[key] = str(value)
         applied.append(str(path))
         if (
             os.getenv("SMTP_HOST", "").strip()

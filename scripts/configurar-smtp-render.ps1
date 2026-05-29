@@ -185,6 +185,13 @@ if ($toSet["SMTP_FROM_EMAIL"] -ne $toSet["SMTP_USER"]) {
 }
 if ($envMap["SMTP_REPLY_TO"]) { $toSet["SMTP_REPLY_TO"] = $envMap["SMTP_REPLY_TO"] }
 if ($envMap["SMTP_PROFILE"]) { $toSet["SMTP_PROFILE"] = $envMap["SMTP_PROFILE"] }
+if ($envMap["RESEND_API_KEY"] -and $envMap["RESEND_API_KEY"].Trim()) {
+    $toSet["RESEND_API_KEY"] = $envMap["RESEND_API_KEY"].Trim()
+    $toSet["RESEND_SANDBOX"] = if ($envMap["RESEND_SANDBOX"]) { $envMap["RESEND_SANDBOX"] } else { "true" }
+}
+if ($envMap["BREVO_API_KEY"] -and $envMap["BREVO_API_KEY"].Trim()) {
+    $toSet["BREVO_API_KEY"] = $envMap["BREVO_API_KEY"].Trim()
+}
 
 $ApiKey = Get-ApiKey -Explicit $ApiKey -DotEnv $envMap
 if ($envMap["RENDER_DEPLOY_HOOK"] -and -not $env:RENDER_DEPLOY_HOOK) {

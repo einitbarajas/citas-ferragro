@@ -223,6 +223,13 @@ _SMTP_ENV_KEYS: tuple[tuple[str, str, type], ...] = (
     ("smtp_reply_to", "SMTP_REPLY_TO", str),
 )
 
+_EMAIL_PROVIDER_ENV_KEYS: tuple[tuple[str, str, type], ...] = (
+    ("resend_api_key", "RESEND_API_KEY", str),
+    ("resend_from_email", "RESEND_FROM_EMAIL", str),
+    ("resend_sandbox", "RESEND_SANDBOX", bool),
+    ("brevo_api_key", "BREVO_API_KEY", str),
+)
+
 
 def _coerce_env_value(raw: str, target_type: type):
     if target_type is bool:
@@ -244,7 +251,7 @@ def refresh_smtp_settings(*, force_secret_overlay: bool = False) -> bool:
     applied = bootstrap_smtp_from_secret_files(
         overlay=force_secret_overlay or settings.is_production,
     )
-    for attr, env_key, target_type in _SMTP_ENV_KEYS:
+    for attr, env_key, target_type in _SMTP_ENV_KEYS + _EMAIL_PROVIDER_ENV_KEYS:
         raw = os.getenv(env_key)
         if raw is None or not str(raw).strip():
             continue
