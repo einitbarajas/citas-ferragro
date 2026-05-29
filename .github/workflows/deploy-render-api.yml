@@ -25,6 +25,60 @@ jobs:
           echo "expected=$BUILD_ID" >> "$GITHUB_OUTPUT"
           echo "Expected API_BUILD_ID: $BUILD_ID"
 
+      - name: Sync SMTP to Render (if secrets configured)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ] || [ -z "${SMTP_PASSWORD:-}" ]; then
+            echo "SMTP secrets no configurados en GitHub; omitiendo sync (usa smtp.env en Render)."
+            exit 0
+          fi
+          SERVICE_ID="srv-d82dvanaqgkc739362u0"
+          HOST="${SMTP_HOST:-smtp.gmail.com}"
+          USER="${SMTP_USER}"
+          FROM="${SMTP_FROM_EMAIL:-$USER}"
+          PASS="$(echo "$SMTP_PASSWORD" | tr -d '[:space:]')"
+          for pair in \
+            "SMTP_PROFILE=gmail" \
+            "SMTP_HOST=${HOST}" \
+            "SMTP_PORT=587" \
+            "SMTP_USER=${USER}" \
+            "SMTP_PASSWORD=${PASS}" \
+            "SMTP_FROM_EMAIL=${FROM}" \
+            "SMTP_FROM_NAME=Ferragro" \
+            "SMTP_USE_TLS=true" \
+            "SMTP_USE_SSL=false"
+          do
+            KEY="${pair%%=*}"
+            VAL="${pair#*=}"
+            JSON=$(python3 -c 'import json,sys; print(json.dumps({"key":sys.argv[1],"value":sys.argv[2]}))' "$KEY" "$VAL")
+            curl -fsS -X PUT "https://api.render.com/v1/services/${SERVICE_ID}/env-vars/${KEY}" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$JSON" >/dev/null
+            echo "OK ${KEY}"
+          done
+          CONTENT=$(printf '%s\n' \
+            "SMTP_PROFILE=gmail" \
+            "SMTP_HOST=${HOST}" \
+            "SMTP_PORT=587" \
+            "SMTP_USER=${USER}" \
+            "SMTP_PASSWORD=${PASS}" \
+            "SMTP_FROM_EMAIL=${FROM}" \
+            "SMTP_FROM_NAME=Ferragro" \
+            "SMTP_USE_SSL=false" \
+            "SMTP_USE_TLS=true")
+          BODY=$(python3 -c 'import json,sys; print(json.dumps({"name":"smtp.env","content":sys.argv[1]}))' "$CONTENT")
+          curl -fsS -X PUT "https://api.render.com/v1/services/${SERVICE_ID}/secret-files/smtp.env" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" && echo "OK smtp.env" || echo "::warning::No se pudo subir smtp.env"
+
       - name: Trigger Render deploy
         env:
           DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
@@ -58,7 +112,13 @@ jobs:
             GIT_COMMIT=$(echo "$BODY" | grep -o '"render_git_commit":"[^"]*"' | head -1 | cut -d'"' -f4)
             echo "intento $i: build_id=$BUILD_ID render_git_commit=${GIT_COMMIT:-null}"
             if [ "$BUILD_ID" = "$EXPECTED" ]; then
-              echo "API en producción con build_id=$EXPECTED"
+              DEEP=$(curl -fsS --max-time 120 "${API%/health}/health/deep" || echo "{}")
+              echo "$DEEP" | grep -o '"smtp_login_ok":[^,}]*' || true
+              if echo "$DEEP" | grep -q '"smtp_login_ok":true'; then
+                echo "API en producción con build_id=$EXPECTED y smtp_login_ok=true"
+                exit 0
+              fi
+              echo "build_id OK; smtp_login_ok aún no true (revisa smtp.env en Render)"
               exit 0
             fi
           done

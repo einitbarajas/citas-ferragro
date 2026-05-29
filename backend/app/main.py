@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-forgot-password-v3"
+API_BUILD_ID = "2026-05-29-gmail-render-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -129,12 +129,29 @@ def _log_database_target() -> None:
         logger.warning("No se pudo parsear DATABASE_URL para diagnóstico")
 
 
+def _warm_smtp_on_startup() -> None:
+    if not settings.is_production or not settings.smtp_send_ready:
+        return
+    try:
+        from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
+
+        if ensure_smtp_login_ready():
+            logger.info("SMTP Gmail listo al arranque (%s)", resolved_smtp_label())
+        else:
+            logger.warning(
+                "SMTP configurado pero Gmail no aceptó login; revisa smtp.env en Render"
+            )
+    except Exception:
+        logger.exception("Fallo al validar SMTP al arranque")
+
+
 def _blocking_startup() -> None:
     """Tareas síncronas de BD (se ejecutan en hilo aparte; no bloquean /health de Render)."""
     _log_database_target()
     _init_database_schema(max_attempts=12, delay_seconds=3.0)
     _purge_orphan_credentials_on_startup()
     _ensure_production_admin_on_startup()
+    _warm_smtp_on_startup()
 
 
 @asynccontextmanager
@@ -560,22 +577,22 @@ def health_deep():
         logger.exception("health/deep: fallo de BD")
     smtp_ok = refresh_smtp_settings()
     smtp_login_ok: bool | None = None
+    smtp_profile_label: str | None = None
     if settings.smtp_send_ready:
-        from app.services.mailer import smtp_login_probe_with_timeout
+        from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
 
-        smtp_login_ok = smtp_login_probe_with_timeout(timeout_seconds=18.0)
-        if smtp_login_ok is False:
-            refresh_smtp_settings(force_secret_overlay=True)
-            smtp_login_ok = smtp_login_probe_with_timeout(timeout_seconds=18.0)
+        smtp_login_ok = ensure_smtp_login_ready(force=True)
+        smtp_profile_label = resolved_smtp_label()
     return ok_response(
         {
-            "status": "ok" if db_ok and smtp_login_ok is not False else "degraded",
+            "status": "ok" if db_ok and smtp_login_ok is True else "degraded",
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
             "database_ok": db_ok,
             "email_enabled": settings.smtp_configured,
             "smtp_send_ready": settings.smtp_send_ready,
             "smtp_login_ok": smtp_login_ok,
+            "smtp_profile": smtp_profile_label,
             "admin_email": admin_email,
         },
         "Diagnóstico profundo",

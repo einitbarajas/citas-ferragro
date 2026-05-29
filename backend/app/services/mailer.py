@@ -43,6 +43,10 @@ def _smtp_delivery_attempts() -> list[tuple[str, object]]:
 
 def smtp_login_probe() -> bool:
     """Prueba login SMTP (mismos intentos que el envío real)."""
+    if settings.is_production:
+        from app.services.smtp_resolver import ensure_smtp_login_ready
+
+        return ensure_smtp_login_ready()
     refresh_smtp_settings()
     if not settings.smtp_send_ready:
         return False
@@ -121,6 +125,15 @@ def _deliver_smtp_message(message: MIMEMultipart, delivery: str) -> None:
     from_addr = _smtp_envelope_from()
     if not from_addr:
         raise ValueError("SMTP sin remitente (SMTP_FROM_EMAIL / SMTP_USER)")
+
+    if settings.is_production:
+        from app.services.smtp_resolver import ensure_smtp_login_ready
+
+        if not ensure_smtp_login_ready():
+            raise smtplib.SMTPAuthenticationError(
+                535,
+                b"Gmail no acepto login desde Render; revisa smtp.env y contrasena de aplicacion",
+            )
 
     payload = message.as_string()
     last_error: Exception | None = None
