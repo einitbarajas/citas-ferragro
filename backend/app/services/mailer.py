@@ -49,6 +49,17 @@ def smtp_login_probe() -> bool:
     return False
 
 
+def smtp_login_probe_with_timeout(timeout_seconds: float = 18.0) -> bool | None:
+    """Probe SMTP con límite de tiempo (evita página en blanco en /health/deep)."""
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(smtp_login_probe)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FuturesTimeoutError:
+            logger.warning("SMTP login probe excedió %ss", timeout_seconds)
+            return None
+
+
 SUPPORT_EMAIL = "ecommerce@ferragro.com"
 SUPPORT_PHONE = "+57 3142254819"
 SUPPORT_WHATSAPP_URL = "https://wa.me/573142254819"
