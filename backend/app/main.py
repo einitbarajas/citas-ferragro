@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-deploy-db-v1"
+API_BUILD_ID = "2026-05-29-deploy-live-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -113,19 +113,56 @@ def _ensure_production_admin_on_startup() -> None:
         logger.exception("No se pudo asegurar el Admin de producción al arranque")
 
 
+def _log_database_target() -> None:
+    try:
+        from urllib.parse import urlparse
+
+        raw = settings.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        parsed = urlparse(raw)
+        logger.info(
+            "PostgreSQL: host=%s port=%s db=%s",
+            parsed.hostname or "?",
+            parsed.port or "5432",
+            (parsed.path or "/").lstrip("/") or "?",
+        )
+    except Exception:
+        logger.warning("No se pudo parsear DATABASE_URL para diagnóstico")
+
+
+def _blocking_startup() -> None:
+    """Tareas síncronas de BD (se ejecutan en hilo aparte; no bloquean /health de Render)."""
+    _log_database_target()
+    _init_database_schema(max_attempts=12, delay_seconds=3.0)
+    _purge_orphan_credentials_on_startup()
+    _ensure_production_admin_on_startup()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _warn_if_smtp_missing_in_production()
-    _init_database_schema()
-    _purge_orphan_credentials_on_startup()
-    _ensure_production_admin_on_startup()
     stop_event = asyncio.Event()
+
+    async def _background_startup() -> None:
+        try:
+            await asyncio.to_thread(_blocking_startup)
+            logger.info("Arranque en segundo plano: BD y admin listos")
+        except Exception:
+            logger.exception("Arranque en segundo plano falló (revisa DATABASE_URL en Render)")
+
+    startup_task = asyncio.create_task(_background_startup())
     scheduler_task = asyncio.create_task(reminder_scheduler_loop(stop_event))
     purge_task = asyncio.create_task(provider_purge_scheduler_loop(stop_event))
     no_presentada_task = asyncio.create_task(no_presentada_scheduler_loop(stop_event))
     notification_purge_task = asyncio.create_task(notification_purge_scheduler_loop(stop_event))
+    # Render health check: /health debe responder en cuanto uvicorn acepta conexiones.
     yield
     stop_event.set()
+    if not startup_task.done():
+        startup_task.cancel()
+        try:
+            await startup_task
+        except asyncio.CancelledError:
+            pass
     scheduler_task.cancel()
     purge_task.cancel()
     no_presentada_task.cancel()

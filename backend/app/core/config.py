@@ -117,6 +117,16 @@ class Settings(BaseSettings):
         _apply_smtp_profile_defaults(self)
         return self
 
+    @model_validator(mode="after")
+    def apply_production_defaults(self) -> "Settings":
+        if not self.is_production:
+            return self
+        if not self.refresh_cookie_secure:
+            object.__setattr__(self, "refresh_cookie_secure", True)
+        if self.refresh_cookie_samesite.lower() in {"", "lax"}:
+            object.__setattr__(self, "refresh_cookie_samesite", "none")
+        return self
+
 
 def _apply_smtp_profile_defaults(target: Settings) -> None:
     profile = target.smtp_profile.strip().lower()
@@ -152,16 +162,6 @@ def _apply_smtp_profile_defaults(target: Settings) -> None:
         object.__setattr__(target, "smtp_port", int(preset["port"]))
         object.__setattr__(target, "smtp_use_tls", bool(preset["use_tls"]))
         object.__setattr__(target, "smtp_use_ssl", bool(preset["use_ssl"]))
-
-    @model_validator(mode="after")
-    def apply_production_defaults(self) -> "Settings":
-        if not self.is_production:
-            return self
-        if not self.refresh_cookie_secure:
-            object.__setattr__(self, "refresh_cookie_secure", True)
-        if self.refresh_cookie_samesite.lower() in {"", "lax"}:
-            object.__setattr__(self, "refresh_cookie_samesite", "none")
-        return self
 
 
 settings = Settings()
