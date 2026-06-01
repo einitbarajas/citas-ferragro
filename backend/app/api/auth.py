@@ -479,22 +479,48 @@ def forgot_password(
             account_email,
             temporary_password,
         )
+        from app.core.config import settings as app_settings
+
+        extra = ""
+        if app_settings.resend_sandbox:
+            from app.services.email_sandbox import resend_sandbox_inbox
+
+            inbox = resend_sandbox_inbox()
+            if inbox:
+                extra = f" Modo prueba: revisa también {inbox}."
         return ok_response(
             {
                 "email_sent": False,
                 "must_change_password": True,
             },
             "La contraseña temporal ya está activa, pero no se pudo enviar el correo. "
-            "Revisa spam o contacta a soporte Ferragro.",
+            "Revisa spam o contacta a soporte Ferragro."
+            + extra,
         )
+
+    from app.core.config import settings as app_settings
+    from app.services.email_sandbox import sandbox_delivery_hint
+
+    hint = None
+    if app_settings.resend_sandbox:
+        from app.services.email_sandbox import redirect_recipient_for_sandbox
+
+        delivery_to, _ = redirect_recipient_for_sandbox(account_email, "")
+        hint = sandbox_delivery_hint(account_email, delivery_to)
+
+    success_msg = (
+        "Contraseña temporal enviada a tu correo. Revisa bandeja de entrada y correo no deseado. "
+        "Ingresa con esa clave; el sistema te pedirá cambiarla."
+    )
+    if hint:
+        success_msg = f"{success_msg} {hint}"
 
     return ok_response(
         {
             "email_sent": True,
             "must_change_password": True,
         },
-        "Contraseña temporal enviada a tu correo. Revisa bandeja de entrada y correo no deseado. "
-        "Ingresa con esa clave; el sistema te pedirá cambiarla.",
+        success_msg,
     )
 
 

@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-06-01-recovery-sandbox-inbox-fix"
+API_BUILD_ID = "2026-06-01-email-deliverability-v2"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -695,12 +695,15 @@ def health_deep():
 def health_email():
     """Diagnóstico del sistema de correo transaccional (no envía correos)."""
     from app.services.email_delivery import prepare_mail_transport
+    from app.services.email_delivery_log import delivery_stats, recent_entries
+    from app.services.email_sandbox import resend_sandbox_inbox, resend_sandbox_inbox_candidates
     from app.services.email_transport import email_delivery_ready, render_smtp_blocked
     from app.services.mailer import panel_url
 
     refresh_smtp_settings()
     transport_ready = prepare_mail_transport()
     blocked = settings.is_production and render_smtp_blocked()
+    sandbox = settings.resend_sandbox
     return ok_response(
         {
             "build_id": API_BUILD_ID,
@@ -708,24 +711,45 @@ def health_email():
             "transport_ready": transport_ready,
             "email_provider": settings.email_provider,
             "resend_ready": settings.resend_send_ready,
-            "resend_sandbox": settings.resend_sandbox,
+            "resend_sandbox": sandbox,
+            "resend_sandbox_inbox": resend_sandbox_inbox(),
+            "resend_sandbox_inbox_candidates": resend_sandbox_inbox_candidates(),
+            "resend_from_email": (settings.resend_from_email or settings.smtp_from_email or None),
+            "production_delivery_mode": (
+                "sandbox_testing"
+                if sandbox
+                else "domain_verified" if settings.resend_send_ready else "smtp_or_brevo"
+            ),
             "brevo_ready": settings.brevo_send_ready,
             "smtp_send_ready": settings.smtp_send_ready,
             "smtp_blocked_on_host": blocked,
             "public_panel_url": panel_url(),
+            "delivery_stats": delivery_stats(),
+            "recent_deliveries": recent_entries(15),
             "flows": {
-                "appointment_notifications": "notify_* → dispatch_notification_email (citas crear/actualizar/cancelar)",
+                "appointment_notifications": "publish_appointment_notification → send_appointment_notification_email",
                 "appointment_reminder_24h": "reminder_scheduler → notify_appointment_reminder_24h",
-                "password_recovery": "contraseña temporal en correo (no magic link)",
-                "provider_suspend": "dispatch_provider_account_notice action=suspended",
+                "password_recovery": "forgot-password → send_recovery_password_email",
+                "provider_suspend": "dispatch_provider_account_notice",
                 "welcome": "dispatch_welcome_provider / dispatch_welcome_staff",
-                "security_alerts": "security_email (bloqueo, clave, correo, IP nueva)",
+                "security_alerts": "security_email",
+            },
+            "dns_checklist": {
+                "spf": "Registro TXT en DNS del dominio (Resend/Brevo lo indican al verificar dominio)",
+                "dkim": "CNAME/TXT DKIM en DNS (proveedor transaccional)",
+                "dmarc": "TXT _dmarc.ferragro.com (recomendado p=none luego quarantine)",
+                "return_path": "Configurado por Resend al verificar dominio",
             },
             "deliverability_note": (
-                "Para Gmail/Outlook/Yahoo/iCloud/Proton: verifica dominio en Resend o Brevo "
-                "(SPF/DKIM/DMARC los gestiona el proveedor). RESEND_SANDBOX solo entrega al correo de la cuenta Resend."
-                if settings.resend_sandbox
-                else None
+                "MODO PRUEBA: solo llega a inboxes listados en resend_sandbox_inbox_candidates. "
+                "Para Gmail/Outlook/Yahoo corporativos: RESEND_SANDBOX=false y dominio ferragro.com verificado en Resend."
+                if sandbox
+                else (
+                    "Modo producción: envío a cualquier proveedor vía dominio verificado. "
+                    "Confirma SPF/DKIM/DMARC en resend.com/domains."
+                    if settings.resend_send_ready
+                    else None
+                )
             ),
         },
         "Diagnóstico de correo",
