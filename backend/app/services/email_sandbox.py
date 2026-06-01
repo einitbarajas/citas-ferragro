@@ -6,13 +6,12 @@ from app.services.email_utils import normalize_email
 
 
 def resend_sandbox_inbox() -> str | None:
+    """Inbox verificado en Resend (no usar SMTP_USER: suele ser Gmail y falla en sandbox)."""
     if not settings.resend_sandbox or not settings.resend_send_ready:
         return None
     for candidate in (
         settings.resend_sandbox_inbox,
         settings.admin_bootstrap_email,
-        settings.smtp_from_email,
-        settings.smtp_user,
     ):
         inbox = normalize_email(str(candidate or "").strip())
         if inbox:

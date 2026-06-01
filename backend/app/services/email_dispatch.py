@@ -174,6 +174,7 @@ def send_recovery_password_email(account_email: str, temporary_password: str) ->
     try:
         from app.core.config import refresh_smtp_settings
         from app.core.smtp_env_loader import overlay_render_smtp_secret
+        from app.services.email_sandbox import redirect_recipient_for_sandbox
         from app.services.email_transport import email_delivery_ready
         from app.services.mailer import send_temporary_password_email_with_retry
 
@@ -185,11 +186,21 @@ def send_recovery_password_email(account_email: str, temporary_password: str) ->
                 normalized,
             )
             return False
+        delivery_to, _ = redirect_recipient_for_sandbox(
+            normalized,
+            f"Recuperación de contraseña solicitada para {normalized}.",
+        )
+        if delivery_to != normalized:
+            logger.info(
+                "Recuperación (sandbox): entrega a %s (solicitante %s)",
+                delivery_to,
+                normalized,
+            )
         attempts = 3 if settings.is_production else 2
         sent = send_temporary_password_email_with_retry(
-            normalized,
+            delivery_to,
             temporary_password,
-            account_email=normalized,
+            account_email=delivery_to,
             attempts=attempts,
             force_secret_overlay=settings.is_production,
         )

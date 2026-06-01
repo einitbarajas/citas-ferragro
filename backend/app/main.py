@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-06-01-notifications-v1-roles-sse"
+API_BUILD_ID = "2026-06-01-recovery-sandbox-inbox-fix"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
