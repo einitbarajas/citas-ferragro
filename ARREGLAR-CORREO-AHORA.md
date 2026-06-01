@@ -1,75 +1,36 @@
-# Correo / SMTP en producción
+# Correo en producción
 
-## Diagnóstico rápido
+## ¿Funciona ahora?
 
-Abre: https://ferragro-api.onrender.com/health
+**NO** en https://ferragro-api.onrender.com hasta que subas Resend a Render.
 
-| Campo | Qué significa |
-|--------|----------------|
-| `email_enabled: false` | **No se envían correos** (citas, recuperar contraseña, etc.) |
-| `email_provider: "smtp"` + `resend_ready: false` | Render intenta Gmail y **falla** (plan free bloquea puerto 587) |
-| `email_provider: "resend"` + `resend_ready: true` | Correo operativo por HTTPS |
+Comprueba: https://ferragro-api.onrender.com/health → debe decir `resend_ready: true`.
 
-Diagnóstico completo: https://ferragro-api.onrender.com/health/deep  
-(`smtp_login_ok: false` en Render free = normal sin Resend)
+La API key de Resend en tu `.env` **sí funciona** (envío de prueba OK). Falta copiarla al servidor.
 
-## Por qué ves notificaciones en el panel pero no en el correo
+## Activar en 1 comando (2 minutos)
 
-Las notificaciones **in-app** se guardan en la base de datos.  
-Los **correos** salen por otro canal (SMTP o Resend). En Render free el SMTP de Gmail **no funciona**; hace falta **Resend** o **Brevo**.
+1. Crea una API key en [Render → API Keys](https://dashboard.render.com/u/settings#api-keys) (`rnd_...`).
 
-## Activar en 1 comando
-
-1. En `.env` añade: `RENDER_API_KEY=rnd_...` (Render → Account → API Keys)
-2. Tu `smtp-render.env` ya debe tener `RESEND_API_KEY=re_...`
+2. Ejecuta (sustituye la key):
 
 ```powershell
-.\scripts\subir-resend-render.ps1
+.\scripts\hacer-correo-funcionar.ps1 -RenderApiKey "rnd_TU_KEY_AQUI"
 ```
 
-O:
+3. Cuando termine, abre `/health` y prueba **Olvidé mi contraseña** en https://citas.ferragro.vercel.app
 
-```powershell
-.\scripts\activar-correo-render.ps1 -ResendKey "re_..." -RenderApiKey "rnd_..."
-```
+## Manual (sin script)
 
-3. Tras el deploy, `/health` debe mostrar:
-   - `email_enabled: true`
-   - `email_provider: "resend"`
-   - `resend_ready: true`
+Render → **ferragro-api** → **Environment** → pega el contenido de `smtp-render.env` (generado por el script) → **Save** → **Manual Deploy**.
 
-## Manual (sin API key de Render)
-
-1. Render → **ferragro-api** → **Environment** (o Secret File `smtp.env`)
-2. Añade (desde tu `smtp-render.env`):
+Variables mínimas:
 
 ```env
-RESEND_API_KEY=re_tu_clave
+RESEND_API_KEY=re_...
 RESEND_SANDBOX=true
 ```
 
-3. **Save** → **Manual Deploy**
+## Sandbox Resend
 
-## Importante: modo sandbox de Resend
-
-Con `RESEND_SANDBOX=true` solo llegan correos al **mismo Gmail con el que creaste la cuenta Resend**.  
-Si el proveedor usa otro correo, no recibirá nada hasta que:
-
-- verifiques un dominio en [resend.com](https://resend.com) y pongas `RESEND_SANDBOX=false`, o  
-- uses **Brevo** (`BREVO_API_KEY`), o  
-- subas Render a plan **Starter** y uses Gmail SMTP.
-
-## Comprobar
-
-1. `/health` → `email_enabled: true`
-2. Crear una cita como proveedor (correo del proveedor = cuenta Resend si estás en sandbox)
-3. O **Olvidé mi contraseña** en https://citas.ferragro.vercel.app
-
-## Resumen
-
-| Dónde | Gmail SMTP |
-|--------|------------|
-| Tu PC (local) | Sí |
-| Render plan **free** | No (bloquean 587) |
-| Render free + **Resend** | Sí (HTTPS) |
-| Render plan **Starter** | Sí |
+Con `RESEND_SANDBOX=true` los correos solo llegan al **Gmail de tu cuenta Resend** (normalmente el mismo que usas en el proyecto). Para cualquier otro correo, verifica dominio en resend.com.

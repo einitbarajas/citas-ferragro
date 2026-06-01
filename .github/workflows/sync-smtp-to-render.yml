@@ -4,10 +4,17 @@
 #   SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
 #   SMTP_PORT, SMTP_FROM_NAME, SMTP_USE_TLS (opcionales)
 #   RENDER_DEPLOY_HOOK (opcional, recomendado)
+#   RESEND_API_KEY, RESEND_SANDBOX (obligatorios en Render free)
 name: Sync SMTP to Render
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-smtp-to-render.yml'
+      - 'backend/app/services/**mailer**'
+      - 'backend/app/services/email_**'
 
 env:
   RENDER_SERVICE_ID: srv-d82dvanaqgkc739362u0
@@ -31,10 +38,11 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: |
           set -euo pipefail
           missing=""
-          for name in RENDER_API_KEY SMTP_HOST SMTP_USER SMTP_PASSWORD SMTP_FROM_EMAIL; do
+          for name in RENDER_API_KEY SMTP_HOST SMTP_USER SMTP_PASSWORD SMTP_FROM_EMAIL RESEND_API_KEY; do
             eval "val=\${$name:-}"
             if [ -z "$val" ]; then
               missing="$missing $name"
@@ -57,9 +65,12 @@ jobs:
           SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
           SMTP_FROM_NAME: ${{ secrets.SMTP_FROM_NAME }}
           SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_SANDBOX: ${{ secrets.RESEND_SANDBOX }}
         run: |
           set -euo pipefail
           SERVICE_ID="${RENDER_SERVICE_ID:-srv-d82dvanaqgkc739362u0}"
+          RESEND_SANDBOX_VAL="${RESEND_SANDBOX:-true}"
           PORT="${SMTP_PORT:-587}"
           FROM_NAME="${SMTP_FROM_NAME:-Ferragro}"
           USE_TLS="${SMTP_USE_TLS:-true}"
@@ -79,7 +90,9 @@ jobs:
             "SMTP_FROM_EMAIL=${FROM_EMAIL}" \
             "SMTP_FROM_NAME=${FROM_NAME}" \
             "SMTP_USE_TLS=${USE_TLS}" \
-            "SMTP_USE_SSL=false"
+            "SMTP_USE_SSL=false" \
+            "RESEND_API_KEY=${RESEND_API_KEY}" \
+            "RESEND_SANDBOX=${RESEND_SANDBOX_VAL}"
           do
             KEY="${pair%%=*}"
             VAL="${pair#*=}"
@@ -108,10 +121,13 @@ jobs:
           SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
           SMTP_FROM_NAME: ${{ secrets.SMTP_FROM_NAME }}
           SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_SANDBOX: ${{ secrets.RESEND_SANDBOX }}
         run: |
           set -euo pipefail
           SERVICE_ID="${RENDER_SERVICE_ID:-srv-d82dvanaqgkc739362u0}"
           FROM_EMAIL="${SMTP_FROM_EMAIL}"
+          RESEND_SANDBOX_VAL="${RESEND_SANDBOX:-true}"
           USER="${SMTP_USER}"
           if [ "$(echo "$FROM_EMAIL" | tr '[:upper:]' '[:lower:]')" != "$(echo "$USER" | tr '[:upper:]' '[:lower:]')" ]; then
             FROM_EMAIL="$USER"
@@ -120,6 +136,7 @@ jobs:
           BODY=$(SMTP_HOST="$SMTP_HOST" SMTP_PORT="${SMTP_PORT:-587}" SMTP_USER="$USER" \
             SMTP_PASSWORD="$PASS" SMTP_FROM_EMAIL="$FROM_EMAIL" \
             SMTP_FROM_NAME="${SMTP_FROM_NAME:-Ferragro}" SMTP_USE_TLS="${SMTP_USE_TLS:-true}" \
+            RESEND_API_KEY="${RESEND_API_KEY}" RESEND_SANDBOX="${RESEND_SANDBOX_VAL}" \
             python3 <<'PY'
           import json, os
           lines = [
@@ -132,6 +149,8 @@ jobs:
               f"SMTP_FROM_NAME={os.environ.get('SMTP_FROM_NAME', 'Ferragro')}",
               "SMTP_USE_SSL=false",
               f"SMTP_USE_TLS={os.environ.get('SMTP_USE_TLS', 'true')}",
+              f"RESEND_API_KEY={os.environ['RESEND_API_KEY']}",
+              f"RESEND_SANDBOX={os.environ.get('RESEND_SANDBOX', 'true')}",
           ]
           content = "\n".join(lines)
           print(json.dumps({"name": "smtp.env", "content": content}))
@@ -185,6 +204,10 @@ jobs:
             DEEP=$(curl -fsS --max-time 120 "${API}/health/deep" || echo "{}")
             LOGIN=$(echo "$DEEP" | grep -o '"smtp_login_ok":[^,}]*' | head -1)
             echo "intento $i: build_id=${BUILD_ID:-?} $LOGIN"
+            if echo "$HEALTH" | grep -q '"resend_ready":true'; then
+              echo "Producción lista: resend_ready=true build_id=${BUILD_ID:-?}"
+              exit 0
+            fi
             if [ "$BUILD_ID" = "$EXPECTED" ] && echo "$DEEP" | grep -q '"smtp_login_ok":true'; then
               echo "Producción lista: build_id=$EXPECTED y smtp_login_ok=true"
               exit 0

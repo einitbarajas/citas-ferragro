@@ -46,6 +46,10 @@ $secrets = @{
     SMTP_USE_TLS     = if ($map["SMTP_USE_TLS"]) { $map["SMTP_USE_TLS"] } else { "true" }
 }
 if ($map["RENDER_DEPLOY_HOOK"]) { $secrets["RENDER_DEPLOY_HOOK"] = $map["RENDER_DEPLOY_HOOK"] }
+if ($map["RESEND_API_KEY"]) {
+    $secrets["RESEND_API_KEY"] = $map["RESEND_API_KEY"].Trim()
+    $secrets["RESEND_SANDBOX"] = if ($map["RESEND_SANDBOX"]) { $map["RESEND_SANDBOX"] } else { "true" }
+}
 
 foreach ($entry in $secrets.GetEnumerator()) {
     $entry.Value | gh secret set $entry.Key
