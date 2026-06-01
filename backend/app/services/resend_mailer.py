@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 
 from app.core.config import settings
+from app.services.email_sandbox import redirect_recipient_for_sandbox, resend_sandbox_inbox
 from app.services.email_utils import is_deliverable_email, normalize_email
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,8 @@ def send_resend_email(
     plain_body: str,
     html_body: str,
     email_kind: str | None = None,
+    *,
+    _sandbox_retry: bool = True,
 ) -> bool:
     delivery = normalize_email(to_email)
     if not delivery or not is_deliverable_email(delivery):
@@ -33,6 +36,15 @@ def send_resend_email(
         return False
     if not resend_configured():
         return False
+
+    original_to = delivery
+    delivery, plain_body = redirect_recipient_for_sandbox(delivery, plain_body)
+    if delivery != original_to:
+        html_body = (
+            f'<p style="margin:0 0 12px;color:#666;font-size:13px;">'
+            f"Destinatario original: {original_to}</p>"
+            + html_body
+        )
 
     if settings.resend_sandbox:
         from_header = f"{settings.smtp_from_name} <onboarding@resend.dev>"
@@ -75,10 +87,32 @@ def send_resend_email(
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")[:500]
         logger.error("Resend HTTP %s para %s: %s", exc.code, delivery, body)
-        if settings.resend_sandbox and exc.code in (403, 422):
+        if (
+            _sandbox_retry
+            and settings.resend_sandbox
+            and exc.code in (403, 422)
+        ):
+            inbox = resend_sandbox_inbox()
+            if inbox and delivery.lower() != inbox.lower():
+                logger.warning(
+                    "Resend sandbox: reintento de %s -> %s (kind=%s)",
+                    delivery,
+                    inbox,
+                    email_kind,
+                )
+                return send_resend_email(
+                    to_email=inbox,
+                    subject=subject,
+                    plain_body=(
+                        f"[Reintento sandbox — no se pudo entregar a {original_to}]\n\n{plain_body}"
+                    ),
+                    html_body=html_body,
+                    email_kind=email_kind,
+                    _sandbox_retry=False,
+                )
             logger.error(
-                "Resend sandbox (onboarding@resend.dev) solo entrega al correo de la cuenta Resend. "
-                "Para otros destinatarios verifica dominio en resend.com o usa Brevo/Render Starter."
+                "Resend sandbox solo entrega al inbox de la cuenta. "
+                "Define RESEND_SANDBOX_INBOX en Render."
             )
         return False
     except Exception:

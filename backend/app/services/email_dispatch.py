@@ -4,6 +4,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from app.core.config import settings
+from app.services.email_sandbox import resend_sandbox_inbox
 from app.services.email_utils import dedupe_emails, is_deliverable_email, normalize_email
 from app.services.mailer import (
     send_internal_welcome_email,
@@ -46,42 +47,51 @@ def _run_in_email_pool(fn, *args, **kwargs) -> None:
     _email_executor.submit(fn, *args, **kwargs)
 
 
-def _resend_sandbox_inbox() -> str | None:
-    """Resend sandbox solo entrega al correo de la cuenta; consolidamos avisos ahí."""
-    if not settings.resend_sandbox or not settings.resend_send_ready:
-        return None
-    for candidate in (
-        settings.resend_sandbox_inbox,
-        settings.admin_bootstrap_email,
-        settings.smtp_from_email,
-        settings.smtp_user,
-    ):
-        inbox = normalize_email(str(candidate or "").strip())
-        if inbox:
-            return inbox
-    return None
+def send_appointment_notification_email(to_email: str, title: str, message: str) -> bool:
+    """
+    Mismo pipeline que recuperación de contraseña: overlay, refresh, Resend, reintentos.
+    Devuelve True si Resend/SMTP confirmó el envío.
+    """
+    normalized = _normalize_recipient(to_email)
+    if not normalized:
+        logger.warning("Aviso cita omitido (correo inválido): %r | %s", to_email, title)
+        return False
+    try:
+        from app.core.config import refresh_smtp_settings
+        from app.core.smtp_env_loader import overlay_render_smtp_secret
+        from app.services.email_sandbox import redirect_recipient_for_sandbox
+        from app.services.email_transport import email_delivery_ready
+
+        overlay_render_smtp_secret()
+        refresh_smtp_settings()
+        if not email_delivery_ready() and not settings.smtp_send_ready:
+            logger.error(
+                "Transporte no listo; aviso de cita no enviado | %s | %s",
+                normalized,
+                title,
+            )
+            return False
+
+        delivery, body = redirect_recipient_for_sandbox(normalized, message)
+        attempts = 3 if settings.is_production else 2
+        sent = send_notification_email_with_retry(
+            delivery,
+            title,
+            body,
+            max_attempts=attempts,
+        )
+        if sent:
+            logger.info("Aviso de cita enviado a=%s asunto=%r", delivery, title)
+        else:
+            logger.error("Aviso de cita NO enviado a=%s asunto=%r", delivery, title)
+        return sent
+    except Exception:
+        logger.exception("Error al enviar aviso de cita a %s | %s", normalized, title)
+        return False
 
 
 def _send_notification_email_blocking(to_email: str, title: str, message: str) -> None:
-    try:
-        from app.core.smtp_env_loader import overlay_render_smtp_secret
-
-        if settings.is_production:
-            overlay_render_smtp_secret()
-        if not _prepare_smtp_for_send():
-            logger.warning("SMTP no listo; aviso no enviado a %s | %s", to_email, title)
-            return
-        attempts = 3 if settings.is_production else 2
-        if not send_notification_email_with_retry(
-            to_email,
-            title,
-            message,
-            max_attempts=attempts,
-            force_secret_overlay=settings.is_production,
-        ):
-            logger.warning("Correo de aviso no enviado a %s | %s", to_email, title)
-    except Exception:
-        logger.exception("Error al enviar aviso a %s | %s", to_email, title)
+    send_appointment_notification_email(to_email, title, message)
 
 
 def dispatch_notification_emails_batch(
@@ -95,10 +105,10 @@ def dispatch_notification_emails_batch(
     if not recipients:
         logger.warning("Aviso sin destinatarios | %s", title)
         return
-    sandbox_inbox = _resend_sandbox_inbox()
+    sandbox_inbox = resend_sandbox_inbox()
     if sandbox_inbox:
         body = (
-            f"[Modo prueba Resend — este aviso iba a: {', '.join(recipients)}]\n\n{message}"
+            f"[Modo prueba Resend — destinatarios: {', '.join(recipients)}]\n\n{message}"
         )
         logger.info(
             "Sandbox: aviso '%s' consolidado a %s (%d destinatario(s))",
@@ -106,10 +116,10 @@ def dispatch_notification_emails_batch(
             sandbox_inbox,
             len(recipients),
         )
-        dispatch_notification_email(sandbox_inbox, title, body)
+        send_appointment_notification_email(sandbox_inbox, title, body)
         return
     for to_email in recipients:
-        dispatch_notification_email(to_email, title, message)
+        send_appointment_notification_email(to_email, title, message)
 
 
 def _send_welcome_provider_blocking(to_email: str, recipient_name: str) -> None:

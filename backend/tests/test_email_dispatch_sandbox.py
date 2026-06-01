@@ -17,7 +17,7 @@ def test_sandbox_consolidates_recipients(monkeypatch):
     def capture(to_email: str, title: str, message: str) -> None:
         sent.append((to_email, title, message))
 
-    monkeypatch.setattr(dispatch, "dispatch_notification_email", capture)
+    monkeypatch.setattr(dispatch, "send_appointment_notification_email", capture)
     dispatch.dispatch_notification_emails_batch(
         ["log@ferragro.com", "proveedor@test.com"],
         title="Cita #1 pendiente",

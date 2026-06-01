@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     # true = usa onboarding@resend.dev (solo pruebas; destinatario = cuenta Resend).
     resend_sandbox: bool = False
     # Con sandbox: los avisos de citas se envían a este inbox (vacío = admin_bootstrap_email).
-    resend_sandbox_inbox: str = ""
+    resend_sandbox_inbox: str = "ebarajas@ferragro.com"
     # Brevo/Sendinblue HTTPS (alternativa; verifica remitente por correo, sin dominio propio).
     brevo_api_key: str = ""
     # Solo para emergencias: POST /auth/maintenance/reset-admin-password con header X-Maintenance-Token.
