@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-05-29-smtp-email-v3"
+API_BUILD_ID = "2026-06-01-email-delivery-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -649,6 +649,45 @@ def health_deep():
             "admin_email": admin_email,
         },
         "Diagnóstico profundo",
+    )
+
+
+@app.get("/health/email")
+def health_email():
+    """Diagnóstico del sistema de correo transaccional (no envía correos)."""
+    from app.services.email_delivery import prepare_mail_transport
+    from app.services.email_transport import email_delivery_ready, render_smtp_blocked
+    from app.services.mailer import panel_url
+
+    refresh_smtp_settings()
+    transport_ready = prepare_mail_transport()
+    blocked = settings.is_production and render_smtp_blocked()
+    return ok_response(
+        {
+            "build_id": API_BUILD_ID,
+            "can_deliver": email_delivery_ready(),
+            "transport_ready": transport_ready,
+            "email_provider": settings.email_provider,
+            "resend_ready": settings.resend_send_ready,
+            "resend_sandbox": settings.resend_sandbox,
+            "brevo_ready": settings.brevo_send_ready,
+            "smtp_send_ready": settings.smtp_send_ready,
+            "smtp_blocked_on_host": blocked,
+            "public_panel_url": panel_url(),
+            "flows": {
+                "appointment_notifications": "notify_* → dispatch_notification_email (citas crear/actualizar/cancelar)",
+                "password_recovery": "contraseña temporal en correo (no magic link)",
+                "provider_suspend": "dispatch_provider_account_notice action=suspended",
+                "welcome": "dispatch_welcome_provider / dispatch_welcome_staff",
+            },
+            "deliverability_note": (
+                "Para Gmail/Outlook/Yahoo/iCloud/Proton: verifica dominio en Resend o Brevo "
+                "(SPF/DKIM/DMARC los gestiona el proveedor). RESEND_SANDBOX solo entrega al correo de la cuenta Resend."
+                if settings.resend_sandbox
+                else None
+            ),
+        },
+        "Diagnóstico de correo",
     )
 
 

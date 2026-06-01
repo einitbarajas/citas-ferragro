@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.services.email_utils import dedupe_emails, is_deliverable_email, normalize_email
 from app.services.mailer import (
     send_internal_welcome_email,
-    send_notification_email,
+    send_notification_email_with_retry,
     send_welcome_email,
 )
 
@@ -32,29 +32,9 @@ atexit.register(shutdown_email_executor)
 
 
 def _prepare_smtp_for_send() -> bool:
-    """SMTP (local/paid Render) o Resend/Brevo (HTTPS en Render free)."""
-    from app.core.config import refresh_smtp_settings
-    from app.core.smtp_env_loader import overlay_render_smtp_secret
-    from app.services.email_transport import email_delivery_ready, render_smtp_blocked
-    from app.services.smtp_resolver import ensure_smtp_login_ready
+    from app.services.email_delivery import prepare_mail_transport
 
-    overlay_render_smtp_secret()
-    refresh_smtp_settings()
-    if settings.brevo_send_ready or settings.resend_send_ready:
-        return True
-    if not settings.is_production:
-        return settings.smtp_send_ready
-    if email_delivery_ready():
-        return True
-    if render_smtp_blocked():
-        logger.error(
-            "Correo no enviado: Render bloquea Gmail SMTP. "
-            "Configura RESEND_API_KEY (y RESEND_SANDBOX=true) o BREVO_API_KEY en Render."
-        )
-        return False
-    if ensure_smtp_login_ready():
-        return True
-    return ensure_smtp_login_ready(force=True)
+    return prepare_mail_transport()
 
 
 def _run_in_email_pool(fn, *args, **kwargs) -> None:
@@ -71,8 +51,8 @@ def _send_notification_email_blocking(to_email: str, title: str, message: str) -
         if not _prepare_smtp_for_send():
             logger.warning("SMTP no listo; aviso no enviado a %s | %s", to_email, title)
             return
-        logger.info("Enviando aviso por correo a %s | %s", to_email, title)
-        if not send_notification_email(to_email, title, message):
+        attempts = 3 if settings.is_production else 2
+        if not send_notification_email_with_retry(to_email, title, message, max_attempts=attempts):
             logger.warning("Correo de aviso no enviado a %s | %s", to_email, title)
     except Exception:
         logger.exception("Error al enviar aviso a %s | %s", to_email, title)

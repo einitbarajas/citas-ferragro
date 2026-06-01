@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     refresh_cookie_secure: bool = False
     refresh_cookie_samesite: str = "lax"
     cors_origins: str = "http://localhost:2711,http://127.0.0.1:2711"
+    # URL pública del panel (enlaces en correos transaccionales).
+    public_panel_url: str = "https://citas.ferragro.vercel.app"
     # Si es true, permite orígenes http en localhost y redes privadas (192.168.x, 10.x) en cualquier puerto (Vite, etc.).
     cors_allow_private_network: bool = False
     # Hora local usada para validar que el inicio de la cita caiga en una franja permitida.

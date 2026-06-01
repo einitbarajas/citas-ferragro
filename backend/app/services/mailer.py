@@ -105,6 +105,30 @@ SUPPORT_PHONE = "+57 3142254819"
 SUPPORT_WHATSAPP_URL = "https://wa.me/573142254819"
 COMPANY_ADDRESS = "Carrera 41 #46-167, Itagui-Ant"
 COMPANY_WEBSITE = "https://www.ferragro.com"
+DEFAULT_PANEL_URL = "https://citas.ferragro.vercel.app"
+
+
+def panel_url() -> str:
+    url = (settings.public_panel_url or "").strip().rstrip("/")
+    return url or DEFAULT_PANEL_URL
+
+
+def panel_cta_plain() -> str:
+    return f"Accede al panel: {panel_url()}\n"
+
+
+def panel_cta_html(button_label: str = "Ir al panel Ferragro") -> str:
+    url = panel_url()
+    safe_label = button_label.replace("<", "&lt;").replace(">", "&gt;")
+    return f"""
+          <p style="margin:20px 0 0;text-align:center;">
+            <a href="{url}"
+               style="display:inline-block;padding:12px 22px;border-radius:8px;background:#35783C;color:#ffffff;
+                      font-weight:700;text-decoration:none;font-size:15px;">
+              {safe_label}
+            </a>
+          </p>
+"""
 _LOGO_CANDIDATES = (
     Path(__file__).resolve().parents[2] / "static" / "ferragro-blan-bord.png",
     Path(__file__).resolve().parents[3] / "frontend" / "public" / "ferragro-blan-bord.png",
@@ -324,6 +348,7 @@ def send_temporary_password_email(
         "Recibimos una solicitud para recuperar tu contraseña en Ferragro.\n\n"
         f"Tu contraseña temporal es: {temporary_password}\n\n"
         "Por seguridad, en el primer ingreso deberás cambiarla inmediatamente.\n"
+        f"{panel_cta_plain()}"
         "Si no solicitaste este cambio, contacta al equipo de soporte.\n\n"
         f"Soporte: {SUPPORT_EMAIL} | WhatsApp: {SUPPORT_PHONE}\n"
         f"Direccion: {COMPANY_ADDRESS}\n"
@@ -348,6 +373,7 @@ def send_temporary_password_email(
           <p style="margin:0;line-height:1.6;">
             Si no solicitaste este cambio, contacta al equipo de soporte.
           </p>
+          {panel_cta_html("Iniciar sesión en Ferragro")}
 """
     return send_branded_email(subject, delivery, plain_body, content_html)
 
@@ -361,28 +387,28 @@ def send_temporary_password_email_with_retry(
     force_secret_overlay: bool = False,
 ) -> bool:
     """Recuperación de contraseña: re-lee secretos y reintenta (Render + Resend/Brevo)."""
-    from app.services.email_transport import email_delivery_ready
+    if force_secret_overlay and settings.is_production:
+        from app.core.smtp_env_loader import overlay_render_smtp_secret
 
-    for attempt in range(1, max(1, attempts) + 1):
-        if settings.is_production:
-            if not _refresh_smtp_for_delivery():
-                logger.warning("Correo no listo para recuperación (intento %s)", attempt)
-                continue
-        else:
-            refresh_smtp_settings(force_secret_overlay=force_secret_overlay)
-        if not email_delivery_ready() and not settings.smtp_send_ready:
-            logger.warning("Correo no configurado para recuperación (intento %s)", attempt)
-            continue
-        try:
-            if send_temporary_password_email(
-                to_email,
-                temporary_password,
-                account_email=account_email,
-            ):
-                return True
-        except Exception:
-            logger.exception("Recuperación de contraseña intento %s falló para %s", attempt, to_email)
-    return False
+        overlay_render_smtp_secret()
+    if not settings.is_production:
+        refresh_smtp_settings(force_secret_overlay=force_secret_overlay)
+
+    from app.services.email_delivery import deliver_with_retry
+
+    delivery = str(account_email or to_email).strip()
+    result = deliver_with_retry(
+        lambda: send_temporary_password_email(
+            to_email,
+            temporary_password,
+            account_email=account_email,
+        ),
+        recipient=delivery,
+        subject="Ferragro - Contraseña temporal",
+        kind="password_recovery",
+        max_attempts=attempts,
+    )
+    return result.ok
 
 
 def send_welcome_email(to_email: str, recipient_name: str) -> bool:
@@ -391,7 +417,8 @@ def send_welcome_email(to_email: str, recipient_name: str) -> bool:
     plain_body = (
         f"Hola {display_name},\n\n"
         "Te damos la bienvenida a Ferragro.\n"
-        "Tu registro fue creado correctamente y ya puedes ingresar a la plataforma para gestionar tus citas de entrega.\n\n"
+        "Tu registro fue creado correctamente y ya puedes ingresar a la plataforma para gestionar tus citas de entrega.\n"
+        f"{panel_cta_plain()}"
         "Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.\n\n"
         f"Soporte: {SUPPORT_EMAIL} | WhatsApp: {SUPPORT_PHONE}\n"
         f"Direccion: {COMPANY_ADDRESS}\n"
@@ -404,7 +431,8 @@ def send_welcome_email(to_email: str, recipient_name: str) -> bool:
           <p style="margin:0 0 14px;line-height:1.6;">
             Tu registro fue creado correctamente y ya puedes ingresar a la plataforma para gestionar tus citas de entrega.
           </p>
-          <p style="margin:0;line-height:1.6;">
+          {panel_cta_html("Ingresar al panel")}
+          <p style="margin:14px 0 0;line-height:1.6;">
             Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.
           </p>
 """
@@ -419,7 +447,8 @@ def send_internal_welcome_email(to_email: str, recipient_name: str, role_name: s
         f"Hola {display_name},\n\n"
         "Te damos la bienvenida a Ferragro.\n"
         f"Se creó tu cuenta con rol {role_label}. Ya puedes ingresar al panel con tu correo "
-        "y la contraseña que te indicó el administrador.\n\n"
+        "y la contraseña que te indicó el administrador.\n"
+        f"{panel_cta_plain()}"
         "Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.\n\n"
         f"Soporte: {SUPPORT_EMAIL} | WhatsApp: {SUPPORT_PHONE}\n"
         f"Direccion: {COMPANY_ADDRESS}\n"
@@ -433,7 +462,8 @@ def send_internal_welcome_email(to_email: str, recipient_name: str, role_name: s
             Se creó tu cuenta con rol <strong>{role_label}</strong>. Ya puedes ingresar al panel con tu correo
             y la contraseña que te indicó el administrador.
           </p>
-          <p style="margin:0;line-height:1.6;">
+          {panel_cta_html("Ingresar al panel")}
+          <p style="margin:14px 0 0;line-height:1.6;">
             Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.
           </p>
 """
@@ -445,7 +475,7 @@ def send_notification_email(to_email: str, title: str, message: str) -> bool:
     plain_body = (
         f"{title}\n\n"
         f"{message}\n\n"
-        "Ingresa al panel de Ferragro para ver el detalle.\n\n"
+        f"{panel_cta_plain()}"
         f"Soporte: {SUPPORT_EMAIL} | WhatsApp: {SUPPORT_PHONE}\n"
         f"Direccion: {COMPANY_ADDRESS}\n"
         f"Sitio web: {COMPANY_WEBSITE}\n\n"
@@ -456,8 +486,26 @@ def send_notification_email(to_email: str, title: str, message: str) -> bool:
     content_html = f"""
           <h1 style="margin:0 0 16px;font-size:22px;color:#0f6e2f;">{safe_title}</h1>
           <p style="margin:0;line-height:1.6;">{safe_message}</p>
-          <p style="margin:18px 0 0;line-height:1.6;">
-            Ingresa al panel de Ferragro para ver el detalle.
-          </p>
+          {panel_cta_html("Ver detalle en el panel")}
 """
     return send_branded_email(subject, to_email, plain_body, content_html)
+
+
+def send_notification_email_with_retry(
+    to_email: str,
+    title: str,
+    message: str,
+    *,
+    max_attempts: int = 3,
+) -> bool:
+    from app.services.email_delivery import deliver_with_retry
+
+    subject = f"Ferragro - {title}"
+    result = deliver_with_retry(
+        lambda: send_notification_email(to_email, title, message),
+        recipient=normalize_email(to_email) or to_email,
+        subject=subject,
+        kind="notification",
+        max_attempts=max_attempts,
+    )
+    return result.ok

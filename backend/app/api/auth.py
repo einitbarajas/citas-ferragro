@@ -5,6 +5,7 @@ import string
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, EmailStr
 from jose import JWTError, jwt
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -497,16 +498,67 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     return ok_response(None, "Sesión cerrada")
 
 
+class MaintenanceTestEmailRequest(BaseModel):
+    email: EmailStr
+    template: str = "notification"  # notification | recovery | welcome
+
+
+def _verify_maintenance_token(request: Request) -> None:
+    expected = settings.maintenance_token.strip()
+    provided = request.headers.get("X-Maintenance-Token", "").strip()
+    if not expected or provided != expected:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+@router.post("/maintenance/send-test-email", include_in_schema=False)
+def maintenance_send_test_email(payload: MaintenanceTestEmailRequest, request: Request):
+    """
+    Envía un correo de prueba real (requiere MAINTENANCE_TOKEN).
+    template: notification | recovery | welcome
+    """
+    _verify_maintenance_token(request)
+    to_email = str(payload.email).strip()
+    template = (payload.template or "notification").strip().lower()
+
+    if template == "recovery":
+        from app.services.email_dispatch import send_recovery_password_email
+
+        sent = send_recovery_password_email(to_email, "Test-Temp-99")
+        kind = "password_recovery"
+    elif template == "welcome":
+        from app.services.mailer import send_welcome_email
+
+        sent = send_welcome_email(to_email, "Usuario de prueba")
+        kind = "welcome"
+    else:
+        from app.services.mailer import send_notification_email_with_retry
+
+        sent = send_notification_email_with_retry(
+            to_email,
+            "Prueba de correo Ferragro",
+            "Este es un envío de prueba del sistema transaccional. Si lo recibes, el canal está operativo.",
+            max_attempts=3,
+        )
+        kind = "notification"
+
+    if not sent:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo enviar el correo de prueba. Revisa /health/email y logs del API.",
+        )
+    return ok_response(
+        {"email": to_email, "template": kind, "provider": settings.email_provider},
+        "Correo de prueba enviado.",
+    )
+
+
 @router.post("/maintenance/reset-admin-password", include_in_schema=False)
 def maintenance_reset_admin_password(request: Request, db: Session = Depends(get_db)):
     """
     Restablece correo/clave del Admin (documento 90000001).
     Requiere MAINTENANCE_TOKEN en el servidor y header X-Maintenance-Token.
     """
-    expected = settings.maintenance_token.strip()
-    provided = request.headers.get("X-Maintenance-Token", "").strip()
-    if not expected or provided != expected:
-        raise HTTPException(status_code=404, detail="Not Found")
+    _verify_maintenance_token(request)
     try:
         email = reset_admin_password(db)
     except ValueError as exc:
