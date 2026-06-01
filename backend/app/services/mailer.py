@@ -505,7 +505,12 @@ def send_notification_email_with_retry(
     message: str,
     *,
     max_attempts: int = 3,
+    force_secret_overlay: bool = False,
 ) -> bool:
+    if force_secret_overlay and settings.is_production:
+        from app.core.smtp_env_loader import overlay_render_smtp_secret
+
+        overlay_render_smtp_secret()
     from app.services.email_delivery import deliver_with_retry
 
     subject = f"Ferragro - {title}"

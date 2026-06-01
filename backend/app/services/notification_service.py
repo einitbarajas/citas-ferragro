@@ -15,7 +15,7 @@ from app.models.user import User, UserRole
 from app.models.user_notification import UserNotification
 from app.models.user_warehouse import UserWarehouse
 from app.models.warehouse import Warehouse
-from app.services.email_dispatch import dispatch_notification_email
+from app.services.email_dispatch import dispatch_notification_emails_batch
 from app.services.email_utils import dedupe_emails
 
 logger = logging.getLogger(__name__)
@@ -116,8 +116,7 @@ def _appointment_stakeholder_emails(
 
 
 def _dispatch_notification_emails(to_emails: list[str], *, title: str, message: str) -> None:
-    for to_email in dedupe_emails(to_emails):
-        dispatch_notification_email(to_email, title, message)
+    dispatch_notification_emails_batch(to_emails, title=title, message=message)
 
 
 def _persist_staff_in_app_notifications(
@@ -182,40 +181,43 @@ def _notify_appointment_stakeholders(
         db, appointment, kind=kind, title=title, message=staff_body
     )
     staff_emails = _warehouse_staff_emails(db, int(appointment.warehouse_id))
-    if staff_emails:
-        logger.info(
-            "Aviso cita #%s (%s): correo a %d destinatario(s) staff (admin/logística/bodega)",
-            appointment.id,
-            kind,
-            len(staff_emails),
+    provider_email: str | None = None
+    if include_provider:
+        _persist_provider_in_app_notification(
+            db, appointment, kind=kind, title=title, message=provider_body
         )
-        _dispatch_notification_emails(staff_emails, title=title, message=staff_body)
-    else:
+        provider_email = _provider_credential_email(db, int(appointment.provider_id))
+        if not provider_email:
+            logger.warning(
+                "Aviso cita #%s (%s): proveedor %s sin correo en credencial",
+                appointment.id,
+                kind,
+                appointment.provider_id,
+            )
+
+    if not staff_emails:
         logger.warning(
             "Aviso cita #%s (%s): sin correos de staff para bodega %s",
             appointment.id,
             kind,
             appointment.warehouse_id,
         )
-    if include_provider:
-        _persist_provider_in_app_notification(
-            db, appointment, kind=kind, title=title, message=provider_body
-        )
-        provider_email = _provider_credential_email(db, int(appointment.provider_id))
-        if provider_email:
-            logger.info(
-                "Aviso cita #%s (%s): correo al proveedor %s",
-                appointment.id,
-                kind,
-                provider_email,
+
+    if provider_email and provider_body != staff_body:
+        if staff_emails:
+            dispatch_notification_emails_batch(
+                staff_emails, title=title, message=staff_body
             )
-            _dispatch_notification_emails([provider_email], title=title, message=provider_body)
-        else:
-            logger.warning(
-                "Aviso cita #%s (%s): proveedor %s sin correo en credencial",
-                appointment.id,
-                kind,
-                appointment.provider_id,
+        dispatch_notification_emails_batch(
+            [provider_email], title=title, message=provider_body
+        )
+    else:
+        all_emails = list(staff_emails)
+        if provider_email:
+            all_emails.append(provider_email)
+        if all_emails:
+            dispatch_notification_emails_batch(
+                all_emails, title=title, message=staff_body
             )
 
 

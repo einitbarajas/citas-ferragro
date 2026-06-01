@@ -53,7 +53,13 @@ def overlay_render_smtp_secret() -> bool:
         return False
     preserved = {
         key: os.environ[key]
-        for key in ("RESEND_API_KEY", "RESEND_SANDBOX", "RESEND_FROM_EMAIL", "BREVO_API_KEY")
+        for key in (
+            "RESEND_API_KEY",
+            "RESEND_SANDBOX",
+            "RESEND_SANDBOX_INBOX",
+            "RESEND_FROM_EMAIL",
+            "BREVO_API_KEY",
+        )
         if os.getenv(key, "").strip()
     }
     parsed = _parse_env_file(render_path)

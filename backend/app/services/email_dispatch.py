@@ -46,16 +46,70 @@ def _run_in_email_pool(fn, *args, **kwargs) -> None:
     _email_executor.submit(fn, *args, **kwargs)
 
 
+def _resend_sandbox_inbox() -> str | None:
+    """Resend sandbox solo entrega al correo de la cuenta; consolidamos avisos ahí."""
+    if not settings.resend_sandbox or not settings.resend_send_ready:
+        return None
+    for candidate in (
+        settings.resend_sandbox_inbox,
+        settings.admin_bootstrap_email,
+        settings.smtp_from_email,
+        settings.smtp_user,
+    ):
+        inbox = normalize_email(str(candidate or "").strip())
+        if inbox:
+            return inbox
+    return None
+
+
 def _send_notification_email_blocking(to_email: str, title: str, message: str) -> None:
     try:
+        from app.core.smtp_env_loader import overlay_render_smtp_secret
+
+        if settings.is_production:
+            overlay_render_smtp_secret()
         if not _prepare_smtp_for_send():
             logger.warning("SMTP no listo; aviso no enviado a %s | %s", to_email, title)
             return
         attempts = 3 if settings.is_production else 2
-        if not send_notification_email_with_retry(to_email, title, message, max_attempts=attempts):
+        if not send_notification_email_with_retry(
+            to_email,
+            title,
+            message,
+            max_attempts=attempts,
+            force_secret_overlay=settings.is_production,
+        ):
             logger.warning("Correo de aviso no enviado a %s | %s", to_email, title)
     except Exception:
         logger.exception("Error al enviar aviso a %s | %s", to_email, title)
+
+
+def dispatch_notification_emails_batch(
+    to_emails: list[str], *, title: str, message: str
+) -> None:
+    """
+    Envía el mismo aviso a varios destinatarios.
+    En Resend sandbox agrupa en un solo correo al inbox de prueba (Resend solo entrega ahí).
+    """
+    recipients = dedupe_emails(to_emails)
+    if not recipients:
+        logger.warning("Aviso sin destinatarios | %s", title)
+        return
+    sandbox_inbox = _resend_sandbox_inbox()
+    if sandbox_inbox:
+        body = (
+            f"[Modo prueba Resend — este aviso iba a: {', '.join(recipients)}]\n\n{message}"
+        )
+        logger.info(
+            "Sandbox: aviso '%s' consolidado a %s (%d destinatario(s))",
+            title,
+            sandbox_inbox,
+            len(recipients),
+        )
+        dispatch_notification_email(sandbox_inbox, title, body)
+        return
+    for to_email in recipients:
+        dispatch_notification_email(to_email, title, message)
 
 
 def _send_welcome_provider_blocking(to_email: str, recipient_name: str) -> None:
