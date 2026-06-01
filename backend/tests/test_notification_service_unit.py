@@ -5,7 +5,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.api.crud import STAFF_AUDIT_ROLES
+from app.models.provider import Provider
 from app.models.user import UserRole
+from app.models.warehouse import Warehouse
 from app.services import notification_service as svc
 
 
@@ -66,6 +68,86 @@ def test_staff_audit_roles_include_admin_bodega():
     assert UserRole.admin_bodega in STAFF_AUDIT_ROLES
     for role in (UserRole.admin, UserRole.logistica, UserRole.admin_bodega):
         assert role in STAFF_AUDIT_ROLES
+
+
+def test_notify_provider_appointment_updated_includes_schedule(monkeypatch):
+    appointment = MagicMock()
+    appointment.id = 8
+    appointment.warehouse_id = 2
+    appointment.provider_id = 9001234567
+    appointment.duration_minutes = 90
+    appointment.start_time = MagicMock()
+    appointment.start_time.astimezone.return_value.strftime.return_value = "03/06/2026 08:00"
+
+    provider = MagicMock()
+    provider.company_name = "Proveedor Test"
+    warehouse = MagicMock()
+    warehouse.name = "Bodega Sur"
+
+    def get_side_effect(model, _id):
+        if model is Provider:
+            return provider
+        if model is Warehouse:
+            return warehouse
+        return None
+
+    db = MagicMock()
+    db.get.side_effect = get_side_effect
+
+    captured: dict = {}
+
+    def fake_notify(db_arg, appt, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(svc, "_notify_appointment_stakeholders", fake_notify)
+    svc.notify_provider_appointment_updated(db, appointment, summary="La empresa actualizó fecha y hora.")
+
+    assert "03/06/2026 08:00" in captured["staff_message"]
+    assert "Proveedor Test" in captured["staff_message"]
+    assert "Bodega Sur" in captured["staff_message"]
+    assert captured["kind"] == "cita_actualizada"
+    assert "03/06/2026 08:00" in captured["provider_message"]
+
+
+def test_notify_staff_review_needed_includes_provider_and_schedule(monkeypatch):
+    appointment = MagicMock()
+    appointment.id = 9
+    appointment.status = svc.AppointmentStatus.sin_revision
+    appointment.warehouse_id = 2
+    appointment.provider_id = 9001234567
+    appointment.duration_minutes = 90
+    appointment.start_time = MagicMock()
+
+    provider = MagicMock()
+    provider.company_name = "Distribuidora ABC"
+    warehouse = MagicMock()
+    warehouse.name = "Bodega Norte"
+
+    appointment.start_time.astimezone.return_value.strftime.return_value = "05/06/2026 10:00"
+
+    def get_side_effect(model, _id):
+        if model is Provider:
+            return provider
+        if model is Warehouse:
+            return warehouse
+        return None
+
+    db = MagicMock()
+    db.get.side_effect = get_side_effect
+
+    captured: dict = {}
+
+    def fake_notify(db_arg, appt, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(svc, "_notify_appointment_stakeholders", fake_notify)
+    svc.notify_staff_review_needed(db, appointment)
+
+    assert "Distribuidora ABC" in captured["staff_message"]
+    assert "Bodega Norte" in captured["staff_message"]
+    assert "90" in captured["staff_message"]
+    assert captured["provider_message"]
+    assert "Registraste la cita" in captured["provider_message"]
 
 
 @pytest.mark.parametrize(

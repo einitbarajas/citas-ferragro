@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -13,6 +14,7 @@ from app.models.role import Role
 from app.models.user import User, UserRole
 from app.models.user_notification import UserNotification
 from app.models.user_warehouse import UserWarehouse
+from app.models.warehouse import Warehouse
 from app.services.email_dispatch import dispatch_notification_email
 from app.services.email_utils import dedupe_emails
 
@@ -25,6 +27,31 @@ INTERNAL_STAFF_ROLES = (UserRole.admin,) + WAREHOUSE_SCOPED_STAFF_ROLES
 def _format_start_local(appointment: Appointment) -> str:
     tz = ZoneInfo(settings.business_timezone)
     return appointment.start_time.astimezone(tz).strftime("%d/%m/%Y %H:%M")
+
+
+@dataclass(frozen=True)
+class _AppointmentEmailContext:
+    provider_name: str
+    warehouse_name: str
+    start_label: str
+    duration_minutes: int
+
+
+def _appointment_email_context(db: Session, appointment: Appointment) -> _AppointmentEmailContext:
+    provider = db.get(Provider, int(appointment.provider_id))
+    provider_name = (provider.company_name.strip() if provider and provider.company_name else "") or (
+        f"Proveedor NIT {appointment.provider_id}"
+    )
+    warehouse = db.get(Warehouse, int(appointment.warehouse_id))
+    warehouse_name = (warehouse.name.strip() if warehouse and warehouse.name else "") or (
+        f"Bodega #{appointment.warehouse_id}"
+    )
+    return _AppointmentEmailContext(
+        provider_name=provider_name,
+        warehouse_name=warehouse_name,
+        start_label=_format_start_local(appointment),
+        duration_minutes=int(appointment.duration_minutes or 90),
+    )
 
 
 def admin_notification_emails(db: Session) -> list[str]:
@@ -144,34 +171,79 @@ def _notify_appointment_stakeholders(
     kind: str,
     title: str,
     message: str,
+    staff_message: str | None = None,
+    provider_message: str | None = None,
     include_provider: bool = True,
 ) -> None:
     """Admin global, staff de la bodega (Logística + AdminBodega) y proveedor."""
-    _persist_staff_in_app_notifications(db, appointment, kind=kind, title=title, message=message)
-    if include_provider:
-        _persist_provider_in_app_notification(db, appointment, kind=kind, title=title, message=message)
-    _dispatch_notification_emails(
-        _appointment_stakeholder_emails(db, appointment, include_provider=include_provider),
-        title=title,
-        message=message,
+    staff_body = staff_message or message
+    provider_body = provider_message or message
+    _persist_staff_in_app_notifications(
+        db, appointment, kind=kind, title=title, message=staff_body
     )
+    staff_emails = _warehouse_staff_emails(db, int(appointment.warehouse_id))
+    if staff_emails:
+        logger.info(
+            "Aviso cita #%s (%s): correo a %d destinatario(s) staff (admin/logística/bodega)",
+            appointment.id,
+            kind,
+            len(staff_emails),
+        )
+        _dispatch_notification_emails(staff_emails, title=title, message=staff_body)
+    else:
+        logger.warning(
+            "Aviso cita #%s (%s): sin correos de staff para bodega %s",
+            appointment.id,
+            kind,
+            appointment.warehouse_id,
+        )
+    if include_provider:
+        _persist_provider_in_app_notification(
+            db, appointment, kind=kind, title=title, message=provider_body
+        )
+        provider_email = _provider_credential_email(db, int(appointment.provider_id))
+        if provider_email:
+            logger.info(
+                "Aviso cita #%s (%s): correo al proveedor %s",
+                appointment.id,
+                kind,
+                provider_email,
+            )
+            _dispatch_notification_emails([provider_email], title=title, message=provider_body)
+        else:
+            logger.warning(
+                "Aviso cita #%s (%s): proveedor %s sin correo en credencial",
+                appointment.id,
+                kind,
+                appointment.provider_id,
+            )
 
 
 def notify_staff_review_needed(db: Session, appointment: Appointment) -> None:
     if appointment.status != AppointmentStatus.sin_revision:
         return
-    start_label = _format_start_local(appointment)
+    ctx = _appointment_email_context(db, appointment)
     title = f"Cita #{appointment.id} pendiente de revisión"
-    message = (
-        f"Hay una cita nueva o actualizada para revisar. Inicio: {start_label}. "
+    staff_message = (
+        f"El proveedor {ctx.provider_name} agendó una cita nueva para revisar.\n"
+        f"Horario: {ctx.start_label} (duración {ctx.duration_minutes} min).\n"
+        f"Bodega: {ctx.warehouse_name}.\n"
         "Entra a Revisión de citas o Buscar citas para atenderla."
+    )
+    provider_message = (
+        f"Registraste la cita #{appointment.id} en Ferragro; queda pendiente de revisión.\n"
+        f"Horario: {ctx.start_label} (duración {ctx.duration_minutes} min).\n"
+        f"Bodega: {ctx.warehouse_name}.\n"
+        "Te avisaremos por correo cuando sea confirmada o si requiere cambios."
     )
     _notify_appointment_stakeholders(
         db,
         appointment,
         kind="cita_para_revisar",
         title=title,
-        message=message,
+        message=staff_message,
+        staff_message=staff_message,
+        provider_message=provider_message,
         include_provider=True,
     )
 
@@ -182,10 +254,20 @@ def notify_provider_appointment_updated(
     *,
     summary: str,
 ) -> None:
-    start_label = _format_start_local(appointment)
+    """Aviso por correo e in-app cuando staff o el sistema actualiza una cita."""
+    ctx = _appointment_email_context(db, appointment)
     title = f"Cita #{appointment.id} fue actualizada"
-    message = (
-        f"{summary} Inicio actual: {start_label}. "
+    staff_message = (
+        f"{summary.strip()}\n"
+        f"Proveedor: {ctx.provider_name}.\n"
+        f"Horario actual: {ctx.start_label} (duración {ctx.duration_minutes} min).\n"
+        f"Bodega: {ctx.warehouse_name}.\n"
+        "Revisa Revisión de citas o Buscar citas en el panel."
+    )
+    provider_message = (
+        f"{summary.strip()}\n"
+        f"Horario actual: {ctx.start_label} (duración {ctx.duration_minutes} min).\n"
+        f"Bodega: {ctx.warehouse_name}.\n"
         "Revisa el panel de Ferragro para ver el detalle."
     )
     _notify_appointment_stakeholders(
@@ -193,7 +275,9 @@ def notify_provider_appointment_updated(
         appointment,
         kind="cita_actualizada",
         title=title,
-        message=message,
+        message=staff_message,
+        staff_message=staff_message,
+        provider_message=provider_message,
         include_provider=True,
     )
 
@@ -275,6 +359,24 @@ def notify_warehouse_schedule_updated(
     emails = _warehouse_staff_emails(db, warehouse_id)
     logger.info("Aviso de franjas horarias: %d destinatario(s)", len(emails))
     _dispatch_notification_emails(emails, title=title, message=message)
+
+
+def notify_appointment_reminder_24h(db: Session, appointment: Appointment) -> None:
+    """Recordatorio por correo ~24 h antes del inicio de la cita."""
+    start_label = _format_start_local(appointment)
+    title = f"Recordatorio: cita #{appointment.id} en 24 horas"
+    message = (
+        f"Tu cita en Ferragro está programada para {start_label}. "
+        "Revisa el panel para confirmar horario, bodega y detalles de entrega."
+    )
+    _notify_appointment_stakeholders(
+        db,
+        appointment,
+        kind="recordatorio_proximo",
+        title=title,
+        message=message,
+        include_provider=True,
+    )
 
 
 def notify_staff_no_presentada_auto(db: Session, appointment: Appointment) -> None:
