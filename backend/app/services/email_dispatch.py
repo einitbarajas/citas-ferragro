@@ -32,17 +32,26 @@ atexit.register(shutdown_email_executor)
 
 
 def _prepare_smtp_for_send() -> bool:
-    """SMTP (local/paid Render) o Resend (HTTPS en Render free)."""
-    if settings.brevo_send_ready or settings.resend_send_ready:
-        return True
-    if not settings.is_production:
-        return settings.smtp_send_ready
+    """SMTP (local/paid Render) o Resend/Brevo (HTTPS en Render free)."""
     from app.core.config import refresh_smtp_settings
     from app.core.smtp_env_loader import overlay_render_smtp_secret
+    from app.services.email_transport import email_delivery_ready, render_smtp_blocked
     from app.services.smtp_resolver import ensure_smtp_login_ready
 
     overlay_render_smtp_secret()
     refresh_smtp_settings()
+    if settings.brevo_send_ready or settings.resend_send_ready:
+        return True
+    if not settings.is_production:
+        return settings.smtp_send_ready
+    if email_delivery_ready():
+        return True
+    if render_smtp_blocked():
+        logger.error(
+            "Correo no enviado: Render bloquea Gmail SMTP. "
+            "Configura RESEND_API_KEY (y RESEND_SANDBOX=true) o BREVO_API_KEY en Render."
+        )
+        return False
     if ensure_smtp_login_ready():
         return True
     return ensure_smtp_login_ready(force=True)

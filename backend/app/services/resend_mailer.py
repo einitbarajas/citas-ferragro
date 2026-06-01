@@ -72,6 +72,11 @@ def send_resend_email(
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")[:500]
         logger.error("Resend HTTP %s para %s: %s", exc.code, delivery, body)
+        if settings.resend_sandbox and exc.code in (403, 422):
+            logger.error(
+                "Resend sandbox (onboarding@resend.dev) solo entrega al correo de la cuenta Resend. "
+                "Para otros destinatarios verifica dominio en resend.com o usa Brevo/Render Starter."
+            )
         return False
     except Exception:
         logger.exception("Resend falló para %s", delivery)

@@ -554,21 +554,27 @@ def root():
 def health():
     # Respuesta rápida para health check de Render (sin BD ni SMTP en cada ping).
     refresh_smtp_settings()
+    from app.services.email_transport import email_delivery_ready, render_smtp_blocked
+
+    smtp_blocked = settings.is_production and render_smtp_blocked()
+    can_deliver = email_delivery_ready()
     return ok_response(
         {
             "status": "ok",
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
-            "email_enabled": settings.email_send_ready,
+            "email_enabled": can_deliver,
+            "email_configured": settings.email_send_ready,
             "email_provider": settings.email_provider,
             "resend_ready": settings.resend_send_ready,
             "resend_sandbox": settings.resend_sandbox,
             "brevo_ready": settings.brevo_send_ready,
             "smtp_send_ready": settings.smtp_send_ready,
+            "smtp_blocked_on_host": smtp_blocked if settings.is_production else None,
             "smtp_host": settings.smtp_host or None,
             "render_smtp_blocked_hint": (
                 "Render free bloquea SMTP; configura RESEND_API_KEY (y RESEND_SANDBOX=true) o BREVO_API_KEY."
-                if settings.is_production and not settings.brevo_send_ready and not settings.resend_send_ready
+                if settings.is_production and smtp_blocked and not can_deliver
                 else None
             ),
             "smtp_diag": {
@@ -605,6 +611,7 @@ def health_deep():
     except Exception:
         logger.exception("health/deep: fallo de BD")
     from app.core.smtp_env_loader import overlay_render_smtp_secret
+    from app.services.email_transport import email_delivery_ready
 
     overlay_render_smtp_secret()
     smtp_ok = refresh_smtp_settings()
@@ -631,7 +638,8 @@ def health_deep():
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
             "database_ok": db_ok,
-            "email_enabled": settings.email_send_ready,
+            "email_enabled": email_delivery_ready(),
+            "email_configured": settings.email_send_ready,
             "email_provider": settings.email_provider,
             "resend_ready": settings.resend_send_ready,
             "brevo_ready": settings.brevo_send_ready,
