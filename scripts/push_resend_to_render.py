@@ -140,6 +140,11 @@ def main() -> int:
         "SMTP_USE_SSL": env.get("SMTP_USE_SSL", "false"),
         "RESEND_API_KEY": resend_key,
         "RESEND_SANDBOX": env.get("RESEND_SANDBOX", "true"),
+        "RESEND_SANDBOX_INBOX": (
+            env.get("RESEND_SANDBOX_INBOX", "").strip()
+            or env.get("SMTP_USER", "").strip()
+            or "ebarajas@ferragro.com"
+        ),
     }
     if env.get("RESEND_FROM_EMAIL"):
         smtp_vars["RESEND_FROM_EMAIL"] = env["RESEND_FROM_EMAIL"]

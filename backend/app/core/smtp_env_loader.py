@@ -43,6 +43,18 @@ def _email_api_needs_secret_files() -> bool:
     return True
 
 
+def _ensure_sandbox_inbox_from_smtp_user() -> None:
+    """Si falta RESEND_SANDBOX_INBOX, usar SMTP_USER (cuenta Resend) para que recuperación funcione."""
+    sandbox_on = os.getenv("RESEND_SANDBOX", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not sandbox_on:
+        return
+    if os.getenv("RESEND_SANDBOX_INBOX", "").strip():
+        return
+    user = os.getenv("SMTP_USER", "").strip()
+    if user:
+        os.environ["RESEND_SANDBOX_INBOX"] = user
+
+
 def overlay_render_smtp_secret() -> bool:
     """
     En Render, smtp.env es la fuente de verdad para SMTP.
@@ -71,6 +83,7 @@ def overlay_render_smtp_secret() -> bool:
     for key, value in preserved.items():
         if key not in parsed or not str(parsed.get(key, "")).strip():
             os.environ[key] = value
+    _ensure_sandbox_inbox_from_smtp_user()
     return True
 
 

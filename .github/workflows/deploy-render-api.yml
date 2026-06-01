@@ -61,7 +61,8 @@ jobs:
             "SMTP_USE_TLS=true" \
             "SMTP_USE_SSL=false" \
             "RESEND_API_KEY=${RESEND_API_KEY}" \
-            "RESEND_SANDBOX=${RESEND_SANDBOX_VAL}"
+            "RESEND_SANDBOX=${RESEND_SANDBOX_VAL}" \
+            "RESEND_SANDBOX_INBOX=${USER}"
           do
             KEY="${pair%%=*}"
             VAL="${pair#*=}"
@@ -83,7 +84,8 @@ jobs:
             "SMTP_USE_SSL=false" \
             "SMTP_USE_TLS=true" \
             "RESEND_API_KEY=${RESEND_API_KEY}" \
-            "RESEND_SANDBOX=${RESEND_SANDBOX_VAL}")
+            "RESEND_SANDBOX=${RESEND_SANDBOX_VAL}" \
+            "RESEND_SANDBOX_INBOX=${SMTP_USER}")
           BODY=$(python3 -c 'import json,sys; print(json.dumps({"name":"smtp.env","content":sys.argv[1]}))' "$CONTENT")
           curl -fsS -X PUT "https://api.render.com/v1/services/${SERVICE_ID}/secret-files/smtp.env" \
             -H "Authorization: Bearer ${RENDER_API_KEY}" \
