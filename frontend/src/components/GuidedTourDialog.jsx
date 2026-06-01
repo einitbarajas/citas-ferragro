@@ -297,13 +297,13 @@ export default function GuidedTourDialog({
 
   const bullets = Array.isArray(step.bullets) ? step.bullets.filter(Boolean) : [];
 
-  /** Misma tarjeta en todos los modos: altura máxima + scroll interno si el texto no cabe. */
+  /** Tarjeta flex: cuerpo con scroll; pie (Anterior/Siguiente) siempre visible. */
   const bubblePositionClass =
     bubbleStyle.mode === "bottom"
-      ? "fixed z-[100060] max-h-[min(52vh,420px)] min-h-0 w-auto overflow-y-auto overscroll-behavior-contain"
+      ? "fixed z-[100060] flex max-h-[min(62vh,480px)] min-h-0 w-auto flex-col overflow-hidden overscroll-behavior-contain"
       : bubbleStyle.mode === "center"
-        ? "fixed left-1/2 top-1/2 z-[100060] max-h-[min(85vh,520px)] min-h-0 w-[min(92vw,400px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-behavior-contain"
-        : "fixed z-[100060] max-h-[min(80vh,480px)] min-h-0 overflow-y-auto overscroll-behavior-contain";
+        ? "fixed left-1/2 top-1/2 z-[100060] flex max-h-[min(88vh,560px)] min-h-0 w-[min(92vw,400px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden overscroll-behavior-contain"
+        : "fixed z-[100060] flex max-h-[min(85vh,520px)] min-h-0 flex-col overflow-hidden overscroll-behavior-contain";
 
   const bubblePositionStyle =
     bubbleStyle.mode === "bottom"
@@ -334,118 +334,127 @@ export default function GuidedTourDialog({
         style={bubblePositionStyle}
         className={`${bubblePositionClass} rounded-2xl border border-slate-200 bg-white shadow-2xl outline-none dark:border-slate-600 dark:bg-slate-900`}
       >
-        <div className="p-4 sm:p-5">
-          <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-            <div className="flex min-w-0 flex-1 items-center gap-2.5">
-              <div
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-sm font-bold text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100"
-                aria-hidden="true"
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="shrink-0 px-4 pb-2 pt-4 sm:px-5 sm:pt-5">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                <div
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-sm font-bold text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100"
+                  aria-hidden="true"
+                >
+                  {safeIndex + 1}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                    {label}
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Paso {safeIndex + 1} de {n} · {progressPct}%
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-base leading-none text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                aria-label="Cerrar guía"
+                onClick={onClose}
               >
-                {safeIndex + 1}
-              </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-                  {label}
-                </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Paso {safeIndex + 1} de {n} · {progressPct}%
-                </p>
-              </div>
+                ×
+              </button>
             </div>
-            <button
-              type="button"
-              className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-base leading-none text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
-              aria-label="Cerrar guía"
-              onClick={onClose}
-            >
-              ×
-            </button>
+
+            <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true">
+              <div
+                className="h-full rounded-full bg-[#35783C] transition-[width] duration-300 ease-out"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+
+            <h2 id="guided-tour-title" className="text-base font-bold leading-snug text-slate-900 dark:text-white sm:text-lg">
+              {step.title}
+            </h2>
+            {step.subtitle ? (
+              <p className="mt-0.5 text-xs font-medium text-emerald-800 dark:text-emerald-300">{step.subtitle}</p>
+            ) : null}
           </div>
 
-          <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true">
-            <div
-              className="h-full rounded-full bg-[#35783C] transition-[width] duration-300 ease-out"
-              style={{ width: `${progressPct}%` }}
-            />
+          <div
+            id="guided-tour-body"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-behavior-contain px-4 pb-2 sm:px-5"
+          >
+            <div className="space-y-3">
+              {step.description ? (
+                <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200 sm:text-sm">{step.description}</p>
+              ) : null}
+              {bullets.length > 0 ? (
+                <ul className="list-none space-y-2 text-xs leading-relaxed text-slate-700 dark:text-slate-200 sm:text-sm">
+                  {bullets.map((line, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span
+                        className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-[9px] font-bold text-white"
+                        aria-hidden="true"
+                      >
+                        ✓
+                      </span>
+                      <span>{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+
+              {ahora ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/90 px-2.5 py-2 dark:border-emerald-800 dark:bg-emerald-950/40">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
+                    Qué mirar ahora
+                  </p>
+                  <p className="mt-0.5 text-xs text-emerald-950 dark:text-emerald-100">{ahora}</p>
+                </div>
+              ) : null}
+
+              {tip ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/95 px-2.5 py-2 dark:border-amber-900/60 dark:bg-amber-950/30">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+                    Consejo
+                  </p>
+                  <p className="mt-0.5 text-xs text-amber-950 dark:text-amber-50">{tip}</p>
+                </div>
+              ) : null}
+            </div>
           </div>
 
-          <h2 id="guided-tour-title" className="text-base font-bold leading-snug text-slate-900 dark:text-white sm:text-lg">
-            {step.title}
-          </h2>
-          {step.subtitle ? (
-            <p className="mt-0.5 text-xs font-medium text-emerald-800 dark:text-emerald-300">{step.subtitle}</p>
-          ) : null}
+          <div className="shrink-0 border-t border-slate-100 bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 dark:border-slate-700 dark:bg-slate-900 sm:px-5 sm:pb-5">
+            <p className="mb-3 text-center text-[10px] text-slate-500 dark:text-slate-400">
+              Flecha derecha o Enter = siguiente · Izquierda = anterior · Esc = cerrar
+            </p>
 
-          <div id="guided-tour-body" className="mt-3 space-y-3">
-            {step.description ? (
-              <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200 sm:text-sm">{step.description}</p>
-            ) : null}
-            {bullets.length > 0 ? (
-              <ul className="list-none space-y-2 text-xs leading-relaxed text-slate-700 dark:text-slate-200 sm:text-sm">
-                {bullets.map((line, i) => (
-                  <li key={i} className="flex gap-2">
-                    <span
-                      className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-[9px] font-bold text-white"
-                      aria-hidden="true"
-                    >
-                      ✓
-                    </span>
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-
-            {ahora ? (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50/90 px-2.5 py-2 dark:border-emerald-800 dark:bg-emerald-950/40">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
-                  Qué mirar ahora
-                </p>
-                <p className="mt-0.5 text-xs text-emerald-950 dark:text-emerald-100">{ahora}</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                disabled={isFirst}
+                onClick={() => onStepIndexChange(safeIndex - 1)}
+                className="min-h-10 min-w-[6.5rem] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 sm:text-sm"
+              >
+                ← Anterior
+              </button>
+              <div className="flex flex-1 justify-end gap-2 sm:flex-initial">
+                {isLast ? (
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="min-h-10 rounded-lg bg-[#35783C] px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-[#2d6532] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 sm:text-sm"
+                  >
+                    Listo
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onStepIndexChange(safeIndex + 1)}
+                    className="min-h-10 rounded-lg bg-[#35783C] px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-[#2d6532] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 sm:text-sm"
+                  >
+                    Siguiente →
+                  </button>
+                )}
               </div>
-            ) : null}
-
-            {tip ? (
-              <div className="rounded-lg border border-amber-200 bg-amber-50/95 px-2.5 py-2 dark:border-amber-900/60 dark:bg-amber-950/30">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200">
-                  Consejo
-                </p>
-                <p className="mt-0.5 text-xs text-amber-950 dark:text-amber-50">{tip}</p>
-              </div>
-            ) : null}
-          </div>
-
-          <p className="mt-3 text-center text-[10px] text-slate-500 dark:text-slate-400">
-            Flecha derecha o Enter = siguiente · Izquierda = anterior · Esc = cerrar
-          </p>
-
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 dark:border-slate-700">
-            <button
-              type="button"
-              disabled={isFirst}
-              onClick={() => onStepIndexChange(safeIndex - 1)}
-              className="min-h-10 min-w-[6.5rem] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 sm:text-sm"
-            >
-              ← Anterior
-            </button>
-            <div className="flex flex-1 justify-end gap-2 sm:flex-initial">
-              {isLast ? (
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="min-h-10 rounded-lg bg-[#35783C] px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-[#2d6532] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 sm:text-sm"
-                >
-                  Listo
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => onStepIndexChange(safeIndex + 1)}
-                  className="min-h-10 rounded-lg bg-[#35783C] px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-[#2d6532] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35783C]/40 sm:text-sm"
-                >
-                  Siguiente →
-                </button>
-              )}
             </div>
           </div>
         </div>
