@@ -122,33 +122,45 @@ def dispatch_welcome_staff(to_email: str, recipient_name: str, role_name: str) -
 
 
 def send_recovery_password_email(account_email: str, temporary_password: str) -> bool:
-    """Envío de recuperación (síncrono en Render para no perder el correo tras cerrar la petición)."""
+    """Envío de recuperación (síncrono en Render; usa Resend/Brevo si SMTP está bloqueado)."""
+    normalized = _normalize_recipient(account_email)
+    if not normalized:
+        logger.warning("Recuperación omitida (correo inválido): %r", account_email)
+        return False
     try:
-        if not _prepare_smtp_for_send():
+        from app.core.config import refresh_smtp_settings
+        from app.core.smtp_env_loader import overlay_render_smtp_secret
+        from app.services.email_transport import email_delivery_ready
+        from app.services.mailer import send_temporary_password_email_with_retry
+
+        overlay_render_smtp_secret()
+        refresh_smtp_settings()
+        if not email_delivery_ready() and not settings.smtp_send_ready:
             logger.warning(
-                "SMTP no listo; recuperación no enviada a %s (clave en BD/logs SMTP_RECOVERY)",
-                account_email,
+                "Correo no listo; recuperación no enviada a %s (clave en BD/logs SMTP_RECOVERY)",
+                normalized,
             )
             return False
-        from app.services.mailer import send_temporary_password_email
-
-        sent = send_temporary_password_email(
-            account_email,
+        attempts = 3 if settings.is_production else 2
+        sent = send_temporary_password_email_with_retry(
+            normalized,
             temporary_password,
-            account_email=account_email,
+            account_email=normalized,
+            attempts=attempts,
+            force_secret_overlay=settings.is_production,
         )
         if not sent:
             logger.warning(
                 "SMTP_RECOVERY correo=%s clave_temporal=%s (correo no enviado)",
-                account_email,
+                normalized,
                 temporary_password,
             )
         return bool(sent)
     except Exception:
-        logger.exception("SMTP_RECOVERY fallo al enviar a %s", account_email)
+        logger.exception("SMTP_RECOVERY fallo al enviar a %s", normalized)
         logger.warning(
             "SMTP_RECOVERY correo=%s clave_temporal=%s",
-            account_email,
+            normalized,
             temporary_password,
         )
         return False

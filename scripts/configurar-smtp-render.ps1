@@ -127,6 +127,10 @@ function Wait-EmailEnabled {
             $buildId = $h.data.build_id
             Write-Host "  intento $i : email_enabled=$enabled build_id=$buildId"
             if ($ExpectedBuildId -and $buildId -ne $ExpectedBuildId) { continue }
+            $resendOk = $h.data.resend_ready
+            $provider = $h.data.email_provider
+            Write-Host "           provider=$provider resend_ready=$resendOk"
+            if ($enabled -and ($resendOk -or $provider -eq "brevo")) { return $h.data }
             if ($enabled) {
                 try {
                     $d = Invoke-RestMethod -Uri $deepUrl -TimeoutSec 120
@@ -155,9 +159,14 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
 $envMap = Read-DotEnv -Path $EnvFile
 $required = @("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM_EMAIL")
 $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace($envMap[$_]) })
-if ($missing.Count -gt 0 -and (Test-Path -LiteralPath $smtpRenderPath)) {
+if (Test-Path -LiteralPath $smtpRenderPath) {
     $smtpMap = Read-DotEnv -Path $smtpRenderPath
     foreach ($k in $required) {
+        if ([string]::IsNullOrWhiteSpace($envMap[$k]) -and $smtpMap[$k]) {
+            $envMap[$k] = $smtpMap[$k]
+        }
+    }
+    foreach ($k in @("RESEND_API_KEY", "RESEND_SANDBOX", "RESEND_FROM_EMAIL", "BREVO_API_KEY")) {
         if ([string]::IsNullOrWhiteSpace($envMap[$k]) -and $smtpMap[$k]) {
             $envMap[$k] = $smtpMap[$k]
         }

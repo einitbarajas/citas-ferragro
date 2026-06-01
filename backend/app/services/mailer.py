@@ -46,13 +46,18 @@ def _smtp_delivery_attempts() -> list[tuple[str, object]]:
 
 
 def _refresh_smtp_for_delivery() -> bool:
-    """Mantiene el perfil SMTP activo; en Render prioriza smtp.env sobre env sueltas."""
+    """Mantiene el perfil SMTP activo; en Render prioriza smtp.env y Resend/Brevo (HTTPS)."""
     if settings.is_production:
         from app.core.smtp_env_loader import overlay_render_smtp_secret
+        from app.services.email_transport import email_delivery_ready
         from app.services.smtp_resolver import ensure_smtp_login_ready, resolved_smtp_label
 
         overlay_render_smtp_secret()
         refresh_smtp_settings()
+        if settings.resend_send_ready or settings.brevo_send_ready:
+            return True
+        if email_delivery_ready():
+            return True
         if resolved_smtp_label():
             return settings.smtp_send_ready
         return ensure_smtp_login_ready()
@@ -355,16 +360,18 @@ def send_temporary_password_email_with_retry(
     attempts: int = 2,
     force_secret_overlay: bool = False,
 ) -> bool:
-    """Recuperación de contraseña: re-lee SMTP y reintenta (Render)."""
+    """Recuperación de contraseña: re-lee secretos y reintenta (Render + Resend/Brevo)."""
+    from app.services.email_transport import email_delivery_ready
+
     for attempt in range(1, max(1, attempts) + 1):
         if settings.is_production:
             if not _refresh_smtp_for_delivery():
-                logger.warning("SMTP no listo para recuperación (intento %s)", attempt)
+                logger.warning("Correo no listo para recuperación (intento %s)", attempt)
                 continue
         else:
             refresh_smtp_settings(force_secret_overlay=force_secret_overlay)
-        if not settings.smtp_send_ready:
-            logger.warning("SMTP no listo para recuperación (intento %s)", attempt)
+        if not email_delivery_ready() and not settings.smtp_send_ready:
+            logger.warning("Correo no configurado para recuperación (intento %s)", attempt)
             continue
         try:
             if send_temporary_password_email(
@@ -374,7 +381,7 @@ def send_temporary_password_email_with_retry(
             ):
                 return True
         except Exception:
-            logger.exception("Recuperación SMTP intento %s falló para %s", attempt, to_email)
+            logger.exception("Recuperación de contraseña intento %s falló para %s", attempt, to_email)
     return False
 
 
