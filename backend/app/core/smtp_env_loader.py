@@ -36,18 +36,35 @@ def _smtp_env_nonempty(key: str) -> bool:
     return bool(os.getenv(key, "").strip())
 
 
+def _email_api_needs_secret_files() -> bool:
+    """Render suele tener SMTP en env vars pero sin Resend hasta actualizar smtp.env."""
+    if _smtp_env_nonempty("RESEND_API_KEY") or _smtp_env_nonempty("BREVO_API_KEY"):
+        return False
+    return True
+
+
 def overlay_render_smtp_secret() -> bool:
     """
-    En Render, smtp.env es la fuente de verdad (sobrescribe env vars sueltas con password vieja).
-  """
+    En Render, smtp.env es la fuente de verdad para SMTP.
+    Las claves RESEND_/BREVO_ del panel Environment se conservan si no vienen en el archivo.
+    """
     render_path = Path("/etc/secrets/smtp.env")
     if not render_path.is_file():
         return False
-    for key, value in _parse_env_file(render_path).items():
+    preserved = {
+        key: os.environ[key]
+        for key in ("RESEND_API_KEY", "RESEND_SANDBOX", "RESEND_FROM_EMAIL", "BREVO_API_KEY")
+        if os.getenv(key, "").strip()
+    }
+    parsed = _parse_env_file(render_path)
+    for key, value in parsed.items():
         if key == "RESEND_SANDBOX":
-            os.environ[key] = "true" if value else "false"
+            os.environ[key] = "true" if str(value).strip().lower() in {"1", "true", "yes", "on"} else "false"
         else:
             os.environ[key] = str(value)
+    for key, value in preserved.items():
+        if key not in parsed or not str(parsed.get(key, "")).strip():
+            os.environ[key] = value
     return True
 
 
@@ -60,7 +77,7 @@ def bootstrap_smtp_from_secret_files(*, overlay: bool = False) -> list[str]:
         if overlay_render_smtp_secret():
             return ["/etc/secrets/smtp.env"]
 
-    if not overlay and not _smtp_needs_secret_files():
+    if not overlay and not _smtp_needs_secret_files() and not _email_api_needs_secret_files():
         return []
 
     backend_dir = Path(__file__).resolve().parents[2]

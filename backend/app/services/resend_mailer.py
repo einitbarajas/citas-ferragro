@@ -25,6 +25,7 @@ def send_resend_email(
     subject: str,
     plain_body: str,
     html_body: str,
+    email_kind: str | None = None,
 ) -> bool:
     delivery = normalize_email(to_email)
     if not delivery or not is_deliverable_email(delivery):
@@ -51,6 +52,8 @@ def send_resend_email(
     reply_to = normalize_email(settings.smtp_reply_to)
     if reply_to:
         payload["reply_to"] = reply_to
+    if email_kind:
+        payload["tags"] = [{"name": "kind", "value": email_kind[:50]}]
 
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(

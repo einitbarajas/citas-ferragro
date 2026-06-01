@@ -4,8 +4,11 @@ from pathlib import Path
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.core.smtp_env_loader import bootstrap_smtp_from_secret_files
+from app.core.smtp_env_loader import bootstrap_smtp_from_secret_files, overlay_render_smtp_secret
 
+# En Render: smtp.env puede traer RESEND aunque SMTP ya venga en variables sueltas.
+if os.getenv("ENVIRONMENT", "").strip().lower() == "production":
+    overlay_render_smtp_secret()
 bootstrap_smtp_from_secret_files()
 
 
@@ -49,6 +52,7 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     login_max_attempts: int = 5
     login_lockout_minutes: int = 15
+    security_email_alerts_enabled: bool = True
     forgot_password_cooldown_seconds: int = 60
     # Horas mínimas entre el momento de agendar/reprogramar y el inicio de la cita (proveedor).
     appointment_minimum_notice_hours: int = 24

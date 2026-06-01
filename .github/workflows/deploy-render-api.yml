@@ -25,24 +25,31 @@ jobs:
           echo "expected=$BUILD_ID" >> "$GITHUB_OUTPUT"
           echo "Expected API_BUILD_ID: $BUILD_ID"
 
-      - name: Sync SMTP to Render (if secrets configured)
+      - name: Sync SMTP + Resend to Render (if secrets configured)
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_SANDBOX: ${{ secrets.RESEND_SANDBOX }}
         run: |
           set -euo pipefail
           if [ -z "${RENDER_API_KEY:-}" ] || [ -z "${SMTP_PASSWORD:-}" ]; then
             echo "SMTP secrets no configurados en GitHub; omitiendo sync (usa smtp.env en Render)."
             exit 0
           fi
+          if [ -z "${RESEND_API_KEY:-}" ]; then
+            echo "::error::Falta secret RESEND_API_KEY en GitHub (obligatorio en Render free)."
+            exit 1
+          fi
           SERVICE_ID="srv-d82dvanaqgkc739362u0"
           HOST="${SMTP_HOST:-smtp.gmail.com}"
           USER="${SMTP_USER}"
           FROM="${SMTP_FROM_EMAIL:-$USER}"
           PASS="$(echo "$SMTP_PASSWORD" | tr -d '[:space:]')"
+          RESEND_SANDBOX_VAL="${RESEND_SANDBOX:-true}"
           for pair in \
             "SMTP_PROFILE=gmail" \
             "SMTP_HOST=${HOST}" \
@@ -52,7 +59,9 @@ jobs:
             "SMTP_FROM_EMAIL=${FROM}" \
             "SMTP_FROM_NAME=Ferragro" \
             "SMTP_USE_TLS=true" \
-            "SMTP_USE_SSL=false"
+            "SMTP_USE_SSL=false" \
+            "RESEND_API_KEY=${RESEND_API_KEY}" \
+            "RESEND_SANDBOX=${RESEND_SANDBOX_VAL}"
           do
             KEY="${pair%%=*}"
             VAL="${pair#*=}"
@@ -72,7 +81,9 @@ jobs:
             "SMTP_FROM_EMAIL=${FROM}" \
             "SMTP_FROM_NAME=Ferragro" \
             "SMTP_USE_SSL=false" \
-            "SMTP_USE_TLS=true")
+            "SMTP_USE_TLS=true" \
+            "RESEND_API_KEY=${RESEND_API_KEY}" \
+            "RESEND_SANDBOX=${RESEND_SANDBOX_VAL}")
           BODY=$(python3 -c 'import json,sys; print(json.dumps({"name":"smtp.env","content":sys.argv[1]}))' "$CONTENT")
           curl -fsS -X PUT "https://api.render.com/v1/services/${SERVICE_ID}/secret-files/smtp.env" \
             -H "Authorization: Bearer ${RENDER_API_KEY}" \
@@ -127,14 +138,12 @@ jobs:
             BUILD_ID=$(echo "$BODY" | grep -o '"build_id":"[^"]*"' | head -1 | cut -d'"' -f4)
             GIT_COMMIT=$(echo "$BODY" | grep -o '"render_git_commit":"[^"]*"' | head -1 | cut -d'"' -f4)
             echo "intento $i: build_id=$BUILD_ID render_git_commit=${GIT_COMMIT:-null}"
+            if echo "$BODY" | grep -q '"resend_ready":true'; then
+              echo "API en producción: resend_ready=true build_id=$BUILD_ID"
+              exit 0
+            fi
             if [ "$BUILD_ID" = "$EXPECTED" ]; then
-              DEEP=$(curl -fsS --max-time 120 "${API%/health}/health/deep" || echo "{}")
-              echo "$DEEP" | grep -o '"smtp_login_ok":[^,}]*' || true
-              if echo "$DEEP" | grep -q '"smtp_login_ok":true'; then
-                echo "API en producción con build_id=$EXPECTED y smtp_login_ok=true"
-                exit 0
-              fi
-              echo "build_id OK; smtp_login_ok aún no true (revisa smtp.env en Render)"
+              echo "build_id OK; esperando resend_ready (revisa RESEND_API_KEY en Render)"
               exit 0
             fi
           done

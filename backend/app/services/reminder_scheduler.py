@@ -9,12 +9,13 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.reminder_run import ReminderExecution
+from app.services.notification_service import notify_appointment_reminder_24h
 
 logger = logging.getLogger(__name__)
 
 
 def run_reminder_batch() -> int:
-    """Registra recordatorios para citas que inician en ~24 h (ventana 23–25 h)."""
+    """Registra y envía recordatorios para citas que inician en ~24 h (ventana 23–25 h)."""
     now = datetime.now(timezone.utc)
     window_start = now + timedelta(hours=23)
     window_end = now + timedelta(hours=25)
@@ -40,12 +41,18 @@ def run_reminder_batch() -> int:
             ).scalar_one_or_none()
             if exists:
                 continue
+            try:
+                notify_appointment_reminder_24h(db, appt)
+                detail = "Recordatorio enviado por correo e in-app."
+            except Exception:
+                logger.exception("Fallo al enviar recordatorio cita #%s", appt.id)
+                detail = "Recordatorio registrado; fallo parcial al enviar correo."
             db.add(
                 ReminderExecution(
                     appointment_id=appt.id,
                     kind="recordatorio_proximo",
-                    status="registrado",
-                    detail="Recordatorio automático generado por scheduler (integrar email/SMS según operación).",
+                    status="enviado",
+                    detail=detail,
                     executed_at=now,
                 )
             )
@@ -67,7 +74,6 @@ async def reminder_scheduler_loop(stop_event: asyncio.Event) -> None:
         try:
             n = run_reminder_batch()
             if n:
-                logger.info("Recordatorios registrados: %s", n)
+                logger.info("Recordatorios 24h procesados: %s", n)
         except Exception:
             logger.exception("Error en scheduler de recordatorios")
-

@@ -259,7 +259,14 @@ def _build_mail_layout(body_html: str) -> str:
 """
 
 
-def send_branded_email(subject: str, to_email: str, plain_body: str, content_html: str) -> bool:
+def send_branded_email(
+    subject: str,
+    to_email: str,
+    plain_body: str,
+    content_html: str,
+    *,
+    email_kind: str | None = None,
+) -> bool:
     delivery = normalize_email(to_email)
     if not delivery or not is_deliverable_email(delivery):
         logger.warning("Correo no enviado (destinatario inválido): %r subject=%s", to_email, subject)
@@ -287,6 +294,7 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
                 subject=subject,
                 plain_body=plain_body,
                 html_body=html_body,
+                email_kind=email_kind,
             )
         logger.error(
             "Render bloquea SMTP; falta RESEND_API_KEY o BREVO_API_KEY en Environment/smtp.env"
@@ -375,7 +383,7 @@ def send_temporary_password_email(
           </p>
           {panel_cta_html("Iniciar sesión en Ferragro")}
 """
-    return send_branded_email(subject, delivery, plain_body, content_html)
+    return send_branded_email(subject, delivery, plain_body, content_html, email_kind="password_recovery")
 
 
 def send_temporary_password_email_with_retry(
@@ -436,7 +444,7 @@ def send_welcome_email(to_email: str, recipient_name: str) -> bool:
             Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.
           </p>
 """
-    return send_branded_email(subject, to_email, plain_body, content_html)
+    return send_branded_email(subject, to_email, plain_body, content_html, email_kind="welcome")
 
 
 def send_internal_welcome_email(to_email: str, recipient_name: str, role_name: str) -> bool:
@@ -467,7 +475,7 @@ def send_internal_welcome_email(to_email: str, recipient_name: str, role_name: s
             Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.
           </p>
 """
-    return send_branded_email(subject, to_email, plain_body, content_html)
+    return send_branded_email(subject, to_email, plain_body, content_html, email_kind="welcome_staff")
 
 
 def send_notification_email(to_email: str, title: str, message: str) -> bool:
@@ -488,7 +496,7 @@ def send_notification_email(to_email: str, title: str, message: str) -> bool:
           <p style="margin:0;line-height:1.6;">{safe_message}</p>
           {panel_cta_html("Ver detalle en el panel")}
 """
-    return send_branded_email(subject, to_email, plain_body, content_html)
+    return send_branded_email(subject, to_email, plain_body, content_html, email_kind="notification")
 
 
 def send_notification_email_with_retry(

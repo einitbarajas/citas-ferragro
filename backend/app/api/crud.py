@@ -26,6 +26,7 @@ from app.models.role import Role
 from app.models.user import User, UserRole
 from app.services.credential_cleanup import delete_credential_fully, release_email_for_reuse
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
+from app.services.security_email import dispatch_email_address_changed_email
 from app.services.provider_account import (
     build_provider_out_dict,
     delete_provider_immediate,
@@ -645,11 +646,15 @@ def update_user(
     if not cred:
         raise HTTPException(status_code=500, detail="Usuario sin credenciales asociadas")
 
+    email_change: tuple[str, str] | None = None
     if "email" in updates:
         new_email = str(updates.pop("email"))
         other = db.execute(select(Credential).where(Credential.email == new_email, Credential.id != cred.id)).scalar_one_or_none()
         if other:
             raise HTTPException(status_code=400, detail="El email ya está registrado")
+        previous_email = cred.email.strip()
+        if previous_email.lower() != new_email.strip().lower():
+            email_change = (previous_email, new_email.strip())
         cred.email = new_email
     if "password" in updates:
         pwd = updates.pop("password")
@@ -682,6 +687,12 @@ def update_user(
         target_document_id=user.document_id,
     )
     db.commit()
+    if email_change:
+        dispatch_email_address_changed_email(
+            email_change[1],
+            previous_email=email_change[0],
+            new_email=email_change[1],
+        )
     db.refresh(user)
     return ok_response(_user_to_out(user, db).model_dump(), "Usuario actualizado correctamente")
 
@@ -919,6 +930,7 @@ def update_provider(
     if "password" in updates:
         cred.password_hash = get_password_hash(updates.pop("password"))
         before["password_changed"] = True
+    provider_email_change: tuple[str, str] | None = None
     if "company_email" in updates:
         new_email = str(updates.pop("company_email"))
         other = db.execute(
@@ -926,6 +938,9 @@ def update_provider(
         ).scalar_one_or_none()
         if other:
             raise HTTPException(status_code=400, detail="El email ya está registrado")
+        previous_email = cred.email.strip()
+        if previous_email.lower() != new_email.strip().lower():
+            provider_email_change = (previous_email, new_email.strip())
         cred.email = new_email
         provider.company_email = new_email
 
@@ -951,6 +966,12 @@ def update_provider(
         target_document_id=str(nit),
     )
     db.commit()
+    if provider_email_change:
+        dispatch_email_address_changed_email(
+            provider_email_change[1],
+            previous_email=provider_email_change[0],
+            new_email=provider_email_change[1],
+        )
     db.refresh(provider)
     notify_provider_and_admins(
         db,

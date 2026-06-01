@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-06-01-email-delivery-v1"
+API_BUILD_ID = "2026-06-01-email-delivery-v3-resend-fix"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -553,11 +553,21 @@ def root():
 @app.get("/health")
 def health():
     # Respuesta rápida para health check de Render (sin BD ni SMTP en cada ping).
+    from app.core.smtp_env_loader import overlay_render_smtp_secret
+
+    overlay_render_smtp_secret()
     refresh_smtp_settings()
     from app.services.email_transport import email_delivery_ready, render_smtp_blocked
 
     smtp_blocked = settings.is_production and render_smtp_blocked()
     can_deliver = email_delivery_ready()
+    from pathlib import Path as _Path
+
+    secret_smtp = _Path("/etc/secrets/smtp.env")
+    resend_in_os = bool(os.getenv("RESEND_API_KEY", "").strip())
+    resend_in_file = False
+    if secret_smtp.is_file():
+        resend_in_file = "RESEND_API_KEY=" in secret_smtp.read_text(encoding="utf-8", errors="replace")
     return ok_response(
         {
             "status": "ok",
@@ -567,6 +577,9 @@ def health():
             "email_configured": settings.email_send_ready,
             "email_provider": settings.email_provider,
             "resend_ready": settings.resend_send_ready,
+            "resend_key_in_process_env": resend_in_os,
+            "resend_key_in_secret_file": resend_in_file,
+            "secret_smtp_env_mounted": secret_smtp.is_file(),
             "resend_sandbox": settings.resend_sandbox,
             "brevo_ready": settings.brevo_send_ready,
             "smtp_send_ready": settings.smtp_send_ready,
@@ -676,9 +689,11 @@ def health_email():
             "public_panel_url": panel_url(),
             "flows": {
                 "appointment_notifications": "notify_* → dispatch_notification_email (citas crear/actualizar/cancelar)",
+                "appointment_reminder_24h": "reminder_scheduler → notify_appointment_reminder_24h",
                 "password_recovery": "contraseña temporal en correo (no magic link)",
                 "provider_suspend": "dispatch_provider_account_notice action=suspended",
                 "welcome": "dispatch_welcome_provider / dispatch_welcome_staff",
+                "security_alerts": "security_email (bloqueo, clave, correo, IP nueva)",
             },
             "deliverability_note": (
                 "Para Gmail/Outlook/Yahoo/iCloud/Proton: verifica dominio en Resend o Brevo "

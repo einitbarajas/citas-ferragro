@@ -40,6 +40,25 @@ function Read-DotEnv {
     return $map
 }
 
+function Get-RenderCliApiKey {
+    $cliYaml = Join-Path $env:USERPROFILE ".render\cli.yaml"
+    if (-not (Test-Path -LiteralPath $cliYaml)) { return $null }
+    $raw = Get-Content -LiteralPath $cliYaml -Raw
+    if ($raw -match '(?m)^\s*expires_at:\s*(\d+)\s*$') {
+        $expiresAt = [long]$Matches[1]
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        if ($expiresAt -lt $now) {
+            Write-Host "Aviso: token Render CLI expirado ($([DateTimeOffset]::FromUnixTimeSeconds($expiresAt).ToString('yyyy-MM-dd')))." -ForegroundColor Yellow
+            Write-Host "  Crea API key en https://dashboard.render.com/u/settings#api-keys" -ForegroundColor Yellow
+            return $null
+        }
+    }
+    if ($raw -match '(?m)^\s*key:\s*(rnd_\S+)\s*$') {
+        return $Matches[1].Trim()
+    }
+    return $null
+}
+
 function Get-ApiKey {
     param([string] $Explicit, [hashtable] $DotEnv = @{})
     if (-not [string]::IsNullOrWhiteSpace($Explicit)) { return $Explicit.Trim() }
@@ -51,7 +70,7 @@ function Get-ApiKey {
         $fromFile = (Get-Content -LiteralPath $keyFile -Raw).Trim()
         if ($fromFile) { return $fromFile }
     }
-    return $null
+    return Get-RenderCliApiKey
 }
 
 function Set-RenderSecretFile {
@@ -215,8 +234,6 @@ $smtpFileBody = $lines -join "`n"
 [System.IO.File]::WriteAllText($exportPath, $smtpFileBody, [System.Text.UTF8Encoding]::new($false))
 
 if (-not $ApiKey) {
-    $clipPath = Join-Path $repoRoot "ARREGLAR-CORREO-AHORA.md"
-    if (Test-Path -LiteralPath $clipPath) { Start-Process $clipPath }
     Write-Host ""
     Write-Host "Falta RENDER_API_KEY. Archivo listo:" -ForegroundColor Yellow
     Write-Host "  $exportPath"
