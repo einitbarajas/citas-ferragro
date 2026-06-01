@@ -18,6 +18,7 @@ class ChangeLog(Base):
     critical_field: Mapped[str | None] = mapped_column("CampoCritico", String(80), nullable=True)
     old_value: Mapped[str | None] = mapped_column("ValorAnterior", Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column("ValorNuevo", Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column("IpOrigen", String(45), nullable=True)
 
     appointment = relationship("Appointment", back_populates="change_logs")
 

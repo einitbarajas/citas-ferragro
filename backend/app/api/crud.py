@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from sqlalchemy import Date, cast, delete, extract, func, select
@@ -35,11 +35,16 @@ from app.services.provider_account import (
     reactivate_provider,
     suspend_provider,
 )
-from app.services.notification_service import (
-    notify_provider_appointment_updated,
-    notify_staff_review_needed,
-    notify_warehouse_schedule_updated,
+from app.api.http_utils import client_ip_from_request
+from app.services.appointment_actor import actor_from_principal
+from app.services.appointment_notification_events import (
+    AppointmentNotificationAction,
+    AppointmentSnapshot,
+    publish_appointment_notification,
+    record_audit,
+    resolve_update_action,
 )
+from app.services.notification_service import notify_warehouse_schedule_updated
 from app.schemas.crud import (
     AppointmentDateWindowReplace,
     AppointmentDateWindowBulkReplace,
@@ -1288,6 +1293,7 @@ def get_appointment(
 @router.post("/appointments", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
 def create_appointment(
     payload: AppointmentIn,
+    request: Request,
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(get_security_principal),
 ):
@@ -1317,7 +1323,20 @@ def create_appointment(
     appointment = Appointment(**data)
     db.add(appointment)
     db.flush()
-    notify_staff_review_needed(db, appointment)
+    actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
+    publish_appointment_notification(
+        db,
+        appointment,
+        action=AppointmentNotificationAction.created,
+        actor=actor,
+    )
+    record_audit(
+        db,
+        appointment_id=int(appointment.id),
+        actor=actor,
+        action="create_appointment",
+        description="Staff creó cita",
+    )
     db.commit()
     appointment = db.execute(
         select(Appointment)
@@ -1335,6 +1354,7 @@ def create_appointment(
 def update_appointment(
     appointment_id: int,
     payload: AppointmentUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(get_security_principal),
 ):
@@ -1394,7 +1414,7 @@ def update_appointment(
             exclude_appointment_id=appointment.id,
             provider_id=int(appointment.provider_id),
         )
-    actor_id = principal.document_id
+    actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
     critical_keys = {
         "status",
         "start_time",
@@ -1424,37 +1444,48 @@ def update_appointment(
         if old_val == new_val:
             continue
         changed_labels.append(field_labels.get(key, key))
-        db.add(
-            ChangeLog(
-                actor_id=actor_id,
-                appointment_id=appointment.id,
-                action="update_field",
-                description=f"Campo {key} actualizado",
-                created_at=now,
-                critical_field=key,
-                old_value=str(old_val),
-                new_value=str(new_val),
-            )
+        record_audit(
+            db,
+            appointment_id=int(appointment.id),
+            actor=actor,
+            action="update_field",
+            description=f"Campo {key} actualizado",
+            critical_field=key,
+            old_value=str(old_val),
+            new_value=str(new_val),
         )
     if confirm_override and (updates.keys() & slot_fields):
-        db.add(
-            ChangeLog(
-                actor_id=actor_id,
-                appointment_id=appointment.id,
-                action="staff_override_reschedule",
-                description=staff_reason,
-                created_at=now,
-                critical_field="reprogramacion_confirmada",
-                old_value=None,
-                new_value=staff_reason,
-            )
+        record_audit(
+            db,
+            appointment_id=int(appointment.id),
+            actor=actor,
+            action="staff_override_reschedule",
+            description=staff_reason,
+            critical_field="reprogramacion_confirmada",
+            old_value=None,
+            new_value=staff_reason,
         )
     if changed_labels:
-        notify_provider_appointment_updated(
-            db,
-            appointment,
-            summary=f"La empresa actualizó {', '.join(changed_labels)} de tu cita.",
-        )
+        extra = f"Cambios: {', '.join(changed_labels)}."
+        if "status" in snapshots and isinstance(snapshots["status"], AppointmentStatus):
+            from app.services.appointment_notification_events import notify_status_change
+
+            notify_status_change(
+                db,
+                appointment,
+                actor=actor,
+                old_status=snapshots["status"],
+                new_status=appointment.status,
+                extra_detail=extra,
+            )
+        else:
+            publish_appointment_notification(
+                db,
+                appointment,
+                action=resolve_update_action(snapshots),
+                actor=actor,
+                extra_detail=extra,
+            )
     db.commit()
     appointment = db.execute(
         select(Appointment)
@@ -1596,6 +1627,7 @@ def deactivate_warehouse(warehouse_id: int, db: Session = Depends(get_db)):
 @router.delete("/appointments/{appointment_id}", dependencies=[Depends(require_roles(*WAREHOUSE_OPS_ROLES))])
 def delete_appointment(
     appointment_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(get_security_principal),
 ):
@@ -1603,6 +1635,29 @@ def delete_appointment(
     if not appointment:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
     assert_warehouse_access(db, principal, appointment.warehouse_id)
+    actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
+    snapshot = AppointmentSnapshot(
+        id=int(appointment.id),
+        provider_id=int(appointment.provider_id),
+        warehouse_id=int(appointment.warehouse_id),
+        status=appointment.status,
+        start_time=appointment.start_time,
+        duration_minutes=int(appointment.duration_minutes),
+    )
+    record_audit(
+        db,
+        appointment_id=int(appointment.id),
+        actor=actor,
+        action="delete_appointment",
+        description="Cita eliminada",
+    )
+    publish_appointment_notification(
+        db,
+        snapshot,
+        action=AppointmentNotificationAction.deleted,
+        actor=actor,
+        include_provider=True,
+    )
     db.delete(appointment)
     db.commit()
     return ok_response(None, "Cita eliminada correctamente")

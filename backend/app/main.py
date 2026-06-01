@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-06-01-email-delivery-v3-resend-fix"
+API_BUILD_ID = "2026-06-01-notifications-v1-roles-sse"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -164,10 +164,36 @@ def _warm_smtp_on_startup() -> None:
         logger.exception("Fallo al validar correo al arranque")
 
 
+def _apply_sql_migrations_on_startup() -> None:
+    """Aplica migraciones SQL idempotentes (notificaciones actor + lecturas por usuario)."""
+    from pathlib import Path
+
+    from sqlalchemy import text
+
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_files = (
+        "022_notificaciones_actor_auditoria.sql",
+        "023_notificacion_lecturas.sql",
+    )
+    for filename in migration_files:
+        path = backend_root / "db" / "init" / filename
+        if not path.is_file():
+            logger.warning("Migración SQL no encontrada: %s", path)
+            continue
+        try:
+            with SessionLocal() as db:
+                db.execute(text(path.read_text(encoding="utf-8")))
+                db.commit()
+            logger.info("Migración SQL aplicada: %s", filename)
+        except Exception:
+            logger.exception("Fallo al aplicar migración SQL: %s", filename)
+
+
 def _blocking_startup() -> None:
     """Tareas síncronas de BD (se ejecutan en hilo aparte; no bloquean /health de Render)."""
     _log_database_target()
     _init_database_schema(max_attempts=12, delay_seconds=3.0)
+    _apply_sql_migrations_on_startup()
     _purge_orphan_credentials_on_startup()
     _ensure_production_admin_on_startup()
     _warm_smtp_on_startup()

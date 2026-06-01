@@ -99,14 +99,16 @@ def test_notify_provider_appointment_updated_includes_schedule(monkeypatch):
     def fake_notify(db_arg, appt, **kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr(svc, "_notify_appointment_stakeholders", fake_notify)
+    monkeypatch.setattr(
+        "app.services.appointment_notification_events.publish_appointment_notification",
+        lambda db_arg, appt, **kwargs: captured.update(kwargs),
+    )
     svc.notify_provider_appointment_updated(db, appointment, summary="La empresa actualizó fecha y hora.")
 
-    assert "03/06/2026 08:00" in captured["staff_message"]
-    assert "Proveedor Test" in captured["staff_message"]
-    assert "Bodega Sur" in captured["staff_message"]
-    assert captured["kind"] == "cita_actualizada"
-    assert "03/06/2026 08:00" in captured["provider_message"]
+    assert captured.get("extra_detail") == "La empresa actualizó fecha y hora."
+    from app.services.appointment_notification_events import AppointmentNotificationAction
+
+    assert captured.get("action") == AppointmentNotificationAction.updated
 
 
 def test_notify_staff_review_needed_includes_provider_and_schedule(monkeypatch):
@@ -140,14 +142,15 @@ def test_notify_staff_review_needed_includes_provider_and_schedule(monkeypatch):
     def fake_notify(db_arg, appt, **kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr(svc, "_notify_appointment_stakeholders", fake_notify)
+    monkeypatch.setattr(
+        "app.services.appointment_notification_events.publish_appointment_notification",
+        lambda db_arg, appt, **kwargs: captured.update(kwargs),
+    )
     svc.notify_staff_review_needed(db, appointment)
 
-    assert "Distribuidora ABC" in captured["staff_message"]
-    assert "Bodega Norte" in captured["staff_message"]
-    assert "90" in captured["staff_message"]
-    assert captured["provider_message"]
-    assert "Registraste la cita" in captured["provider_message"]
+    from app.services.appointment_notification_events import AppointmentNotificationAction
+
+    assert captured.get("action") == AppointmentNotificationAction.pending_review
 
 
 @pytest.mark.parametrize(
@@ -158,7 +161,7 @@ def test_notify_staff_review_needed_includes_provider_and_schedule(monkeypatch):
         "notify_staff_provider_cancelled",
     ],
 )
-def test_public_notify_functions_call_stakeholder_helper(monkeypatch, func_name):
+def test_public_notify_functions_call_publish(monkeypatch, func_name):
     appointment = MagicMock()
     appointment.id = 1
     appointment.status = svc.AppointmentStatus.sin_revision
@@ -173,7 +176,10 @@ def test_public_notify_functions_call_stakeholder_helper(monkeypatch, func_name)
         called["n"] += 1
         assert appt is appointment
 
-    monkeypatch.setattr(svc, "_notify_appointment_stakeholders", fake_notify)
+    monkeypatch.setattr(
+        "app.services.appointment_notification_events.publish_appointment_notification",
+        fake_notify,
+    )
     db = MagicMock()
     fn = getattr(svc, func_name)
     if func_name == "notify_provider_appointment_updated":

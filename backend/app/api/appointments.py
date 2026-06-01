@@ -1,7 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import extract, func, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -39,11 +39,15 @@ from app.services.appointment_windows import (
     iter_bookable_slots,
     resolve_team_windows_for_day,
 )
-from app.services.notification_service import (
-    notify_provider_appointment_updated,
-    notify_staff_provider_cancelled,
-    notify_staff_review_needed,
+from app.api.http_utils import client_ip_from_request
+from app.services.appointment_actor import actor_from_principal
+from app.services.appointment_notification_events import (
+    AppointmentNotificationAction,
+    notify_status_change,
+    publish_appointment_notification,
+    record_audit,
 )
+from app.services.notification_service import notify_provider_appointment_updated
 from app.services.range_bounds import business_local_range_bounds
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
@@ -215,6 +219,7 @@ def _assert_logistics_business_rules(
 @router.post("", response_model=AppointmentOut)
 def create_appointment(
     payload: AppointmentCreate,
+    request: Request,
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(require_roles(UserRole.proveedor)),
 ):
@@ -260,7 +265,20 @@ def create_appointment(
     )
     db.add(appointment)
     db.flush()
-    notify_staff_review_needed(db, appointment)
+    actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
+    publish_appointment_notification(
+        db,
+        appointment,
+        action=AppointmentNotificationAction.created,
+        actor=actor,
+    )
+    record_audit(
+        db,
+        appointment_id=int(appointment.id),
+        actor=actor,
+        action="create_appointment",
+        description="Proveedor creó cita",
+    )
     db.commit()
     appointment = db.execute(
         select(Appointment)
@@ -578,6 +596,7 @@ def get_appointment(
 def update_status(
     appointment_id: int,
     payload: AppointmentUpdateStatus,
+    request: Request,
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(require_roles(*STAFF_ROLES)),
 ):
@@ -606,23 +625,18 @@ def update_status(
                 )
     old_status = appt.status
     appt.status = payload.status
-    db.add(
-        AuditLog(
-            actor_id=principal.document_id,
-            appointment_id=appt.id,
-            action="update_status",
-            description=f"Estado cambiado de {old_status.value} a {payload.status.value}",
-            created_at=datetime.now(timezone.utc),
-            critical_field="estado",
-            old_value=old_status.value,
-            new_value=payload.status.value,
-        )
-    )
-    notify_provider_appointment_updated(
+    actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
+    record_audit(
         db,
-        appt,
-        summary=f"La empresa cambió el estado de tu cita de {old_status.value} a {payload.status.value}.",
+        appointment_id=int(appt.id),
+        actor=actor,
+        action="update_status",
+        description=f"Estado cambiado de {old_status.value} a {payload.status.value}",
+        critical_field="estado",
+        old_value=old_status.value,
+        new_value=payload.status.value,
     )
+    notify_status_change(db, appt, actor=actor, old_status=old_status, new_status=payload.status)
     db.commit()
     db.refresh(appt)
     return _serialize_with_extension(db, appt)
@@ -632,6 +646,7 @@ def update_status(
 def extend_appointment(
     appointment_id: int,
     payload: AppointmentExtend,
+    request: Request,
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(require_roles(*STAFF_ROLES)),
 ):
@@ -649,25 +664,26 @@ def extend_appointment(
         raise HTTPException(status_code=409, detail="No se puede extender: existe otra cita a continuación")
     old_duration = appt.duration_minutes
     appt.duration_minutes += payload.extra_minutes
-    db.add(
-        AuditLog(
-            actor_id=principal.document_id,
-            appointment_id=appt.id,
-            action="extend_duration",
-            description=(
-                f"Duración extendida de {old_duration} a {appt.duration_minutes} minutos "
-                f"(+{payload.extra_minutes}) [actor_role={principal.role_name}]"
-            ),
-            created_at=datetime.now(timezone.utc),
-            critical_field="duracion_minutos",
-            old_value=str(old_duration),
-            new_value=str(appt.duration_minutes),
-        )
+    actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
+    record_audit(
+        db,
+        appointment_id=int(appt.id),
+        actor=actor,
+        action="extend_duration",
+        description=(
+            f"Duración extendida de {old_duration} a {appt.duration_minutes} minutos "
+            f"(+{payload.extra_minutes})"
+        ),
+        critical_field="duracion_minutos",
+        old_value=str(old_duration),
+        new_value=str(appt.duration_minutes),
     )
     notify_provider_appointment_updated(
         db,
         appt,
-        summary=f"La empresa extendió la duración de tu cita a {appt.duration_minutes} minutos.",
+        summary=f"Duración extendida a {appt.duration_minutes} minutos (+{payload.extra_minutes}).",
+        actor=actor,
+        action=AppointmentNotificationAction.updated,
     )
     db.commit()
     db.refresh(appt)
@@ -678,6 +694,7 @@ def extend_appointment(
 def provider_reschedule_appointment(
     appointment_id: int,
     payload: AppointmentProviderReschedule,
+    request: Request,
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(require_roles(UserRole.proveedor)),
 ):
@@ -726,23 +743,28 @@ def provider_reschedule_appointment(
         AppointmentStatus.no_presentada,
     }:
         appt.status = AppointmentStatus.sin_revision
-    db.add(
-        AuditLog(
-            actor_id=str(principal.subject),
-            appointment_id=appt.id,
-            action="provider_reschedule",
-            description=(
-                "Proveedor reprograma cita de "
-                f"{old_start.astimezone(ZoneInfo(settings.business_timezone)).isoformat()} a "
-                f"{payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).isoformat()}"
-            ),
-            created_at=datetime.now(timezone.utc),
-            critical_field="start_time",
-            old_value=old_start.isoformat(),
-            new_value=payload.start_time.isoformat(),
-        )
+    actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
+    record_audit(
+        db,
+        appointment_id=int(appt.id),
+        actor=actor,
+        action="provider_reschedule",
+        description=(
+            "Proveedor reprograma cita de "
+            f"{old_start.astimezone(ZoneInfo(settings.business_timezone)).isoformat()} a "
+            f"{payload.start_time.astimezone(ZoneInfo(settings.business_timezone)).isoformat()}"
+        ),
+        critical_field="start_time",
+        old_value=old_start.isoformat(),
+        new_value=payload.start_time.isoformat(),
     )
-    notify_staff_review_needed(db, appt)
+    publish_appointment_notification(
+        db,
+        appt,
+        action=AppointmentNotificationAction.rescheduled,
+        actor=actor,
+        extra_detail="La cita quedó nuevamente pendiente de revisión.",
+    )
     db.commit()
     db.refresh(appt)
     return _serialize_with_extension(db, appt)
@@ -752,6 +774,7 @@ def provider_reschedule_appointment(
 def provider_cancel_appointment(
     appointment_id: int,
     payload: AppointmentProviderCancel,
+    request: Request,
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(require_roles(UserRole.proveedor)),
 ):
@@ -771,18 +794,22 @@ def provider_cancel_appointment(
         )
     appt.status = AppointmentStatus.cancelado
     reason = payload.reason.strip()
-    provider = db.get(Provider, int(appt.provider_id))
-    provider_label = provider.company_name if provider else None
-    db.add(
-        AuditLog(
-            actor_id=str(principal.subject),
-            appointment_id=appt.id,
-            action="provider_cancel",
-            description=f"Proveedor cancela cita. Motivo: {reason}",
-            created_at=datetime.now(timezone.utc),
-        )
+    actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
+    record_audit(
+        db,
+        appointment_id=int(appt.id),
+        actor=actor,
+        action="provider_cancel",
+        description=f"Proveedor cancela cita. Motivo: {reason}",
     )
-    notify_staff_provider_cancelled(db, appt, reason=reason, provider_label=provider_label)
+    publish_appointment_notification(
+        db,
+        appt,
+        action=AppointmentNotificationAction.provider_cancelled,
+        actor=actor,
+        extra_detail=f"Motivo: {reason}",
+        include_provider=True,
+    )
     db.commit()
     db.refresh(appt)
     return _serialize_with_extension(db, appt)

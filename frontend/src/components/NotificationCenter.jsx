@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import api, { API_PREFIX, getAccessToken, parseApiError, parseApiResponse } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 
-const POLL_MS = 60_000;
+const POLL_MS = 120_000;
+
+function notificationHeadline(item) {
+  const message = String(item.message || "").trim();
+  if (!message) return "";
+  return message.split("\n")[0];
+}
 
 const FILTER_OPTIONS = [
   { value: "all", label: "Todas" },
@@ -66,9 +72,24 @@ export default function NotificationCenter({ onNavigate, compact = false }) {
 useEffect(() => {
   if (!authReady) return undefined;
   let timer = null;
+  let eventSource = null;
   const boot = () => {
     loadNotifications();
     timer = window.setInterval(loadNotifications, POLL_MS);
+    const token = getAccessToken();
+    if (!token) return;
+    const explicit = import.meta.env.VITE_API_URL;
+    const base =
+      typeof explicit === "string" && explicit.trim()
+        ? explicit.trim().replace(/\/$/, "")
+        : window.location.origin;
+    const streamUrl = `${base}${API_PREFIX}/notifications/stream?token=${encodeURIComponent(token)}`;
+    eventSource = new EventSource(streamUrl);
+    eventSource.onmessage = () => loadNotifications();
+    eventSource.onerror = () => {
+      eventSource?.close();
+      eventSource = null;
+    };
   };
   const schedule = window.requestIdleCallback
     ? window.requestIdleCallback(boot, { timeout: 4000 })
@@ -80,6 +101,7 @@ useEffect(() => {
       window.cancelIdleCallback(schedule);
     }
     if (timer) window.clearInterval(timer);
+    eventSource?.close();
   };
 }, [authReady, loadNotifications]);
 
@@ -263,7 +285,10 @@ useEffect(() => {
                   }`}
                 >
                   <p className="text-sm font-semibold text-slate-900">{item.title}</p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">{item.message}</p>
+                  {notificationHeadline(item) ? (
+                    <p className="mt-1 text-xs font-medium text-slate-800">{notificationHeadline(item)}</p>
+                  ) : null}
+                  <p className="mt-1 whitespace-pre-line text-xs leading-relaxed text-slate-600">{item.message}</p>
                   <p className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">{formatWhen(item.created_at)}</p>
                 </button>
               ))}

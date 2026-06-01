@@ -119,133 +119,25 @@ def _dispatch_notification_emails(to_emails: list[str], *, title: str, message: 
     dispatch_notification_emails_batch(to_emails, title=title, message=message)
 
 
-def _persist_staff_in_app_notifications(
+def notify_staff_review_needed(
     db: Session,
     appointment: Appointment,
     *,
-    kind: str,
-    title: str,
-    message: str,
+    actor=None,
 ) -> None:
-    now = datetime.now(timezone.utc)
-    for role in INTERNAL_STAFF_ROLES:
-        db.add(
-            UserNotification(
-                recipient_role=role,
-                recipient_provider_id=None,
-                appointment_id=appointment.id,
-                kind=kind,
-                title=title,
-                message=message,
-                created_at=now,
-            )
-        )
-
-
-def _persist_provider_in_app_notification(
-    db: Session,
-    appointment: Appointment,
-    *,
-    kind: str,
-    title: str,
-    message: str,
-) -> None:
-    db.add(
-        UserNotification(
-            recipient_role=UserRole.proveedor,
-            recipient_provider_id=int(appointment.provider_id),
-            appointment_id=appointment.id,
-            kind=kind,
-            title=title,
-            message=message,
-            created_at=datetime.now(timezone.utc),
-        )
+    from app.services.appointment_actor import system_actor
+    from app.services.appointment_notification_events import (
+        AppointmentNotificationAction,
+        publish_appointment_notification,
     )
 
-
-def _notify_appointment_stakeholders(
-    db: Session,
-    appointment: Appointment,
-    *,
-    kind: str,
-    title: str,
-    message: str,
-    staff_message: str | None = None,
-    provider_message: str | None = None,
-    include_provider: bool = True,
-) -> None:
-    """Admin global, staff de la bodega (Logística + AdminBodega) y proveedor."""
-    staff_body = staff_message or message
-    provider_body = provider_message or message
-    _persist_staff_in_app_notifications(
-        db, appointment, kind=kind, title=title, message=staff_body
-    )
-    staff_emails = _warehouse_staff_emails(db, int(appointment.warehouse_id))
-    provider_email: str | None = None
-    if include_provider:
-        _persist_provider_in_app_notification(
-            db, appointment, kind=kind, title=title, message=provider_body
-        )
-        provider_email = _provider_credential_email(db, int(appointment.provider_id))
-        if not provider_email:
-            logger.warning(
-                "Aviso cita #%s (%s): proveedor %s sin correo en credencial",
-                appointment.id,
-                kind,
-                appointment.provider_id,
-            )
-
-    if not staff_emails:
-        logger.warning(
-            "Aviso cita #%s (%s): sin correos de staff para bodega %s",
-            appointment.id,
-            kind,
-            appointment.warehouse_id,
-        )
-
-    if provider_email and provider_body != staff_body:
-        if staff_emails:
-            dispatch_notification_emails_batch(
-                staff_emails, title=title, message=staff_body
-            )
-        dispatch_notification_emails_batch(
-            [provider_email], title=title, message=provider_body
-        )
-    else:
-        all_emails = list(staff_emails)
-        if provider_email:
-            all_emails.append(provider_email)
-        if all_emails:
-            dispatch_notification_emails_batch(
-                all_emails, title=title, message=staff_body
-            )
-
-
-def notify_staff_review_needed(db: Session, appointment: Appointment) -> None:
     if appointment.status != AppointmentStatus.sin_revision:
         return
-    ctx = _appointment_email_context(db, appointment)
-    title = f"Cita #{appointment.id} pendiente de revisión"
-    staff_message = (
-        f"El proveedor {ctx.provider_name} agendó una cita nueva para revisar.\n"
-        f"Horario: {ctx.start_label} (duración {ctx.duration_minutes} min).\n"
-        f"Bodega: {ctx.warehouse_name}.\n"
-        "Entra a Revisión de citas o Buscar citas para atenderla."
-    )
-    provider_message = (
-        f"Registraste la cita #{appointment.id} en Ferragro; queda pendiente de revisión.\n"
-        f"Horario: {ctx.start_label} (duración {ctx.duration_minutes} min).\n"
-        f"Bodega: {ctx.warehouse_name}.\n"
-        "Te avisaremos por correo cuando sea confirmada o si requiere cambios."
-    )
-    _notify_appointment_stakeholders(
+    publish_appointment_notification(
         db,
         appointment,
-        kind="cita_para_revisar",
-        title=title,
-        message=staff_message,
-        staff_message=staff_message,
-        provider_message=provider_message,
+        action=AppointmentNotificationAction.pending_review,
+        actor=actor or system_actor(),
         include_provider=True,
     )
 
@@ -255,31 +147,21 @@ def notify_provider_appointment_updated(
     appointment: Appointment,
     *,
     summary: str,
+    actor=None,
+    action=None,
 ) -> None:
-    """Aviso por correo e in-app cuando staff o el sistema actualiza una cita."""
-    ctx = _appointment_email_context(db, appointment)
-    title = f"Cita #{appointment.id} fue actualizada"
-    staff_message = (
-        f"{summary.strip()}\n"
-        f"Proveedor: {ctx.provider_name}.\n"
-        f"Horario actual: {ctx.start_label} (duración {ctx.duration_minutes} min).\n"
-        f"Bodega: {ctx.warehouse_name}.\n"
-        "Revisa Revisión de citas o Buscar citas en el panel."
+    from app.services.appointment_actor import system_actor
+    from app.services.appointment_notification_events import (
+        AppointmentNotificationAction,
+        publish_appointment_notification,
     )
-    provider_message = (
-        f"{summary.strip()}\n"
-        f"Horario actual: {ctx.start_label} (duración {ctx.duration_minutes} min).\n"
-        f"Bodega: {ctx.warehouse_name}.\n"
-        "Revisa el panel de Ferragro para ver el detalle."
-    )
-    _notify_appointment_stakeholders(
+
+    publish_appointment_notification(
         db,
         appointment,
-        kind="cita_actualizada",
-        title=title,
-        message=staff_message,
-        staff_message=staff_message,
-        provider_message=provider_message,
+        action=action or AppointmentNotificationAction.updated,
+        actor=actor or system_actor(),
+        extra_detail=summary.strip(),
         include_provider=True,
     )
 
@@ -289,21 +171,21 @@ def notify_staff_provider_cancelled(
     appointment: Appointment,
     *,
     reason: str,
-    provider_label: str | None = None,
+    actor=None,
 ) -> None:
-    start_label = _format_start_local(appointment)
-    label = (provider_label or "").strip() or f"NIT {appointment.provider_id}"
-    title = f"Cita #{appointment.id} cancelada por el proveedor"
-    message = (
-        f"{label} canceló la cita que estaba programada para {start_label}. "
-        f"Motivo indicado: {reason.strip()}"
+    from app.services.appointment_actor import system_actor
+    from app.services.appointment_notification_events import (
+        AppointmentNotificationAction,
+        publish_appointment_notification,
     )
-    _notify_appointment_stakeholders(
+
+    extra = f"Motivo: {reason.strip()}"
+    publish_appointment_notification(
         db,
         appointment,
-        kind="cita_cancelada_proveedor",
-        title=title,
-        message=message,
+        action=AppointmentNotificationAction.provider_cancelled,
+        actor=actor or system_actor(),
+        extra_detail=extra,
         include_provider=True,
     )
 
@@ -331,13 +213,20 @@ def notify_staff_finalization_window_started(
         f"Tienes hasta {deadline_label} ({settings.business_timezone}) para marcarla como finalizada "
         "en el sistema. Si no se marca a tiempo, pasará automáticamente a no presentada."
     )
-    _notify_appointment_stakeholders(
+    from app.services.appointment_actor import system_actor
+    from app.services.appointment_notification_events import (
+        AppointmentNotificationAction,
+        publish_appointment_notification,
+    )
+
+    publish_appointment_notification(
         db,
         appointment,
-        kind="finalizacion_15min_alerta",
-        title=title,
-        message=message,
+        action=AppointmentNotificationAction.finalization_alert,
+        actor=system_actor(),
+        extra_detail=message,
         include_provider=False,
+        send_email=True,
     )
 
 
@@ -371,12 +260,18 @@ def notify_appointment_reminder_24h(db: Session, appointment: Appointment) -> No
         f"Tu cita en Ferragro está programada para {start_label}. "
         "Revisa el panel para confirmar horario, bodega y detalles de entrega."
     )
-    _notify_appointment_stakeholders(
+    from app.services.appointment_actor import system_actor
+    from app.services.appointment_notification_events import (
+        AppointmentNotificationAction,
+        publish_appointment_notification,
+    )
+
+    publish_appointment_notification(
         db,
         appointment,
-        kind="recordatorio_proximo",
-        title=title,
-        message=message,
+        action=AppointmentNotificationAction.reminder_24h,
+        actor=system_actor(),
+        extra_detail=message,
         include_provider=True,
     )
 
@@ -389,11 +284,17 @@ def notify_staff_no_presentada_auto(db: Session, appointment: Appointment) -> No
         f"La cita revisada de {start_label} no fue marcada como finalizada dentro de los "
         "15 minutos posteriores a la hora de la cita. El sistema la registró como no presentada."
     )
-    _notify_appointment_stakeholders(
+    from app.services.appointment_actor import system_actor
+    from app.services.appointment_notification_events import (
+        AppointmentNotificationAction,
+        publish_appointment_notification,
+    )
+
+    publish_appointment_notification(
         db,
         appointment,
-        kind="no_presentada_auto",
-        title=title,
-        message=message,
+        action=AppointmentNotificationAction.no_presentada_auto,
+        actor=system_actor(),
+        extra_detail=message,
         include_provider=False,
     )
