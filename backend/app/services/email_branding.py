@@ -11,10 +11,10 @@ logger = logging.getLogger(__name__)
 
 # Debe coincidir entre <img src="cid:..."> y content_id del adjunto (SMTP y Resend).
 LOGO_CID = "ferragro-logo"
-# PNG con fondo blanco (#fff): Gmail y Outlook no pintan negro en transparencias.
+# PNG transparente: en modo oscuro no aparece caja blanca; solo la placa verde.
 LOGO_FILENAME = "ferragro-logo-email.png"
 DEFAULT_API_BASE = "https://ferragro-api.onrender.com"
-LOGO_CACHE_BUSTER = "20260602-nuevo"
+LOGO_CACHE_BUSTER = "20260602-transparent"
 DEFAULT_LOGO_URL = f"https://citas.ferragro.vercel.app/ferragro-logo-email.png?v={LOGO_CACHE_BUSTER}"
 LOGO_GITHUB_RAW = (
     "https://raw.githubusercontent.com/einitbarajas/citas-ferragro/main/"
@@ -23,6 +23,7 @@ LOGO_GITHUB_RAW = (
 _STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
 _PUBLIC_DIR = Path(__file__).resolve().parents[3] / "frontend" / "public"
 _LOGO_CANDIDATES = (
+    _STATIC_DIR / "ferragro-logo-transparent.png",
     _STATIC_DIR / "ferragro-logo-email.png",
     _PUBLIC_DIR / "ferragro-logo-email.png",
     _STATIC_DIR / "ferragro-logo.png",
@@ -64,11 +65,7 @@ def logo_img_html(*, use_cid: bool) -> str:
     else:
         url = hosted_logo_url()
         img = f'<img src="{url}" alt="Ferragro" style="{_LOGO_IMG_STYLE}" />'
-    return (
-        '<div style="background:#ffffff;padding:0 0 4px;margin:0;">'
-        f"{img}"
-        "</div>"
-    )
+    return f'<div style="padding:0 0 4px;margin:0;line-height:0;">{img}</div>'
 
 
 def resend_logo_attachment() -> dict | None:

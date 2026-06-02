@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Genera logos para web (transparente) y correo (fondo blanco, sin caja negra en Gmail)."""
+"""Genera logos transparentes (correo modo claro/oscuro y portal)."""
 from __future__ import annotations
 
 from collections import deque
@@ -66,29 +66,20 @@ def remove_outer_background(img: Image.Image) -> Image.Image:
     return img.crop(bbox) if bbox else img
 
 
-def flatten_on_white(img: Image.Image, *, white: tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
-    base = Image.new("RGBA", img.size, (*white, 255))
-    base.paste(img, mask=img.split()[3])
-    return base.convert("RGB")
-
-
 def main() -> None:
     src = next((p for p in SOURCE_CANDIDATES if p.is_file()), None)
     if src is None:
         raise SystemExit("No hay PNG fuente en static/ ni frontend/public/")
 
     transparent = remove_outer_background(Image.open(src))
-    email_rgb = flatten_on_white(transparent)
 
-    # Correo y URL legacy: mismo PNG con fondo blanco (Gmail no soporta bien alpha).
     for name in ("ferragro-logo.png", "ferragro-logo-email.png"):
-        email_rgb.save(STATIC / name, "PNG", optimize=True)
-        email_rgb.save(PUBLIC / name, "PNG", optimize=True)
+        transparent.save(STATIC / name, "PNG", optimize=True)
+        transparent.save(PUBLIC / name, "PNG", optimize=True)
     transparent.save(STATIC / "ferragro-logo-transparent.png", "PNG", optimize=True)
 
     print(f"source={src.name}")
-    print(f"email/portal logo (white bg) -> {STATIC / 'ferragro-logo.png'} ({email_rgb.size})")
-    print(f"optional transparent -> {STATIC / 'ferragro-logo-transparent.png'}")
+    print(f"transparent logo -> {STATIC / 'ferragro-logo-email.png'} ({transparent.size}, mode=RGBA)")
 
 
 if __name__ == "__main__":
