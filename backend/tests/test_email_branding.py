@@ -15,10 +15,10 @@ def test_logo_html_uses_https_url_for_resend():
     assert "cid:" not in html
 
 
-def test_hosted_logo_url_points_to_api_assets():
+def test_hosted_logo_url_points_to_github_raw():
     url = hosted_logo_url()
-    assert url.endswith("/assets/ferragro-logo.png")
-    assert url.startswith("https://")
+    assert "raw.githubusercontent.com" in url
+    assert "ferragro-logo.png" in url
 
 
 def test_logo_bytes_available_in_repo():

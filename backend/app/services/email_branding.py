@@ -45,8 +45,8 @@ def hosted_logo_url() -> str:
     configured = str(getattr(settings, "public_logo_url", "") or "").strip()
     if configured:
         return configured
-    api_base = str(getattr(settings, "public_api_url", "") or "").strip() or DEFAULT_API_BASE
-    return f"{api_base.rstrip('/')}/assets/ferragro-logo.png"
+    # GitHub raw: disponible en main sin esperar redeploy del API en Render.
+    return LOGO_GITHUB_RAW
 
 
 def logo_data_uri() -> str | None:

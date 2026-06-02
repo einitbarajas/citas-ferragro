@@ -18,10 +18,9 @@ def test_prefer_smtp_in_development_when_configured(monkeypatch):
     assert prefer_smtp_for_real_delivery() is True
 
 
-def test_public_logo_url_uses_api_assets():
+def test_public_logo_url_uses_stable_https():
     url = public_logo_url()
     assert "ferragro-logo" in url
-    assert "/assets/ferragro-logo.png" in url
     assert url.startswith("https://")
 
 
