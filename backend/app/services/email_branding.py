@@ -14,7 +14,8 @@ LOGO_CID = "ferragro-logo"
 # PNG con fondo blanco (#fff): Gmail y Outlook no pintan negro en transparencias.
 LOGO_FILENAME = "ferragro-logo-email.png"
 DEFAULT_API_BASE = "https://ferragro-api.onrender.com"
-DEFAULT_LOGO_URL = "https://citas.ferragro.vercel.app/ferragro-logo-email.png"
+LOGO_CACHE_BUSTER = "20260602-nuevo"
+DEFAULT_LOGO_URL = f"https://citas.ferragro.vercel.app/ferragro-logo-email.png?v={LOGO_CACHE_BUSTER}"
 LOGO_GITHUB_RAW = (
     "https://raw.githubusercontent.com/einitbarajas/citas-ferragro/main/"
     "backend/static/ferragro-logo-email.png"
@@ -53,7 +54,7 @@ def hosted_logo_url() -> str:
         return configured
     panel = str(getattr(settings, "public_panel_url", "") or "").strip().rstrip("/")
     if panel:
-        return f"{panel}/ferragro-logo-email.png"
+        return f"{panel}/ferragro-logo-email.png?v={LOGO_CACHE_BUSTER}"
     return DEFAULT_LOGO_URL
 
 

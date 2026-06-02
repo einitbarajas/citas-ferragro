@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 STATIC = ROOT / "backend" / "static"
 PUBLIC = ROOT / "frontend" / "public"
 SOURCE_CANDIDATES = (
+    STATIC / "ferragro-logo-source.png",
     STATIC / "ferragro-blan-bord.png",
     STATIC / "ferragro-logo.png",
     PUBLIC / "ferragro-logo.png",
