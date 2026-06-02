@@ -4719,7 +4719,7 @@ export default function DashboardPage() {
           <div className={card}>
             <h2 className="mb-2 text-lg font-semibold text-slate-900">Turnos por bodega y fecha</h2>
             <p className="mb-4 text-xs text-slate-600">
-              Define turnos explícitos por bodega (ej. 1:00 PM–2:00 PM de 60 min, 2:00 PM–2:30 PM de 30 min). Zona horaria:{" "}
+              Define las franjas del día (inicio y fin); el proveedor verá exactamente esos horarios al agendar. Zona horaria:{" "}
               {windowsPack?.timezone || "America/Bogota"}.
             </p>
             <div className="mb-4">

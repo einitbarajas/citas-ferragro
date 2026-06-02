@@ -29,20 +29,17 @@ def test_slot_duration_minutes():
     assert slot_duration_minutes(time(8, 0), time(9, 30)) == 90
 
 
-def test_iter_bookable_slots_returns_valid_turns():
+def test_iter_bookable_slots_one_per_configured_window():
     windows = [_window(8, 0, 9, 30), _window(10, 0, 10, 10)]  # segundo turno < 15 min
     slots = iter_bookable_slots(windows)
-    assert len(slots) == 3
-    assert (time(8, 0), time(9, 30), 90) in slots
-    assert (time(8, 0), time(9, 0), 60) in slots
-    assert (time(9, 0), time(9, 30), 30) in slots
+    assert len(slots) == 1
+    assert slots == [(time(8, 0), time(9, 30), 90)]
 
 
-def test_iter_bookable_slots_consecutive_in_long_window():
-    windows = [_window(10, 1, 12, 0)]
+def test_iter_bookable_slots_long_window_is_single_turn():
+    windows = [_window(10, 0, 13, 0)]
     slots = iter_bookable_slots(windows)
-    assert (time(10, 1), time(11, 1), 60) in slots
-    assert (time(11, 1), time(12, 0), 59) in slots
+    assert slots == [(time(10, 0), time(13, 0), 180)]
 
 
 def test_appointment_fits_in_windows():

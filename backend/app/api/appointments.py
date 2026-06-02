@@ -34,10 +34,12 @@ from app.services.appointment_service import (
 )
 from app.services.unload_teams import get_unload_team_or_raise, list_active_unload_teams, unload_team_to_dict
 from app.services.appointment_windows import (
+    MAX_SLOT_MINUTES,
+    MIN_SLOT_MINUTES,
     assert_appointment_slot,
     get_active_warehouse_or_raise,
-    iter_bookable_slots,
     resolve_team_windows_for_day,
+    slot_duration_minutes,
 )
 from app.api.http_utils import client_ip_from_request
 from app.services.appointment_actor import actor_from_principal
@@ -512,7 +514,13 @@ def list_available_slots_for_provider_day(
     available_slots: list[dict] = []
     slots_in_window = 0
     slots_after_notice = 0
-    for slot_start, slot_end, duration in iter_bookable_slots(windows):
+    # Una opción por franja publicada (inicio/fin exactos del admin; sin trocear en 60 min).
+    for window in windows:
+        slot_start = window.start_local
+        slot_end = window.end_local
+        duration = slot_duration_minutes(slot_start, slot_end)
+        if duration < MIN_SLOT_MINUTES or duration > MAX_SLOT_MINUTES:
+            continue
         hh = slot_start.hour
         mm = slot_start.minute
         local_dt = datetime(day.year, day.month, day.day, hh, mm, tzinfo=tz)
@@ -532,7 +540,8 @@ def list_available_slots_for_provider_day(
                     "duration_minutes": duration,
                 }
             )
-    available_times = sorted({s["start_local"] for s in available_slots})
+    available_slots.sort(key=lambda s: (s["start_local"], s["duration_minutes"]))
+    available_times = [s["start_local"] for s in available_slots]
     payload = {
         "day": str(day),
         "warehouse_id": warehouse_id,

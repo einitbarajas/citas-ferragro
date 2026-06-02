@@ -12,17 +12,10 @@ from app.models.warehouse import Warehouse
 
 MIN_SLOT_MINUTES = 15
 MAX_SLOT_MINUTES = 480
-# Duración típica para turnos consecutivos dentro de una franja larga (ej. 10:01–11:01 y 11:01–12:00).
-CONSECUTIVE_BOOKING_MINUTES = 60
 
 
 def _time_to_minutes(t: time) -> int:
     return t.hour * 60 + t.minute
-
-
-def _minutes_to_time(total_minutes: int) -> time:
-    total_minutes = max(0, min(total_minutes, 23 * 60 + 59))
-    return time(total_minutes // 60, total_minutes % 60)
 
 
 def slot_duration_minutes(start_local: time, end_local: time) -> int:
@@ -250,34 +243,19 @@ def list_windows_ordered(
 
 
 def iter_bookable_slots(windows: list) -> list[tuple[time, time, int]]:
-    """Turnos agendables: franja completa y, si es larga, bloques consecutivos (p. ej. 60 min)."""
+    """Un turno agendable por franja publicada (mismo inicio y fin que configuró admin)."""
     seen: set[tuple[str, str, int]] = set()
     out: list[tuple[time, time, int]] = []
-
-    def add_slot(slot_start: time, slot_end: time, minutes: int) -> None:
-        if minutes < MIN_SLOT_MINUTES or minutes > MAX_SLOT_MINUTES:
-            return
-        key = (slot_start.strftime("%H:%M"), slot_end.strftime("%H:%M"), minutes)
-        if key in seen:
-            return
-        seen.add(key)
-        out.append((slot_start, slot_end, minutes))
 
     for w in windows:
         duration = slot_duration_minutes(w.start_local, w.end_local)
         if duration < MIN_SLOT_MINUTES or duration > MAX_SLOT_MINUTES:
             continue
-        add_slot(w.start_local, w.end_local, duration)
-        if duration > CONSECUTIVE_BOOKING_MINUTES:
-            cursor = _time_to_minutes(w.start_local)
-            end_bound = _time_to_minutes(w.end_local)
-            while cursor + CONSECUTIVE_BOOKING_MINUTES <= end_bound:
-                block_end = cursor + CONSECUTIVE_BOOKING_MINUTES
-                add_slot(_minutes_to_time(cursor), _minutes_to_time(block_end), CONSECUTIVE_BOOKING_MINUTES)
-                cursor = block_end
-            remainder = end_bound - cursor
-            if remainder >= MIN_SLOT_MINUTES:
-                add_slot(_minutes_to_time(cursor), w.end_local, remainder)
+        key = (w.start_local.strftime("%H:%M"), w.end_local.strftime("%H:%M"), duration)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((w.start_local, w.end_local, duration))
     out.sort(key=lambda row: (_time_to_minutes(row[0]), row[2]))
     return out
 
@@ -308,7 +286,7 @@ def format_schedule_hint(windows: list) -> str:
             f"{w.start_local.strftime('%H:%M')}–{w.end_local.strftime('%H:%M')} ({duration} min)"
         )
     return (
-        "Turnos agendables: "
+        "Franjas habilitadas: "
         + ", ".join(parts)
         + f" (hora local {settings.business_timezone})."
     )
@@ -339,8 +317,10 @@ def start_time_allowed(
     if not windows_for_eval:
         return False
     t = local_dt.time()
-    for slot_start, slot_end, expected_duration in iter_bookable_slots(windows_for_eval):
-        if appointment_matches_slot(t, duration_minutes, slot_start, slot_end):
+    for window in windows_for_eval:
+        if appointment_matches_slot(
+            t, duration_minutes, window.start_local, window.end_local
+        ):
             return True
     return False
 

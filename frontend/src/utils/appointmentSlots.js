@@ -5,6 +5,61 @@ export function slotDurationMinutes(startLocal, endLocal) {
   return eh * 60 + em - (sh * 60 + sm);
 }
 
+function normalizeLocalTime(value) {
+  const raw = String(value || "").trim();
+  const [hhRaw, mmRaw] = raw.split(":");
+  const hh = Number(hhRaw);
+  const mm = Number(mmRaw);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return "";
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function timeToMinutes(hhmm) {
+  const [hh, mm] = String(hhmm || "").split(":").map(Number);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return NaN;
+  return hh * 60 + mm;
+}
+
+/** Quita turnos que son solo trozos de 60 min dentro de una franja larga (API antiguo). */
+function dropSlotsContainedInAnother(slots) {
+  const list = Array.isArray(slots) ? slots : [];
+  if (list.length < 2) return list;
+  return list.filter((slot) => {
+    const start = timeToMinutes(slot.start_local);
+    const end = start + Number(slot.duration_minutes);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+    return !list.some((other) => {
+      if (other === slot) return false;
+      const oStart = timeToMinutes(other.start_local);
+      const oEnd = oStart + Number(other.duration_minutes);
+      if (!Number.isFinite(oStart) || !Number.isFinite(oEnd)) return false;
+      const contained = oStart <= start && oEnd >= end;
+      const strict = oStart < start || oEnd > end;
+      return contained && strict;
+    });
+  });
+}
+
+function dedupeSlots(slots) {
+  const dedupe = new Map();
+  (slots || []).forEach((slot) => {
+    const start_local = normalizeLocalTime(slot.start_local);
+    const end_local = normalizeLocalTime(slot.end_local);
+    const duration_minutes =
+      Number(slot.duration_minutes) ||
+      (end_local ? slotDurationMinutes(start_local, end_local) : 0);
+    if (!start_local || !end_local || !Number.isFinite(duration_minutes) || duration_minutes < 15) {
+      return;
+    }
+    const key = `${start_local}|${end_local}|${duration_minutes}`;
+    if (!dedupe.has(key)) {
+      dedupe.set(key, { start_local, end_local, duration_minutes });
+    }
+  });
+  const unique = [...dedupe.values()].sort((a, b) => a.start_local.localeCompare(b.start_local));
+  return dropSlotsContainedInAnother(unique);
+}
+
 export function slotKey(slot) {
   return `${slot.start_local}|${slot.duration_minutes}`;
 }
@@ -36,43 +91,24 @@ export function formatSlotLabel(slot) {
 export function normalizeAvailableSlots(sourceData) {
   const explicit = Array.isArray(sourceData?.available_slots) ? sourceData.available_slots : [];
   if (explicit.length > 0) {
-    const seen = new Set();
-    return explicit
-      .map((s) => ({
-        start_local: String(s.start_local || ""),
-        end_local: String(s.end_local || ""),
-        duration_minutes: Number(s.duration_minutes) || slotDurationMinutes(s.start_local, s.end_local),
-      }))
-      .filter((s) => {
-        if (!s.start_local || s.duration_minutes < 15) return false;
-        const key = `${s.start_local}|${s.end_local}|${s.duration_minutes}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+    const mapped = explicit.map((s) => ({
+      start_local: String(s.start_local || ""),
+      end_local: String(s.end_local || ""),
+      duration_minutes: Number(s.duration_minutes) || slotDurationMinutes(s.start_local, s.end_local),
+    }));
+    return dedupeSlots(mapped);
   }
-  const times = Array.isArray(sourceData?.available_times) ? sourceData.available_times : [];
-  const fallbackMinutes = Number(sourceData?.slot_minutes || 90);
-  return times.map((start_local) => ({
-    start_local,
-    end_local: "",
-    duration_minutes: fallbackMinutes,
-  }));
+  // Sin available_slots no inventamos duración (p. ej. 60 o 90 min): la franja debe venir completa del API.
+  return [];
 }
 
 export function buildSlotsFromFranjas(franjas) {
-  const seen = new Set();
-  const out = [];
-  (franjas || []).forEach((window) => {
+  const mapped = (franjas || []).map((window) => {
     const start_local = String(window.start_local || "");
     const end_local = String(window.end_local || "");
     const duration_minutes =
       Number(window.duration_minutes) || slotDurationMinutes(start_local, end_local);
-    if (!start_local || duration_minutes < 15) return;
-    const key = `${start_local}|${end_local}|${duration_minutes}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push({ start_local, end_local, duration_minutes });
+    return { start_local, end_local, duration_minutes };
   });
-  return out.sort((a, b) => a.start_local.localeCompare(b.start_local));
+  return dedupeSlots(mapped);
 }
