@@ -25,8 +25,20 @@
   ],
   "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "source": "/api/:path*",
+      "destination": "https://ferragro-api.onrender.com/api/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://ferragro-api.onrender.com/health"
+    },
+    {
+      "source": "/health/:path*",
+      "destination": "https://ferragro-api.onrender.com/health/:path*"
     }
+  ],
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

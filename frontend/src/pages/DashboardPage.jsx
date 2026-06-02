@@ -13,6 +13,7 @@ import api, {
   isAppointmentSlotConflict,
   parseApiError,
   parseApiResponse,
+  postWithApiRetry,
   warmApi,
 } from "../api/client";
 import {
@@ -600,6 +601,12 @@ export default function DashboardPage() {
 
   /** Recarga calendario/franjas solo cuando cambia el muelle relevante al rol actual. */
   const warehouseSchedulingTeamKey = isProveedor ? activeProviderUnloadTeamId : activeAdminFranjaTeamId;
+
+  useEffect(() => {
+    if (authReady && isProveedor) {
+      void warmApi({ maxWaitMs: 60000 });
+    }
+  }, [authReady, isProveedor]);
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
@@ -3348,7 +3355,9 @@ export default function DashboardPage() {
       setProviderCreateSubmitting(true);
       await warmApi();
       try {
-        await api.post(`${API_PREFIX}/appointments`, createPayload, { timeout: API_SLOW_TIMEOUT_MS });
+        await postWithApiRetry(`${API_PREFIX}/appointments`, createPayload, {
+          timeout: API_SLOW_TIMEOUT_MS,
+        });
       } catch (postErr) {
         if (!isApiTimeoutError(postErr)) throw postErr;
         const latestAppointments = await loadProviderAppointments();

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const PRODUCTION_API = "https://ferragro-api.onrender.com";
+import { PRODUCTION_API_URL } from "../api/client";
 /** Fecha mínima en build_id (YYYY-MM-DD al inicio). Sincronizar con backend/app/main.py → API_BUILD_ID. */
 const MIN_API_BUILD_DATE = "2026-05-21";
 /** Opcional en Vercel: mismo valor que API_BUILD_ID en backend/app/main.py */
@@ -28,7 +28,11 @@ export default function ApiStaleBanner() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${PRODUCTION_API}/health`, { credentials: "omit" });
+        const healthUrl =
+          typeof window !== "undefined" && window.location.hostname.endsWith(".vercel.app")
+            ? "/health"
+            : `${PRODUCTION_API_URL}/health`;
+        const res = await fetch(healthUrl, { credentials: "omit" });
         const json = await res.json();
         const bid = String(json?.data?.build_id || "");
         if (cancelled) return;
@@ -64,7 +68,11 @@ export default function ApiStaleBanner() {
         </a>{" "}
         y esperar <strong>Live</strong>. Luego comprueba{" "}
         <a
-          href={`${PRODUCTION_API}/health`}
+          href={
+            typeof window !== "undefined" && window.location.hostname.endsWith(".vercel.app")
+              ? "/health"
+              : `${PRODUCTION_API_URL}/health`
+          }
           target="_blank"
           rel="noopener noreferrer"
           className="underline"

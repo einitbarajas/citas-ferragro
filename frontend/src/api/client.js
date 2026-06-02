@@ -16,20 +16,28 @@ export const API_PREFIX = (import.meta.env.VITE_API_PREFIX || "/api/v1").trim();
  *   Vite reenvía `/api` y `/health` al backend (proxy). Así no dependes del puerto 8000 expuesto en el navegador.
  * - `npm run build` + preview o archivos estáticos: define `VITE_API_URL` (p. ej. http://localhost:8000) o se usa el host actual :8000.
  */
-const PRODUCTION_API_URL = "https://ferragro-api.onrender.com";
+export const PRODUCTION_API_URL = "https://ferragro-api.onrender.com";
+
+/** Portal en Vercel: peticiones al API vía proxy /api (misma URL, sin CORS ni cortes a Render). */
+function usesVercelApiProxy() {
+  if (typeof window === "undefined") return false;
+  const host = String(window.location.hostname || "").toLowerCase();
+  return host.endsWith(".vercel.app");
+}
 
 function resolveApiBaseUrl() {
-  const explicit = import.meta.env.VITE_API_URL;
-  if (typeof explicit === "string" && explicit.trim()) {
-    return explicit.trim().replace(/\/$/, "");
-  }
-  // En ejecución local (dev o preview en localhost), preferimos misma-origin
-  // para usar el proxy de Vite hacia el backend local.
   if (typeof window !== "undefined") {
     const host = String(window.location.hostname || "").toLowerCase();
     if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
       return "";
     }
+    if (import.meta.env.PROD && usesVercelApiProxy()) {
+      return "";
+    }
+  }
+  const explicit = import.meta.env.VITE_API_URL;
+  if (typeof explicit === "string" && explicit.trim()) {
+    return explicit.trim().replace(/\/$/, "");
   }
   if (import.meta.env.DEV) {
     return "";
@@ -210,6 +218,18 @@ api.interceptors.response.use(
   }
 );
 
+/** Reintento único tras despertar Render (fallos ERR_NETWORK intermitentes). */
+export async function postWithApiRetry(url, data, config = {}) {
+  try {
+    return await api.post(url, data, config);
+  } catch (error) {
+    const isNetwork = error?.code === "ERR_NETWORK" || error?.message === "Network Error";
+    if (!isNetwork || config._apiRetried) throw error;
+    await warmApi({ maxWaitMs: 60000 });
+    return api.post(url, data, { ...config, _apiRetried: true });
+  }
+}
+
 /** Login con reintentos tras cold start de Render. */
 export async function postLogin(email, password, { maxAttempts = 2 } = {}) {
   await warmApi();
@@ -298,7 +318,7 @@ export function parseApiError(error) {
       "No se pudo conectar con el API.",
       dev
         ? "En modo desarrollo: arranca el backend en el puerto 8000 (por ejemplo `python main.py` en la carpeta backend) y recarga la página. Las peticiones a /api se reenvían desde Vite (puerto 2711) al 8000; no hace falta abrir el 8000 en el navegador."
-        : "En producción: verifica VITE_API_URL=https://ferragro-api.onrender.com en Vercel y que el API esté activo.",
+        : "El servidor en Render puede estar despertando o hubo un corte de red. Espera 10–20 s, recarga la página (Ctrl+F5) y vuelve a intentar. Si persiste, comprueba https://ferragro-api.onrender.com/health",
     ].join(" ");
   }
   if (error?.message && !error?.response) {
