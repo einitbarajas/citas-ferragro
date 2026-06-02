@@ -1,7 +1,7 @@
 # Informe: sistema de correo transaccional Ferragro
 
 **Fecha:** 2026-06-01  
-**Build:** `2026-06-01-email-delivery-v2`  
+**Build:** `2026-06-01-email-delivery-v1`  
 **API:** https://ferragro-api.onrender.com  
 **Panel:** https://citas.ferragro.vercel.app  
 
@@ -12,9 +12,8 @@
 | Área | Estado | Notas |
 |------|--------|--------|
 | Código de envío | Mejorado | Reintentos, logs, enlaces al panel, `/health/email` |
-| Producción Render | **Bloqueado (config)** | Sin `RESEND_API_KEY` en servidor; SMTP Gmail no funciona en plan free |
-| Código v2 (recordatorios + seguridad) | **Implementado** | Pendiente deploy + Resend en Render |
-| Pruebas reales multi-proveedor | **Pendiente de config** | Requiere `RESEND_API_KEY` en Render y dominio verificado para todos los destinatarios |
+| Producción Render | **Bloqueado** | Sin `RESEND_API_KEY` en servidor; SMTP Gmail no funciona en plan free |
+| Pruebas reales multi-proveedor | **Pendiente de config** | Requiere dominio verificado en Resend/Brevo |
 | Recuperación contraseña | Código listo | Usa **contraseña temporal** (no magic link) |
 
 **Conclusión:** El software está preparado; el fallo actual es **configuración en Render**, no lógica de plantillas.
@@ -51,17 +50,9 @@ Las notificaciones **in-app** funcionan sin SMTP. Los usuarios pueden creer que 
 
 Con `RESEND_SANDBOX=true`, Resend solo entrega al **correo de la cuenta Resend**. No sirve para probar Gmail/Outlook/Yahoo de terceros hasta verificar dominio.
 
-### 2.5 Recordatorios 24 h (corregido en v2)
+### 2.5 Recordatorios 24 h
 
-Antes solo se registraban en BD. Ahora `reminder_scheduler` llama a `notify_appointment_reminder_24h` y envía correo + notificación in-app.
-
-### 2.6 Alertas de seguridad (nuevo en v2)
-
-Correos vía `security_email.py`: bloqueo por intentos fallidos, aviso previo al bloqueo, cambio de contraseña, cambio de correo, inicio de sesión desde IP distinta.
-
-### 2.7 Verificación de correo / magic links
-
-No implementado: el registro no exige enlace de verificación; la recuperación usa **contraseña temporal** (no token URL).
+`reminder_scheduler.py` **no envía email** (solo BD). Fuera del alcance actual salvo que se pida explícitamente.
 
 ---
 
@@ -72,15 +63,12 @@ No implementado: el registro no exige enlace de verificación; la recuperación 
 | Módulo unificado con reintentos y logs | `backend/app/services/email_delivery.py` |
 | Avisos de cita con reintentos | `email_dispatch.py` → `send_notification_email_with_retry` |
 | Recuperación vía Resend + reintentos | `mailer.py`, `email_dispatch.py` |
-| Recordatorio 24 h por correo | `reminder_scheduler.py`, `notification_service.py` |
-| Alertas de seguridad | `security_email.py`, `auth.py`, `crud.py` |
-| Tags Resend por tipo de correo | `resend_mailer.py`, `mailer.py` |
 | Botón/enlace al panel en HTML y texto | `mailer.py` (`panel_cta_*`, `PUBLIC_PANEL_URL`) |
 | Health honesto (`email_enabled` real) | `main.py` `/health` |
 | Diagnóstico de flujos | `main.py` `/health/email` |
 | Envío de prueba (maintenance) | `auth.py` `POST /api/auth/maintenance/send-test-email` |
 | Script de prueba | `scripts/probar-correo-completo.ps1` |
-| Tests unitarios | `backend/tests/test_email_delivery.py`, `test_reminder_scheduler.py`, `test_security_email.py` |
+| Tests unitarios | `backend/tests/test_email_delivery.py` |
 
 ---
 
@@ -198,19 +186,7 @@ GET /health → build_id: "2026-06-01-email-delivery-v1"
 GET /health/email → can_deliver: true (solo si Resend configurado)
 ```
 
-**Estado al redactar este informe (verificado en API):**
-
-```json
-{
-  "email_enabled": false,
-  "resend_ready": false,
-  "email_provider": "smtp",
-  "build_id": "2026-06-01-email-delivery-v1",
-  "render_smtp_blocked_hint": "Render free bloquea SMTP..."
-}
-```
-
-**Acción inmediata:** subir `RESEND_API_KEY` con `.\scripts\hacer-correo-funcionar.ps1` o pegar `smtp-render.env` en Render, luego desplegar `main` con build `v2`.
+**Estado al redactar este informe:** producción seguía en commit antiguo sin Resend (`render_git_commit` anterior a estos cambios).
 
 ---
 

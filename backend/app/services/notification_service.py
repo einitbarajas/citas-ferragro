@@ -55,11 +55,21 @@ def _appointment_email_context(db: Session, appointment: Appointment) -> _Appoin
 
 
 def admin_notification_emails(db: Session) -> list[str]:
-    """Correos Admin en BD + admin de bootstrap (p. ej. ebarajas@ferragro.com)."""
+    """Correos de usuarios con rol Admin registrados en BD.
+
+    El admin_bootstrap_email se añade SOLO como fallback cuando no existe ningún
+    Admin en la base de datos. Esto evita que un email hardcodeado reciba todas
+    las notificaciones de todas las bodegas sin ser un Admin real.
+    """
     emails = _staff_emails_for_role(db, UserRole.admin)
-    bootstrap = str(settings.admin_bootstrap_email or "").strip()
-    if bootstrap:
-        emails = dedupe_emails([*emails, bootstrap])
+    if not emails:
+        bootstrap = str(settings.admin_bootstrap_email or "").strip()
+        if bootstrap:
+            logger.info(
+                "No hay Admins en BD — usando admin_bootstrap_email (%s) como fallback",
+                bootstrap,
+            )
+            emails = dedupe_emails([bootstrap])
     return emails
 
 

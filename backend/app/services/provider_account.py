@@ -1,6 +1,7 @@
 """Suspensión, purga y notificaciones de cuentas proveedor (solo proveedores; no aplica a staff)."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -19,6 +20,8 @@ from app.services.credential_cleanup import delete_credential_fully
 from app.services.email_dispatch import dispatch_provider_account_notice
 from app.services.email_utils import dedupe_emails
 from app.services.notification_service import admin_notification_emails
+
+logger = logging.getLogger(__name__)
 
 
 def provider_purge_after_days() -> int:
@@ -63,9 +66,16 @@ def notify_provider_and_admins(
     actor_label: str,
     actor_email: str | None = None,
 ) -> None:
-    email = provider.company_email
     if provider.credential and provider.credential.email:
-        email = provider.credential.email
+        email = str(provider.credential.email).strip()
+    else:
+        email = str(provider.company_email or "").strip()
+    if not email:
+        logger.warning(
+            "Proveedor NIT %s sin correo de sesión; aviso solo a administradores (action=%s)",
+            provider.nit,
+            action,
+        )
     admin_emails = admin_notification_emails(db)
     if actor_email:
         admin_emails = dedupe_emails([*admin_emails, actor_email])

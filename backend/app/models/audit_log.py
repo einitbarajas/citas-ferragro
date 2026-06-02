@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -11,6 +11,7 @@ class ChangeLog(Base):
 
     id: Mapped[int] = mapped_column("Id", primary_key=True, index=True)
     actor_id: Mapped[str] = mapped_column("IdActor", String(30), nullable=False, index=True)
+    actor_role: Mapped[str | None] = mapped_column("RolActor", String(30), nullable=True)
     appointment_id: Mapped[int] = mapped_column("IdCita", ForeignKey("Citas.Id"), nullable=False)
     action: Mapped[str] = mapped_column("Accion", String(80), nullable=False)
     description: Mapped[str] = mapped_column("Descripcion", Text, nullable=False)

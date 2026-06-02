@@ -33,12 +33,6 @@ from app.services.auth_sessions import (
 from app.services.admin_bootstrap import ensure_production_admin
 from app.services.credential_cleanup import credential_has_active_owner, purge_orphan_credentials
 from app.services.login_policy import is_login_blocked, record_login_failure, reset_login_failures
-from app.services.security_email import (
-    dispatch_account_lockout_email,
-    dispatch_failed_login_warning_email,
-    dispatch_password_changed_email,
-    dispatch_suspicious_login_email,
-)
 from app.services.email_dispatch import dispatch_welcome_provider, dispatch_welcome_staff
 from app.services.admin_password_reset import reset_admin_password
 from app.services.email_dispatch import send_recovery_password_email
@@ -93,56 +87,6 @@ def _audit_login(
             failure_reason=failure_reason[:255] if failure_reason else None,
             created_at=datetime.now(timezone.utc),
         )
-    )
-
-
-def _last_successful_login_ip(db: Session, credential_id: int) -> str | None:
-    row = db.execute(
-        select(LoginAudit.ip_address)
-        .where(LoginAudit.credential_id == credential_id, LoginAudit.success.is_(True))
-        .order_by(LoginAudit.created_at.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    return str(row).strip() if row else None
-
-
-def _notify_login_security(
-  cred: Credential,
-  *,
-  ip: str | None,
-  user_agent: str | None,
-  outcome,
-) -> None:
-    account_email = cred.email.strip()
-    if outcome.just_blocked:
-        dispatch_account_lockout_email(
-            account_email,
-            lockout_minutes=settings.login_lockout_minutes,
-        )
-    elif outcome.consecutive_failures == max(1, settings.login_max_attempts - 1):
-        dispatch_failed_login_warning_email(
-            account_email,
-            failures=outcome.consecutive_failures,
-            max_attempts=settings.login_max_attempts,
-        )
-
-
-def _notify_successful_login_security(
-    db: Session,
-    cred: Credential,
-    *,
-    ip: str | None,
-    user_agent: str | None,
-) -> None:
-    previous_ip = _last_successful_login_ip(db, cred.id)
-    if not previous_ip or not ip:
-        return
-    if previous_ip == ip:
-        return
-    dispatch_suspicious_login_email(
-        cred.email.strip(),
-        ip_address=ip,
-        user_agent=user_agent,
     )
 
 
@@ -305,14 +249,12 @@ def login(
         )
 
     if not verify_password(payload.password, cred.password_hash):
-        outcome = record_login_failure(db, cred.id)
+        record_login_failure(db, cred.id)
         _audit_login(db, credential_id=cred.id, email=email, success=False, ip=ip, user_agent=ua, failure_reason="clave_incorrecta")
         db.commit()
-        _notify_login_security(cred, ip=ip, user_agent=ua, outcome=outcome)
         raise HTTPException(status_code=401, detail="Email o contraseña inválidos")
 
     reset_login_failures(db, cred.id)
-    _notify_successful_login_security(db, cred, ip=ip, user_agent=ua)
 
     user = db.execute(select(User).where(User.credential_id == cred.id)).scalar_one_or_none()
     if user:
@@ -479,48 +421,22 @@ def forgot_password(
             account_email,
             temporary_password,
         )
-        from app.core.config import settings as app_settings
-
-        extra = ""
-        if app_settings.resend_sandbox:
-            from app.services.email_sandbox import resend_sandbox_inbox
-
-            inbox = resend_sandbox_inbox()
-            if inbox:
-                extra = f" Modo prueba: revisa también {inbox}."
         return ok_response(
             {
                 "email_sent": False,
                 "must_change_password": True,
             },
             "La contraseña temporal ya está activa, pero no se pudo enviar el correo. "
-            "Revisa spam o contacta a soporte Ferragro."
-            + extra,
+            "Revisa spam o contacta a soporte Ferragro.",
         )
-
-    from app.core.config import settings as app_settings
-    from app.services.email_sandbox import sandbox_delivery_hint
-
-    hint = None
-    if app_settings.resend_sandbox:
-        from app.services.email_sandbox import redirect_recipient_for_sandbox
-
-        delivery_to, _ = redirect_recipient_for_sandbox(account_email, "")
-        hint = sandbox_delivery_hint(account_email, delivery_to)
-
-    success_msg = (
-        "Contraseña temporal enviada a tu correo. Revisa bandeja de entrada y correo no deseado. "
-        "Ingresa con esa clave; el sistema te pedirá cambiarla."
-    )
-    if hint:
-        success_msg = f"{success_msg} {hint}"
 
     return ok_response(
         {
             "email_sent": True,
             "must_change_password": True,
         },
-        success_msg,
+        "Contraseña temporal enviada a tu correo. Revisa bandeja de entrada y correo no deseado. "
+        "Ingresa con esa clave; el sistema te pedirá cambiarla.",
     )
 
 
@@ -558,7 +474,6 @@ def change_password(
         state.temporary_issued_at = None
 
     db.commit()
-    dispatch_password_changed_email(cred.email.strip())
     return ok_response(None, "Contraseña actualizada correctamente.")
 
 

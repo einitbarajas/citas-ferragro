@@ -216,14 +216,6 @@ if ($envMap["SMTP_PROFILE"]) { $toSet["SMTP_PROFILE"] = $envMap["SMTP_PROFILE"] 
 if ($envMap["RESEND_API_KEY"] -and $envMap["RESEND_API_KEY"].Trim()) {
     $toSet["RESEND_API_KEY"] = $envMap["RESEND_API_KEY"].Trim()
     $toSet["RESEND_SANDBOX"] = if ($envMap["RESEND_SANDBOX"]) { $envMap["RESEND_SANDBOX"] } else { "true" }
-    if ($envMap["RESEND_SANDBOX_INBOX"] -and $envMap["RESEND_SANDBOX_INBOX"].Trim()) {
-        $toSet["RESEND_SANDBOX_INBOX"] = $envMap["RESEND_SANDBOX_INBOX"].Trim()
-    } elseif ($toSet["RESEND_SANDBOX"] -eq "true") {
-        $toSet["RESEND_SANDBOX_INBOX"] = $toSet["SMTP_USER"]
-    }
-    if ($envMap["RESEND_FROM_EMAIL"] -and $envMap["RESEND_FROM_EMAIL"].Trim()) {
-        $toSet["RESEND_FROM_EMAIL"] = $envMap["RESEND_FROM_EMAIL"].Trim()
-    }
 }
 if ($envMap["BREVO_API_KEY"] -and $envMap["BREVO_API_KEY"].Trim()) {
     $toSet["BREVO_API_KEY"] = $envMap["BREVO_API_KEY"].Trim()

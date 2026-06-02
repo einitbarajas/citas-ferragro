@@ -1,94 +1,47 @@
-# Correo en producción — solución definitiva
+# Correo en producción
 
-## Estado actual (lo que muestra tu captura)
+## ¿Funciona ahora?
 
-| Campo | Significado |
-|--------|-------------|
-| `email_enabled: false` | **No se puede enviar correo** |
-| `resend_ready: false` | Render **no tiene** `RESEND_API_KEY` cargada |
-| `smtp_blocked_on_host: true` | Gmail SMTP **bloqueado** en Render free |
+**NO** en https://ferragro-api.onrender.com hasta que subas Resend a Render.
 
-Tu archivo local `smtp-render.env` está bien; **el servidor nunca lo recibió** (o no se redeployó).
+Comprueba: https://ferragro-api.onrender.com/health → debe decir `resend_ready: true`.
 
----
+La API key de Resend en tu `.env` **sí funciona** (envío de prueba OK). Falta copiarla al servidor.
 
-## Solución A — Automática (2 minutos, recomendada)
+## Activar en 1 comando (2 minutos)
 
-1. Crea API key en [Render → API Keys](https://dashboard.render.com/u/settings#api-keys) → copia `rnd_...`
+> Si tenías `render login`, el token CLI **caduca** (~2 semanas). Si el script falla con 401, crea una **API key** nueva (no caduca).
 
-2. En PowerShell, en la carpeta del proyecto:
+1. Crea una API key en [Render → API Keys](https://dashboard.render.com/u/settings#api-keys) (`rnd_...`).
+
+2. Ejecuta (sustituye la key):
 
 ```powershell
-.\scripts\solucionar-correo-ya.ps1 -RenderApiKey "rnd_PEGA_TU_KEY_AQUI"
+.\scripts\hacer-correo-funcionar.ps1 -RenderApiKey "rnd_TU_KEY_AQUI"
 ```
 
-3. Espera a que diga **CORREO ACTIVO EN PRODUCCIÓN**
+3. Cuando termine, abre `/health` y prueba **Olvidé mi contraseña** en https://citas.ferragro.vercel.app
 
-4. Abre https://ferragro-api.onrender.com/health → debe mostrar:
-   - `resend_ready: true`
-   - `email_enabled: true`
-   - `email_provider: "resend"`
+## Manual (sin API key de Render)
 
----
+```powershell
+.\scripts\subir-resend-render.ps1
+```
 
-## Solución B — Manual (más rápida: solo 2 variables)
+(Copia `smtp-render.env` al portapapeles y abre el panel de Render.)
 
-Si pegaste todo `smtp-render.env` y sigue igual, prueba **solo esto** (no hace falta tocar Gmail SMTP):
+1. [Environment ferragro-api](https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0/env) → **Add from .env** → pegar (Ctrl+V) o elegir `smtp-render.env`
+2. **Save Changes**
+3. **Manual Deploy** → último commit de `main`
+4. Comprueba `/health` → `resend_ready: true`
 
-1. [Environment → ferragro-api](https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0/env)
-2. **Add Environment Variable** (una por una):
-   - `RESEND_API_KEY` = copia el valor de `smtp-render.env` en tu PC (empieza por `re_`)
-   - `RESEND_SANDBOX` = `true`
-3. **Save Changes**
-4. Pestaña del servicio → **Manual Deploy** → **Deploy latest commit**
-5. Espera 3–5 min y abre `/health` → debe decir `resend_ready: true`
+Variables mínimas:
 
-> Con sandbox, el correo solo llega al Gmail de tu cuenta Resend.
-
----
-
-## Solución C — Secret File (si B no basta)
-
-**Importante:** en Render hay **dos sitios** distintos. Muchos pegan solo en "Environment" sin redeploy, o el archivo no se llama `smtp.env`.
-
-### Paso 1 — Secret File (obligatorio)
-
-1. Abre [ferragro-api → Secret Files](https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0/secrets)
-2. Busca el archivo **`smtp.env`** (si no existe, créalo con ese nombre exacto)
-3. Abre `smtp-render.env` en tu PC (raíz del proyecto)
-4. **Copia todo** el contenido y pégalo en `smtp.env` en Render
-5. **Save**
-
-### Paso 2 — Variables sueltas (respaldo)
-
-1. [Environment](https://dashboard.render.com/web/srv-d82dvanaqgkc739362u0/env)
-2. Añade o verifica:
-   - `RESEND_API_KEY` = (la misma que en smtp-render.env)
-   - `RESEND_SANDBOX` = `true`
-3. **Save Changes**
-
-### Paso 3 — Redeploy (obligatorio)
-
-1. Pestaña **Manual Deploy**
-2. **Deploy latest commit**
-3. Espera 3–5 minutos
-
-### Paso 4 — Comprobar
-
-https://ferragro-api.onrender.com/health → `resend_ready: true`
-
-Prueba **Olvidé mi contraseña** en https://citas.ferragro.vercel.app
-
----
+```env
+RESEND_API_KEY=re_...
+RESEND_SANDBOX=true
+```
 
 ## Sandbox Resend
 
-Con `RESEND_SANDBOX=true` el correo solo llega al **Gmail de tu cuenta Resend** (no a cualquier dirección). Para enviar a todos los correos, verifica dominio en resend.com y pon `RESEND_SANDBOX=false`.
-
----
-
-## Si sigue en false después de pegar
-
-1. ¿Hiciste **Manual Deploy** después de guardar?
-2. ¿El Secret File se llama exactamente **`smtp.env`**?
-3. Ejecuta Solución A con `rnd_...` — es la forma más fiable.
+Con `RESEND_SANDBOX=true` los correos solo llegan al **Gmail de tu cuenta Resend** (normalmente el mismo que usas en el proyecto). Para cualquier otro correo, verifica dominio en resend.com.

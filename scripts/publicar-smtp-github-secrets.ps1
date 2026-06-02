@@ -23,14 +23,7 @@ function Read-DotEnv {
 }
 
 $map = Read-DotEnv -Path $envFile
-$smtpPath = Join-Path $repoRoot "smtp-render.env"
-if (Test-Path $smtpPath) {
-    $smtpMap = Read-DotEnv -Path $smtpPath
-    foreach ($k in $smtpMap.Keys) {
-        if (-not $map[$k]) { $map[$k] = $smtpMap[$k] }
-    }
-}
-$required = @("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM_EMAIL", "RESEND_API_KEY")
+$required = @("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM_EMAIL")
 foreach ($k in $required) {
     if ([string]::IsNullOrWhiteSpace($map[$k])) {
         throw "Falta $k en .env"

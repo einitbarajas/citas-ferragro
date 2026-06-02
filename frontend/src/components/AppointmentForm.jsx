@@ -3,6 +3,7 @@ import api, { API_PREFIX, parseApiResponse } from "../api/client";
 import {
   buildSlotsFromFranjas,
   formatSlotLabel,
+  normalizeAvailableSlots,
   parseSlotKey,
   slotKey,
 } from "../utils/appointmentSlots";
@@ -74,27 +75,40 @@ export default function AppointmentForm({
 
   useEffect(() => {
     const run = async () => {
-      if (!form.appointment_date || !warehouseId) {
+      if (!form.appointment_date || !warehouseId || !unloadTeamId) {
         setResolvedWindows([]);
         return;
       }
       try {
+        const teamId = Number(unloadTeamId);
+        if (!Number.isFinite(teamId) || teamId < 1) {
+          setResolvedWindows([]);
+          return;
+        }
         const response = await api.get(
-          `${API_PREFIX}/crud/appointment-franjas/resolved?day=${form.appointment_date}&warehouse_id=${warehouseId}`
+          `${API_PREFIX}/appointments/available-slots`,
+          {
+            params: {
+              day: form.appointment_date,
+              warehouse_id: warehouseId,
+              unload_team_id: teamId,
+            },
+          }
         );
         const payload = parseApiResponse(response);
         if (!payload.success) {
           setResolvedWindows([]);
           return;
         }
-        const franjas = payload.data?.franjas;
-        setResolvedWindows(Array.isArray(franjas) && franjas.length > 0 ? franjas : EMPTY_FRANJAS);
+        const sourceData = payload.data || {};
+        const slots = normalizeAvailableSlots(sourceData);
+        setResolvedWindows(slots.length > 0 ? slots : EMPTY_FRANJAS);
       } catch {
         setResolvedWindows([]);
       }
     };
     run();
-  }, [form.appointment_date, warehouseId]);
+  }, [form.appointment_date, warehouseId, unloadTeamId]);
 
   useEffect(() => {
     const run = async () => {

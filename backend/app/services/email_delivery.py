@@ -96,16 +96,6 @@ def deliver_with_retry(
                     recipient,
                     subject,
                 )
-                from app.services.email_delivery_log import record_delivery
-
-                record_delivery(
-                    kind=kind,
-                    to=recipient,
-                    subject=subject,
-                    provider=provider,
-                    ok=True,
-                    attempts=attempt,
-                )
                 return EmailDeliveryResult(
                     ok=True,
                     recipient=recipient,
@@ -137,17 +127,6 @@ def deliver_with_retry(
         if attempt < max_attempts:
             time.sleep(RETRY_DELAY_SECONDS)
 
-    from app.services.email_delivery_log import record_delivery
-
-    record_delivery(
-        kind=kind,
-        to=recipient,
-        subject=subject,
-        provider=provider,
-        ok=False,
-        attempts=max_attempts,
-        error=last_error,
-    )
     return EmailDeliveryResult(
         ok=False,
         recipient=recipient,
