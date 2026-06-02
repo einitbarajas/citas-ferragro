@@ -127,7 +127,14 @@ def panel_cta_html(button_label: str = "Ir al panel Ferragro") -> str:
             </a>
           </p>
 """
-from app.services.email_branding import LOGO_CID, LOGO_FILENAME, read_logo_bytes
+from app.services.email_branding import (
+    LOGO_CID_DARK,
+    LOGO_CID_LIGHT,
+    LOGO_FILENAME_DARK,
+    LOGO_FILENAME_LIGHT,
+    read_logo_bytes_dark,
+    read_logo_bytes_light,
+)
 from app.services.email_branding import logo_img_html as branding_logo_img_html
 
 SMTP_TIMEOUT_SECONDS = 8
@@ -235,32 +242,37 @@ def _build_mail_layout(body_html: str, *, use_cid_logo: bool = True) -> str:
     return f"""\
 <!DOCTYPE html>
 <html lang="es">
-  <body style="margin:0;padding:0;background:#f3f7f4;font-family:Arial,sans-serif;color:#1f2937;">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="supported-color-schemes" content="light dark" />
+  </head>
+  <body class="ferragro-email-body" style="margin:0;padding:0;background:#f3f7f4;font-family:Arial,sans-serif;color:#1f2937;">
     <div style="max-width:640px;margin:24px auto;padding:0 12px;">
-      <div style="overflow:hidden;border:1px solid #dbe9dd;border-radius:14px;background:#ffffff;">
-        <div style="padding:18px 20px 0;">
+      <div class="ferragro-email-card" style="overflow:hidden;border:1px solid #dbe9dd;border-radius:14px;background:#ffffff;">
+        <div style="padding:18px 20px 0;background:transparent;">
           {logo_html}
         </div>
         <div style="padding:20px 28px 30px;">
           {body_html}
-          <div style="margin-top:18px;padding-top:14px;border-top:1px solid #dbe9dd;">
+          <div class="ferragro-email-footer" style="margin-top:18px;padding-top:14px;border-top:1px solid #dbe9dd;">
             <p style="margin:0 0 6px;line-height:1.5;font-size:14px;">
               <strong>Soporte:</strong>
-              <a href="mailto:{SUPPORT_EMAIL}" style="color:#0f6e2f;text-decoration:none;">{SUPPORT_EMAIL}</a>
+              <a class="ferragro-email-link" href="mailto:{SUPPORT_EMAIL}" style="color:#0f6e2f;text-decoration:none;">{SUPPORT_EMAIL}</a>
             </p>
             <p style="margin:0 0 6px;line-height:1.5;font-size:14px;">
               <strong>WhatsApp:</strong>
-              <a href="{SUPPORT_WHATSAPP_URL}" style="color:#0f6e2f;text-decoration:none;">{SUPPORT_PHONE}</a>
+              <a class="ferragro-email-link" href="{SUPPORT_WHATSAPP_URL}" style="color:#0f6e2f;text-decoration:none;">{SUPPORT_PHONE}</a>
             </p>
             <p style="margin:0 0 6px;line-height:1.5;font-size:14px;">
               <strong>Dirección:</strong> {COMPANY_ADDRESS}
             </p>
             <p style="margin:0;line-height:1.5;font-size:14px;">
               <strong>Sitio web:</strong>
-              <a href="{COMPANY_WEBSITE}" style="color:#0f6e2f;text-decoration:none;">{COMPANY_WEBSITE}</a>
+              <a class="ferragro-email-link" href="{COMPANY_WEBSITE}" style="color:#0f6e2f;text-decoration:none;">{COMPANY_WEBSITE}</a>
             </p>
           </div>
-          <p style="margin:20px 0 0;color:#0f6e2f;font-weight:700;">Ferragro</p>
+          <p class="ferragro-email-brand" style="margin:20px 0 0;color:#0f6e2f;font-weight:700;">Ferragro</p>
         </div>
       </div>
     </div>
@@ -328,11 +340,15 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
     alternative_part.attach(MIMEText(plain_body, "plain", _charset="utf-8"))
     alternative_part.attach(MIMEText(html_body, "html", _charset="utf-8"))
     message.attach(alternative_part)
-    logo_bytes = read_logo_bytes()
-    if logo_bytes:
+    for logo_bytes, cid, filename in (
+        (read_logo_bytes_light(), LOGO_CID_LIGHT, LOGO_FILENAME_LIGHT),
+        (read_logo_bytes_dark(), LOGO_CID_DARK, LOGO_FILENAME_DARK),
+    ):
+        if not logo_bytes:
+            continue
         logo_mime = MIMEImage(logo_bytes, _subtype="png")
-        logo_mime.add_header("Content-ID", f"<{LOGO_CID}>")
-        logo_mime.add_header("Content-Disposition", "inline", filename=LOGO_FILENAME)
+        logo_mime.add_header("Content-ID", f"<{cid}>")
+        logo_mime.add_header("Content-Disposition", "inline", filename=filename)
         message.attach(logo_mime)
 
     try:

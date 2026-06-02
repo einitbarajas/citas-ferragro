@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Genera logos transparentes (correo modo claro/oscuro y portal)."""
+"""Genera logos: portal (transparente), correo claro (fondo blanco) y oscuro (fondo gris Gmail)."""
 from __future__ import annotations
 
 from collections import deque
@@ -10,6 +10,10 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = ROOT / "backend" / "static"
 PUBLIC = ROOT / "frontend" / "public"
+# Gris cercano al fondo de Gmail en modo oscuro (evita caja blanca).
+GMAIL_DARK_BG = (45, 45, 45)
+EMAIL_LIGHT_BG = (255, 255, 255)
+
 SOURCE_CANDIDATES = (
     STATIC / "ferragro-logo-source.png",
     STATIC / "ferragro-blan-bord.png",
@@ -66,20 +70,32 @@ def remove_outer_background(img: Image.Image) -> Image.Image:
     return img.crop(bbox) if bbox else img
 
 
+def flatten_on_color(img: Image.Image, rgb: tuple[int, int, int]) -> Image.Image:
+    base = Image.new("RGBA", img.size, (*rgb, 255))
+    base.paste(img, mask=img.split()[3])
+    return base.convert("RGB")
+
+
 def main() -> None:
     src = next((p for p in SOURCE_CANDIDATES if p.is_file()), None)
     if src is None:
         raise SystemExit("No hay PNG fuente en static/ ni frontend/public/")
 
     transparent = remove_outer_background(Image.open(src))
+    light_rgb = flatten_on_color(transparent, EMAIL_LIGHT_BG)
+    dark_rgb = flatten_on_color(transparent, GMAIL_DARK_BG)
 
-    for name in ("ferragro-logo.png", "ferragro-logo-email.png"):
-        transparent.save(STATIC / name, "PNG", optimize=True)
-        transparent.save(PUBLIC / name, "PNG", optimize=True)
     transparent.save(STATIC / "ferragro-logo-transparent.png", "PNG", optimize=True)
+    transparent.save(STATIC / "ferragro-logo.png", "PNG", optimize=True)
+    light_rgb.save(STATIC / "ferragro-logo-email-light.png", "PNG", optimize=True)
+    dark_rgb.save(STATIC / "ferragro-logo-email-dark.png", "PNG", optimize=True)
+    transparent.save(PUBLIC / "ferragro-logo.png", "PNG", optimize=True)
+    light_rgb.save(PUBLIC / "ferragro-logo-email-light.png", "PNG", optimize=True)
+    dark_rgb.save(PUBLIC / "ferragro-logo-email-dark.png", "PNG", optimize=True)
 
-    print(f"source={src.name}")
-    print(f"transparent logo -> {STATIC / 'ferragro-logo-email.png'} ({transparent.size}, mode=RGBA)")
+    print(f"source={src.name} size={transparent.size}")
+    print(f"light -> ferragro-logo-email-light.png")
+    print(f"dark  -> ferragro-logo-email-dark.png (bg={GMAIL_DARK_BG})")
 
 
 if __name__ == "__main__":
