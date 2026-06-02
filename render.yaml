@@ -14,7 +14,7 @@ services:
     repo: https://github.com/einitbarajas/citas-ferragro
     branch: main
     autoDeploy: true
-    # Rebuild trigger: 2026-06-02-appointments-fix-v2
+    # Rebuild trigger: 2026-06-02-appointments-stable-v1
     rootDir: backend
     # No ejecutar scripts de BD en build (si fallan, Render no publica). El arranque corrige el Admin.
     buildCommand: bash build.sh

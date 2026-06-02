@@ -10,18 +10,22 @@ from app.services.mailer import prefer_smtp_for_real_delivery, public_logo_url
 def test_resend_sandbox_inbox_candidates_without_crash(monkeypatch):
     from app.services.email_sandbox import resend_sandbox_inbox_candidates
 
+    monkeypatch.setenv("RESEND_SANDBOX_INBOX", "inbox@test.com")
     monkeypatch.setattr(settings, "resend_sandbox", True)
     monkeypatch.setattr(settings, "resend_api_key", "re_test")
     monkeypatch.setattr(settings, "resend_sandbox_inbox", "inbox@test.com")
-    monkeypatch.setattr(settings, "smtp_from_email", "from@test.com")
+    monkeypatch.setattr(settings, "smtp_user", "")
+    monkeypatch.setattr(settings, "smtp_from_email", "")
     candidates = resend_sandbox_inbox_candidates()
     assert candidates[0] == "inbox@test.com"
 
 
 def test_dispatch_notification_batch_sandbox_no_attribute_error(monkeypatch):
+    monkeypatch.setenv("RESEND_SANDBOX_INBOX", "sandbox@test.com")
     monkeypatch.setattr(settings, "resend_sandbox", True)
     monkeypatch.setattr(settings, "resend_api_key", "re_test")
     monkeypatch.setattr(settings, "resend_sandbox_inbox", "sandbox@test.com")
+    monkeypatch.setattr(settings, "smtp_user", "")
     sent: list[tuple[str, str]] = []
 
     monkeypatch.setattr(

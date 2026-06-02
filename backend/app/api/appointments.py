@@ -272,31 +272,9 @@ def create_appointment(
     db.add(appointment)
     db.flush()
     actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
-    try:
-        with db.begin_nested():
-            publish_appointment_notification(
-                db,
-                appointment,
-                action=AppointmentNotificationAction.created,
-                actor=actor,
-            )
-    except Exception:
-        logger.exception(
-            "Cita #%s: notificación/correo omitidos (la cita sí se guardará)",
-            appointment.id,
-        )
-    try:
-        with db.begin_nested():
-            record_audit(
-                db,
-                appointment_id=int(appointment.id),
-                actor=actor,
-                action="create_appointment",
-                description="Proveedor creó cita",
-            )
-    except Exception:
-        logger.exception("Cita #%s: auditoría omitida", appointment.id)
+    appt_id = int(appointment.id)
     db.commit()
+
     appointment = db.execute(
         select(Appointment)
         .options(
@@ -304,8 +282,30 @@ def create_appointment(
             joinedload(Appointment.warehouse),
             joinedload(Appointment.warehouse_unload_team),
         )
-        .where(Appointment.id == appointment.id)
+        .where(Appointment.id == appt_id)
     ).unique().scalar_one()
+
+    try:
+        publish_appointment_notification(
+            db,
+            appointment,
+            action=AppointmentNotificationAction.created,
+            actor=actor,
+        )
+        record_audit(
+            db,
+            appointment_id=appt_id,
+            actor=actor,
+            action="create_appointment",
+            description="Proveedor creó cita",
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Cita #%s guardada; notificación/correo/auditoría pendientes de revisar",
+            appt_id,
+        )
     return _serialize_with_extension(db, appointment)
 
 

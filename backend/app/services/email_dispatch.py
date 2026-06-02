@@ -101,6 +101,15 @@ def dispatch_notification_emails_batch(
     Envía el mismo aviso a varios destinatarios.
     En Resend sandbox agrupa en un solo correo al inbox de prueba (Resend solo entrega ahí).
     """
+    try:
+        _dispatch_notification_emails_batch_impl(to_emails, title=title, message=message)
+    except Exception:
+        logger.exception("Correos de aviso omitidos (no debe bloquear la cita) | %s", title)
+
+
+def _dispatch_notification_emails_batch_impl(
+    to_emails: list[str], *, title: str, message: str
+) -> None:
     recipients = dedupe_emails(to_emails)
     if not recipients:
         logger.warning("Aviso sin destinatarios | %s", title)

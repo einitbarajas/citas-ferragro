@@ -1,22 +1,35 @@
 """Redirección y candidatos de inbox en Resend sandbox."""
 from __future__ import annotations
 
+import os
+
 from app.core.config import settings
 from app.services.email_utils import normalize_email
 
 
+def _configured_sandbox_inbox() -> str:
+    """Lee inbox sin depender solo del modelo Settings (compatible con deploys viejos)."""
+    for raw in (
+        os.getenv("RESEND_SANDBOX_INBOX", ""),
+        str(getattr(settings, "resend_sandbox_inbox", "") or ""),
+        settings.smtp_user,
+        settings.admin_bootstrap_email,
+        settings.smtp_from_email,
+    ):
+        inbox = normalize_email(str(raw or "").strip())
+        if inbox:
+            return inbox
+    return ""
+
+
 def resend_sandbox_inbox_candidates() -> list[str]:
-    """
-    Correos que Resend sandbox puede recibir (cuenta API + configuración explícita).
-    Orden: RESEND_SANDBOX_INBOX → SMTP_USER (cuenta Resend) → admin bootstrap → from.
-    """
     if not settings.resend_sandbox or not settings.resend_send_ready:
         return []
     seen: set[str] = set()
     ordered: list[str] = []
-    explicit_inbox = str(getattr(settings, "resend_sandbox_inbox", "") or "").strip()
     for candidate in (
-        explicit_inbox,
+        os.getenv("RESEND_SANDBOX_INBOX", ""),
+        str(getattr(settings, "resend_sandbox_inbox", "") or ""),
         settings.smtp_user,
         settings.admin_bootstrap_email,
         settings.smtp_from_email,
@@ -33,30 +46,32 @@ def resend_sandbox_inbox_candidates() -> list[str]:
 
 
 def resend_sandbox_inbox() -> str | None:
-    candidates = resend_sandbox_inbox_candidates()
-    return candidates[0] if candidates else None
+    try:
+        candidates = resend_sandbox_inbox_candidates()
+        return candidates[0] if candidates else None
+    except Exception:
+        inbox = _configured_sandbox_inbox()
+        return inbox or None
 
 
 def redirect_recipient_for_sandbox(to_email: str, message: str) -> tuple[str, str]:
-    """
-    En sandbox, si el destinatario no es un inbox candidato, redirige al primero disponible.
-    Si el destinatario ya es un inbox candidato, envía directo (evita romper recuperación Gmail).
-    """
     delivery = normalize_email(to_email) or ""
     if not settings.resend_sandbox or not settings.resend_send_ready:
         return delivery, message
     if not delivery:
         return delivery, message
 
-    candidates = resend_sandbox_inbox_candidates()
-    if not candidates:
+    try:
+        candidates = resend_sandbox_inbox_candidates()
+    except Exception:
+        candidates = []
+    inbox = candidates[0] if candidates else _configured_sandbox_inbox()
+    if not inbox:
         return delivery, message
 
-    delivery_lower = delivery.lower()
-    if any(delivery_lower == c.lower() for c in candidates):
+    if delivery.lower() == inbox.lower():
         return delivery, message
 
-    inbox = candidates[0]
     note = f"[Modo prueba Resend — destinatario original: {delivery}]\n\n"
     return inbox, note + message
 
