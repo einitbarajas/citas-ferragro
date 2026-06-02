@@ -9,10 +9,12 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Debe coincidir exactamente entre <img src="cid:..."> y Content-ID del adjunto SMTP.
+# Debe coincidir entre <img src="cid:..."> y content_id del adjunto (SMTP y Resend).
 LOGO_CID = "ferragro-logo"
 LOGO_FILENAME = "ferragro-logo.png"
 DEFAULT_API_BASE = "https://ferragro-api.onrender.com"
+# Vercel sirve el PNG en producción (Gmail lo carga mejor que GitHub raw).
+DEFAULT_LOGO_URL = "https://citas.ferragro.vercel.app/ferragro-logo.png"
 LOGO_GITHUB_RAW = (
     "https://raw.githubusercontent.com/einitbarajas/citas-ferragro/main/"
     "backend/static/ferragro-logo.png"
@@ -41,27 +43,17 @@ def read_logo_bytes() -> bytes | None:
 
 
 def hosted_logo_url() -> str:
-    """URL HTTPS absoluta del logo (compatible con Gmail vía Resend/Brevo)."""
+    """URL HTTPS absoluta del logo (Resend/Brevo cuando no se usa CID)."""
     configured = str(getattr(settings, "public_logo_url", "") or "").strip()
     if configured:
         return configured
-    # GitHub raw: disponible en main sin esperar redeploy del API en Render.
-    return LOGO_GITHUB_RAW
-
-
-def logo_data_uri() -> str | None:
-    raw = read_logo_bytes()
-    if not raw:
-        return None
-    encoded = base64.b64encode(raw).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    panel = str(getattr(settings, "public_panel_url", "") or "").strip().rstrip("/")
+    if panel:
+        return f"{panel}/ferragro-logo.png"
+    return DEFAULT_LOGO_URL
 
 
 def logo_img_html(*, use_cid: bool) -> str:
-    """
-    SMTP: inline CID (MIME related).
-    Resend/Brevo: URL HTTPS pública (Gmail no muestra bien cid: ni data: en muchos casos).
-    """
     if use_cid:
         return f'<img src="cid:{LOGO_CID}" alt="Ferragro" style="{_LOGO_IMG_STYLE}" />'
     url = hosted_logo_url()
@@ -69,8 +61,17 @@ def logo_img_html(*, use_cid: bool) -> str:
 
 
 def resend_logo_attachment() -> dict | None:
-    """
-    Adjunto inline opcional (solo si el HTML usa cid:).
-    Resend/Brevo usan URL HTTPS en el HTML; no hace falta adjunto.
-    """
-    return None
+    """Adjunto inline para Resend (obligatorio si el HTML usa cid:)."""
+    raw = read_logo_bytes()
+    if not raw:
+        remote = str(getattr(settings, "public_logo_url", "") or "").strip() or hosted_logo_url()
+        return {
+            "filename": LOGO_FILENAME,
+            "path": remote,
+            "content_id": LOGO_CID,
+        }
+    return {
+        "filename": LOGO_FILENAME,
+        "content": base64.b64encode(raw).decode("ascii"),
+        "content_id": LOGO_CID,
+    }

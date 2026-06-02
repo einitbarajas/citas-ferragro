@@ -22,6 +22,7 @@ def test_public_logo_url_uses_stable_https():
     url = public_logo_url()
     assert "ferragro-logo" in url
     assert url.startswith("https://")
+    assert "vercel.app" in url or "onrender.com" in url or "githubusercontent" in url
 
 
 def test_provider_notice_skips_invalid_provider_email(monkeypatch):

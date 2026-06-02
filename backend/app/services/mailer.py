@@ -281,7 +281,8 @@ def send_branded_email(subject: str, to_email: str, plain_body: str, content_htm
         and settings.resend_send_ready
         and not settings.brevo_send_ready
     )
-    html_body = _build_mail_layout(content_html, use_cid_logo=use_smtp)
+    # Resend requiere adjunto inline + cid:; las URLs externas a veces las bloquea Gmail.
+    html_body = _build_mail_layout(content_html, use_cid_logo=(use_smtp or using_resend))
 
     from app.services.email_transport import production_should_use_https_email
 

@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 
 from app.core.config import settings
-from app.services.email_branding import resend_logo_attachment
+from app.services.email_branding import LOGO_CID, resend_logo_attachment
 from app.services.email_utils import is_deliverable_email, normalize_email
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,8 @@ def send_resend_email(
     logo_attachment = resend_logo_attachment()
     if logo_attachment:
         payload["attachments"] = [logo_attachment]
+    elif f"cid:{LOGO_CID}" in html_body:
+        logger.warning("Correo con cid:%s sin adjunto de logo; la imagen puede verse rota", LOGO_CID)
     reply_to = normalize_email(settings.smtp_reply_to)
     if reply_to:
         payload["reply_to"] = reply_to
