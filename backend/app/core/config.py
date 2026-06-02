@@ -4,11 +4,8 @@ from pathlib import Path
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.core.smtp_env_loader import bootstrap_smtp_from_secret_files, overlay_render_smtp_secret
+from app.core.smtp_env_loader import bootstrap_smtp_from_secret_files
 
-# En Render: smtp.env puede traer RESEND aunque SMTP ya venga en variables sueltas.
-if os.getenv("ENVIRONMENT", "").strip().lower() == "production":
-    overlay_render_smtp_secret()
 bootstrap_smtp_from_secret_files()
 
 
@@ -52,7 +49,6 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     login_max_attempts: int = 5
     login_lockout_minutes: int = 15
-    security_email_alerts_enabled: bool = True
     forgot_password_cooldown_seconds: int = 60
     # Horas mínimas entre el momento de agendar/reprogramar y el inicio de la cita (proveedor).
     appointment_minimum_notice_hours: int = 24
@@ -82,6 +78,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:2711,http://127.0.0.1:2711"
     # URL pública del panel (enlaces en correos transaccionales).
     public_panel_url: str = "https://citas.ferragro.vercel.app"
+    # URL pública del logo en correos (Resend/Brevo). Vacío = /assets/ferragro-logo.png del API.
+    public_logo_url: str = ""
+    public_api_url: str = "https://ferragro-api.onrender.com"
     # Si es true, permite orígenes http en localhost y redes privadas (192.168.x, 10.x) en cualquier puerto (Vite, etc.).
     cors_allow_private_network: bool = False
     # Hora local usada para validar que el inicio de la cita caiga en una franja permitida.
@@ -107,8 +106,6 @@ class Settings(BaseSettings):
     resend_from_email: str = ""
     # true = usa onboarding@resend.dev (solo pruebas; destinatario = cuenta Resend).
     resend_sandbox: bool = False
-    # Con sandbox: los avisos de citas se envían a este inbox (vacío = admin_bootstrap_email).
-    resend_sandbox_inbox: str = "ebarajas@ferragro.com"
     # Brevo/Sendinblue HTTPS (alternativa; verifica remitente por correo, sin dominio propio).
     brevo_api_key: str = ""
     # Solo para emergencias: POST /auth/maintenance/reset-admin-password con header X-Maintenance-Token.
@@ -235,7 +232,6 @@ _EMAIL_PROVIDER_ENV_KEYS: tuple[tuple[str, str, type], ...] = (
     ("resend_api_key", "RESEND_API_KEY", str),
     ("resend_from_email", "RESEND_FROM_EMAIL", str),
     ("resend_sandbox", "RESEND_SANDBOX", bool),
-    ("resend_sandbox_inbox", "RESEND_SANDBOX_INBOX", str),
     ("brevo_api_key", "BREVO_API_KEY", str),
 )
 

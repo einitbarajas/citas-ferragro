@@ -7,8 +7,6 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
-from pathlib import Path
-
 from app.core.config import refresh_smtp_settings, settings
 from app.services.email_utils import is_deliverable_email, normalize_email
 
@@ -129,13 +127,33 @@ def panel_cta_html(button_label: str = "Ir al panel Ferragro") -> str:
             </a>
           </p>
 """
-_LOGO_CANDIDATES = (
-    Path(__file__).resolve().parents[2] / "static" / "ferragro-blan-bord.png",
-    Path(__file__).resolve().parents[3] / "frontend" / "public" / "ferragro-blan-bord.png",
-)
-LOGO_PATH = next((p for p in _LOGO_CANDIDATES if p.is_file()), _LOGO_CANDIDATES[0])
-LOGO_CID = "ferragro-logo-watermark"
+from app.services.email_branding import LOGO_CID, LOGO_FILENAME, read_logo_bytes
+from app.services.email_branding import logo_img_html as branding_logo_img_html
+
 SMTP_TIMEOUT_SECONDS = 8
+
+
+def public_logo_url() -> str:
+    """URL absoluta del logo en correos HTTPS."""
+    from app.services.email_branding import hosted_logo_url
+
+    return hosted_logo_url()
+
+
+def prefer_smtp_for_real_delivery() -> bool:
+    """
+    En desarrollo (o si SMTP funciona en producción), usar SMTP para que el correo
+    llegue al destinatario real. Resend sandbox solo entrega a la cuenta Resend.
+    """
+    if not settings.smtp_send_ready:
+        return False
+    if not settings.is_production:
+        return True
+    from app.services.email_transport import production_should_use_https_email, render_smtp_blocked
+
+    if settings.resend_sandbox and not render_smtp_blocked():
+        return True
+    return not production_should_use_https_email()
 
 
 def _smtp_envelope_from() -> str:
@@ -211,16 +229,8 @@ def _reply_to_address() -> str:
     return from_addr or SUPPORT_EMAIL
 
 
-def _build_mail_layout(body_html: str) -> str:
-    logo_html = (
-        f'<img src="cid:{LOGO_CID}" alt="Ferragro" '
-        "style=\"width:260px;max-width:100%;height:auto;display:block;margin:0 auto;\" />"
-    )
-    if not LOGO_PATH.exists():
-        logo_html = (
-            "<div style=\"font-size:32px;font-weight:800;letter-spacing:2px;"
-            "color:#0f6e2f;text-align:center;\">FERRAGRO</div>"
-        )
+def _build_mail_layout(body_html: str, *, use_cid_logo: bool = True) -> str:
+    logo_html = branding_logo_img_html(use_cid=use_cid_logo)
 
     return f"""\
 <!DOCTYPE html>
@@ -259,24 +269,23 @@ def _build_mail_layout(body_html: str) -> str:
 """
 
 
-def send_branded_email(
-    subject: str,
-    to_email: str,
-    plain_body: str,
-    content_html: str,
-    *,
-    email_kind: str | None = None,
-) -> bool:
+def send_branded_email(subject: str, to_email: str, plain_body: str, content_html: str) -> bool:
     delivery = normalize_email(to_email)
     if not delivery or not is_deliverable_email(delivery):
         logger.warning("Correo no enviado (destinatario inválido): %r subject=%s", to_email, subject)
         return False
 
-    html_body = _build_mail_layout(content_html)
+    use_smtp = prefer_smtp_for_real_delivery()
+    using_resend = bool(
+        not use_smtp
+        and settings.resend_send_ready
+        and not settings.brevo_send_ready
+    )
+    html_body = _build_mail_layout(content_html, use_cid_logo=use_smtp)
 
     from app.services.email_transport import production_should_use_https_email
 
-    if production_should_use_https_email() or settings.brevo_send_ready:
+    if not use_smtp and (production_should_use_https_email() or settings.brevo_send_ready):
         if settings.brevo_send_ready:
             from app.services.brevo_mailer import send_brevo_email
 
@@ -294,7 +303,6 @@ def send_branded_email(
                 subject=subject,
                 plain_body=plain_body,
                 html_body=html_body,
-                email_kind=email_kind,
             )
         logger.error(
             "Render bloquea SMTP; falta RESEND_API_KEY o BREVO_API_KEY en Environment/smtp.env"
@@ -319,11 +327,11 @@ def send_branded_email(
     alternative_part.attach(MIMEText(plain_body, "plain", _charset="utf-8"))
     alternative_part.attach(MIMEText(html_body, "html", _charset="utf-8"))
     message.attach(alternative_part)
-    if LOGO_PATH.exists():
-        with LOGO_PATH.open("rb") as image_file:
-            logo_mime = MIMEImage(image_file.read(), _subtype="png")
+    logo_bytes = read_logo_bytes()
+    if logo_bytes:
+        logo_mime = MIMEImage(logo_bytes, _subtype="png")
         logo_mime.add_header("Content-ID", f"<{LOGO_CID}>")
-        logo_mime.add_header("Content-Disposition", "inline", filename="ferragro-blan-bord.png")
+        logo_mime.add_header("Content-Disposition", "inline", filename=LOGO_FILENAME)
         message.attach(logo_mime)
 
     try:
@@ -383,7 +391,7 @@ def send_temporary_password_email(
           </p>
           {panel_cta_html("Iniciar sesión en Ferragro")}
 """
-    return send_branded_email(subject, delivery, plain_body, content_html, email_kind="password_recovery")
+    return send_branded_email(subject, delivery, plain_body, content_html)
 
 
 def send_temporary_password_email_with_retry(
@@ -444,7 +452,7 @@ def send_welcome_email(to_email: str, recipient_name: str) -> bool:
             Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.
           </p>
 """
-    return send_branded_email(subject, to_email, plain_body, content_html, email_kind="welcome")
+    return send_branded_email(subject, to_email, plain_body, content_html)
 
 
 def send_internal_welcome_email(to_email: str, recipient_name: str, role_name: str) -> bool:
@@ -475,7 +483,64 @@ def send_internal_welcome_email(to_email: str, recipient_name: str, role_name: s
             Si tienes dudas, nuestro equipo de soporte está disponible para ayudarte.
           </p>
 """
-    return send_branded_email(subject, to_email, plain_body, content_html, email_kind="welcome_staff")
+    return send_branded_email(subject, to_email, plain_body, content_html)
+
+
+def send_provider_account_notice_email(
+    to_email: str,
+    *,
+    provider_name: str,
+    title: str,
+    detail: str,
+    actor_label: str,
+    is_admin_copy: bool = False,
+) -> bool:
+    """Correo de cuenta proveedor (reactivar/suspender/etc.) con plantilla y logo."""
+    display_name = (provider_name or "").strip() or "proveedor(a)"
+    subject = f"Ferragro - {title}"
+    if is_admin_copy:
+        plain_body = (
+            f"{title}\n\n"
+            f"Proveedor: {display_name}\n"
+            f"Correo del proveedor: {normalize_email(to_email) or to_email}\n\n"
+            f"{detail}\n\n"
+            f"Realizado por: {actor_label}.\n"
+            f"{panel_cta_plain()}"
+            f"Soporte: {SUPPORT_EMAIL} | WhatsApp: {SUPPORT_PHONE}\n"
+            f"Direccion: {COMPANY_ADDRESS}\n"
+            f"Sitio web: {COMPANY_WEBSITE}\n\n"
+            "Ferragro"
+        )
+        safe_detail = detail.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br />")
+        content_html = f"""
+          <h1 style="margin:0 0 16px;font-size:22px;color:#0f6e2f;">{title.replace("<", "&lt;")}</h1>
+          <p style="margin:0 0 8px;line-height:1.6;"><strong>Proveedor:</strong> {display_name}</p>
+          <p style="margin:0 0 14px;line-height:1.6;"><strong>Correo:</strong> {normalize_email(to_email) or to_email}</p>
+          <p style="margin:0 0 14px;line-height:1.6;">{safe_detail}</p>
+          <p style="margin:0;line-height:1.6;">Realizado por: {actor_label}.</p>
+          {panel_cta_html("Ver detalle en el panel")}
+"""
+    else:
+        plain_body = (
+            f"Hola {display_name},\n\n"
+            f"{detail}\n\n"
+            f"Acción registrada por: {actor_label}.\n\n"
+            "Si no reconoces este cambio, contacta a soporte Ferragro.\n"
+            f"{panel_cta_plain()}"
+            f"Soporte: {SUPPORT_EMAIL} | WhatsApp: {SUPPORT_PHONE}\n"
+            f"Direccion: {COMPANY_ADDRESS}\n"
+            f"Sitio web: {COMPANY_WEBSITE}\n\n"
+            "Ferragro"
+        )
+        safe_detail = detail.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br />")
+        content_html = f"""
+          <h1 style="margin:0 0 16px;font-size:22px;color:#0f6e2f;">{title.replace("<", "&lt;")}</h1>
+          <p style="margin:0 0 14px;line-height:1.6;">Hola <strong>{display_name}</strong>,</p>
+          <p style="margin:0 0 14px;line-height:1.6;">{safe_detail}</p>
+          <p style="margin:0;line-height:1.6;">Acción registrada por: {actor_label}.</p>
+          {panel_cta_html("Ingresar al panel")}
+"""
+    return send_branded_email(subject, to_email, plain_body, content_html)
 
 
 def send_notification_email(to_email: str, title: str, message: str) -> bool:
@@ -496,7 +561,7 @@ def send_notification_email(to_email: str, title: str, message: str) -> bool:
           <p style="margin:0;line-height:1.6;">{safe_message}</p>
           {panel_cta_html("Ver detalle en el panel")}
 """
-    return send_branded_email(subject, to_email, plain_body, content_html, email_kind="notification")
+    return send_branded_email(subject, to_email, plain_body, content_html)
 
 
 def send_notification_email_with_retry(
@@ -505,12 +570,7 @@ def send_notification_email_with_retry(
     message: str,
     *,
     max_attempts: int = 3,
-    force_secret_overlay: bool = False,
 ) -> bool:
-    if force_secret_overlay and settings.is_production:
-        from app.core.smtp_env_loader import overlay_render_smtp_secret
-
-        overlay_render_smtp_secret()
     from app.services.email_delivery import deliver_with_retry
 
     subject = f"Ferragro - {title}"

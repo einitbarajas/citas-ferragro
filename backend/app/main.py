@@ -13,7 +13,7 @@ from slowapi import _rate_limit_exceeded_handler
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi import HTTPException
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -34,11 +34,14 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-06-01-forgot-password-prod-fix"
+API_BUILD_ID = "2026-06-02-email-logo-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
+from app.services.email_branding import LOGO_PATH as _BRAND_LOGO_PATH
+
 logger = logging.getLogger(__name__)
+LOGO_FILE = str(_BRAND_LOGO_PATH)
 
 
 def _init_database_schema(*, max_attempts: int = 6, delay_seconds: float = 5.0) -> None:
@@ -164,36 +167,10 @@ def _warm_smtp_on_startup() -> None:
         logger.exception("Fallo al validar correo al arranque")
 
 
-def _apply_sql_migrations_on_startup() -> None:
-    """Aplica migraciones SQL idempotentes (notificaciones actor + lecturas por usuario)."""
-    from pathlib import Path
-
-    from sqlalchemy import text
-
-    backend_root = Path(__file__).resolve().parents[1]
-    migration_files = (
-        "022_notificaciones_actor_auditoria.sql",
-        "023_notificacion_lecturas.sql",
-    )
-    for filename in migration_files:
-        path = backend_root / "db" / "init" / filename
-        if not path.is_file():
-            logger.warning("Migración SQL no encontrada: %s", path)
-            continue
-        try:
-            with SessionLocal() as db:
-                db.execute(text(path.read_text(encoding="utf-8")))
-                db.commit()
-            logger.info("Migración SQL aplicada: %s", filename)
-        except Exception:
-            logger.exception("Fallo al aplicar migración SQL: %s", filename)
-
-
 def _blocking_startup() -> None:
     """Tareas síncronas de BD (se ejecutan en hilo aparte; no bloquean /health de Render)."""
     _log_database_target()
     _init_database_schema(max_attempts=12, delay_seconds=3.0)
-    _apply_sql_migrations_on_startup()
     _purge_orphan_credentials_on_startup()
     _ensure_production_admin_on_startup()
     _warm_smtp_on_startup()
@@ -243,6 +220,21 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.get("/assets/ferragro-logo.png", include_in_schema=False)
+def public_email_logo():
+    """Logo público estable para correos enviados por Resend/Brevo."""
+    from app.services.email_branding import read_logo_bytes
+
+    raw = read_logo_bytes()
+    if raw:
+        from fastapi.responses import Response
+
+        return Response(content=raw, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+    if os.path.isfile(LOGO_FILE):
+        return FileResponse(LOGO_FILE, media_type="image/png")
+    raise HTTPException(status_code=404, detail="Logo no encontrado")
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -579,33 +571,23 @@ def root():
 @app.get("/health")
 def health():
     # Respuesta rápida para health check de Render (sin BD ni SMTP en cada ping).
-    from app.core.smtp_env_loader import overlay_render_smtp_secret
-
-    overlay_render_smtp_secret()
     refresh_smtp_settings()
+    from app.services.email_branding import hosted_logo_url, read_logo_bytes
     from app.services.email_transport import email_delivery_ready, render_smtp_blocked
 
     smtp_blocked = settings.is_production and render_smtp_blocked()
     can_deliver = email_delivery_ready()
-    from pathlib import Path as _Path
-
-    secret_smtp = _Path("/etc/secrets/smtp.env")
-    resend_in_os = bool(os.getenv("RESEND_API_KEY", "").strip())
-    resend_in_file = False
-    if secret_smtp.is_file():
-        resend_in_file = "RESEND_API_KEY=" in secret_smtp.read_text(encoding="utf-8", errors="replace")
     return ok_response(
         {
             "status": "ok",
             "build_id": API_BUILD_ID,
             "render_git_commit": os.getenv("RENDER_GIT_COMMIT"),
+            "logo_ready": read_logo_bytes() is not None,
+            "logo_url": hosted_logo_url(),
             "email_enabled": can_deliver,
             "email_configured": settings.email_send_ready,
             "email_provider": settings.email_provider,
             "resend_ready": settings.resend_send_ready,
-            "resend_key_in_process_env": resend_in_os,
-            "resend_key_in_secret_file": resend_in_file,
-            "secret_smtp_env_mounted": secret_smtp.is_file(),
             "resend_sandbox": settings.resend_sandbox,
             "brevo_ready": settings.brevo_send_ready,
             "smtp_send_ready": settings.smtp_send_ready,
@@ -695,15 +677,12 @@ def health_deep():
 def health_email():
     """Diagnóstico del sistema de correo transaccional (no envía correos)."""
     from app.services.email_delivery import prepare_mail_transport
-    from app.services.email_delivery_log import delivery_stats, recent_entries
-    from app.services.email_sandbox import resend_sandbox_inbox, resend_sandbox_inbox_candidates
     from app.services.email_transport import email_delivery_ready, render_smtp_blocked
     from app.services.mailer import panel_url
 
     refresh_smtp_settings()
     transport_ready = prepare_mail_transport()
     blocked = settings.is_production and render_smtp_blocked()
-    sandbox = settings.resend_sandbox
     return ok_response(
         {
             "build_id": API_BUILD_ID,
@@ -711,45 +690,22 @@ def health_email():
             "transport_ready": transport_ready,
             "email_provider": settings.email_provider,
             "resend_ready": settings.resend_send_ready,
-            "resend_sandbox": sandbox,
-            "resend_sandbox_inbox": resend_sandbox_inbox(),
-            "resend_sandbox_inbox_candidates": resend_sandbox_inbox_candidates(),
-            "resend_from_email": (settings.resend_from_email or settings.smtp_from_email or None),
-            "production_delivery_mode": (
-                "sandbox_testing"
-                if sandbox
-                else "domain_verified" if settings.resend_send_ready else "smtp_or_brevo"
-            ),
+            "resend_sandbox": settings.resend_sandbox,
             "brevo_ready": settings.brevo_send_ready,
             "smtp_send_ready": settings.smtp_send_ready,
             "smtp_blocked_on_host": blocked,
             "public_panel_url": panel_url(),
-            "delivery_stats": delivery_stats(),
-            "recent_deliveries": recent_entries(15),
             "flows": {
-                "appointment_notifications": "publish_appointment_notification → send_appointment_notification_email",
-                "appointment_reminder_24h": "reminder_scheduler → notify_appointment_reminder_24h",
-                "password_recovery": "forgot-password → send_recovery_password_email",
-                "provider_suspend": "dispatch_provider_account_notice",
+                "appointment_notifications": "notify_* → dispatch_notification_email (citas crear/actualizar/cancelar)",
+                "password_recovery": "contraseña temporal en correo (no magic link)",
+                "provider_suspend": "dispatch_provider_account_notice action=suspended",
                 "welcome": "dispatch_welcome_provider / dispatch_welcome_staff",
-                "security_alerts": "security_email",
-            },
-            "dns_checklist": {
-                "spf": "Registro TXT en DNS del dominio (Resend/Brevo lo indican al verificar dominio)",
-                "dkim": "CNAME/TXT DKIM en DNS (proveedor transaccional)",
-                "dmarc": "TXT _dmarc.ferragro.com (recomendado p=none luego quarantine)",
-                "return_path": "Configurado por Resend al verificar dominio",
             },
             "deliverability_note": (
-                "MODO PRUEBA: solo llega a inboxes listados en resend_sandbox_inbox_candidates. "
-                "Para Gmail/Outlook/Yahoo corporativos: RESEND_SANDBOX=false y dominio ferragro.com verificado en Resend."
-                if sandbox
-                else (
-                    "Modo producción: envío a cualquier proveedor vía dominio verificado. "
-                    "Confirma SPF/DKIM/DMARC en resend.com/domains."
-                    if settings.resend_send_ready
-                    else None
-                )
+                "Para Gmail/Outlook/Yahoo/iCloud/Proton: verifica dominio en Resend o Brevo "
+                "(SPF/DKIM/DMARC los gestiona el proveedor). RESEND_SANDBOX solo entrega al correo de la cuenta Resend."
+                if settings.resend_sandbox
+                else None
             ),
         },
         "Diagnóstico de correo",
