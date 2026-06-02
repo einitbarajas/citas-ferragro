@@ -106,6 +106,8 @@ class Settings(BaseSettings):
     resend_from_email: str = ""
     # true = usa onboarding@resend.dev (solo pruebas; destinatario = cuenta Resend).
     resend_sandbox: bool = False
+    # Inbox donde Resend sandbox sí entrega (cuenta Resend / Gmail de prueba).
+    resend_sandbox_inbox: str = ""
     # Brevo/Sendinblue HTTPS (alternativa; verifica remitente por correo, sin dominio propio).
     brevo_api_key: str = ""
     # Solo para emergencias: POST /auth/maintenance/reset-admin-password con header X-Maintenance-Token.
@@ -232,6 +234,7 @@ _EMAIL_PROVIDER_ENV_KEYS: tuple[tuple[str, str, type], ...] = (
     ("resend_api_key", "RESEND_API_KEY", str),
     ("resend_from_email", "RESEND_FROM_EMAIL", str),
     ("resend_sandbox", "RESEND_SANDBOX", bool),
+    ("resend_sandbox_inbox", "RESEND_SANDBOX_INBOX", str),
     ("brevo_api_key", "BREVO_API_KEY", str),
 )
 

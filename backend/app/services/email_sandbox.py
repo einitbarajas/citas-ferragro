@@ -14,8 +14,9 @@ def resend_sandbox_inbox_candidates() -> list[str]:
         return []
     seen: set[str] = set()
     ordered: list[str] = []
+    explicit_inbox = str(getattr(settings, "resend_sandbox_inbox", "") or "").strip()
     for candidate in (
-        settings.resend_sandbox_inbox,
+        explicit_inbox,
         settings.smtp_user,
         settings.admin_bootstrap_email,
         settings.smtp_from_email,
