@@ -1152,9 +1152,27 @@ export default function DashboardPage() {
       if (excludeAppointmentId != null) {
         url += `&exclude_appointment_id=${excludeAppointmentId}`;
       }
-      const response = await api.get(url);
+      const resolvedParams = new URLSearchParams({
+        day: dayIso,
+        warehouse_id: String(selectedWarehouseId),
+        unload_team_id: String(teamId),
+      });
+      const [response, resolvedResponse] = await Promise.all([
+        api.get(url),
+        api.get(`${API_PREFIX}/crud/appointment-franjas/resolved?${resolvedParams.toString()}`),
+      ]);
       const sourceData = unwrapProviderDayAvailability(response);
-      const slots = normalizeAvailableSlots(sourceData);
+      const resolvedPayload = parseApiResponse(resolvedResponse);
+      const publishedFranjas = buildSlotsFromFranjas(
+        Array.isArray(resolvedPayload.data?.franjas) ? resolvedPayload.data.franjas : []
+      );
+      const slots = normalizeAvailableSlots({
+        ...sourceData,
+        published_slots:
+          Array.isArray(sourceData?.published_slots) && sourceData.published_slots.length > 0
+            ? sourceData.published_slots
+            : publishedFranjas,
+      });
       const times = slots.map((s) => slotKey(s));
       return {
         slots,

@@ -40,6 +40,23 @@ function dropSlotsContainedInAnother(slots) {
   });
 }
 
+export function slotFingerprint(slot) {
+  const start_local = normalizeLocalTime(slot.start_local);
+  const end_local = normalizeLocalTime(slot.end_local);
+  const duration_minutes =
+    Number(slot.duration_minutes) ||
+    (end_local ? slotDurationMinutes(start_local, end_local) : 0);
+  return `${start_local}|${end_local}|${duration_minutes}`;
+}
+
+function filterSlotsToPublishedOnly(slots, published) {
+  const cleaned = dedupeSlots(slots);
+  const publishedList = dedupeSlots(published);
+  if (publishedList.length === 0) return cleaned;
+  const allowed = new Set(publishedList.map((s) => slotFingerprint(s)));
+  return cleaned.filter((s) => allowed.has(slotFingerprint(s)));
+}
+
 function dedupeSlots(slots) {
   const dedupe = new Map();
   (slots || []).forEach((slot) => {
@@ -89,6 +106,12 @@ export function formatSlotLabel(slot) {
 }
 
 export function normalizeAvailableSlots(sourceData) {
+  const publishedRaw = Array.isArray(sourceData?.published_slots) ? sourceData.published_slots : [];
+  const published = publishedRaw.map((s) => ({
+    start_local: String(s.start_local || ""),
+    end_local: String(s.end_local || ""),
+    duration_minutes: Number(s.duration_minutes) || slotDurationMinutes(s.start_local, s.end_local),
+  }));
   const explicit = Array.isArray(sourceData?.available_slots) ? sourceData.available_slots : [];
   if (explicit.length > 0) {
     const mapped = explicit.map((s) => ({
@@ -96,9 +119,11 @@ export function normalizeAvailableSlots(sourceData) {
       end_local: String(s.end_local || ""),
       duration_minutes: Number(s.duration_minutes) || slotDurationMinutes(s.start_local, s.end_local),
     }));
-    return dedupeSlots(mapped);
+    return filterSlotsToPublishedOnly(mapped, published);
   }
-  // Sin available_slots no inventamos duración (p. ej. 60 o 90 min): la franja debe venir completa del API.
+  if (published.length > 0) {
+    return dedupeSlots(published);
+  }
   return [];
 }
 

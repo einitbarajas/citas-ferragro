@@ -242,6 +242,35 @@ def list_windows_ordered(
     )
 
 
+def slot_dict_from_window(window) -> dict:
+    start = window.start_local
+    end = window.end_local
+    duration = slot_duration_minutes(start, end)
+    return {
+        "start_local": start.strftime("%H:%M"),
+        "end_local": end.strftime("%H:%M"),
+        "duration_minutes": duration,
+    }
+
+
+def published_slots_from_windows(windows: list) -> list[dict]:
+    """Franjas publicadas tal cual (sin trocear ni duplicar)."""
+    seen: set[tuple[str, str, int]] = set()
+    out: list[dict] = []
+    for window in windows:
+        row = slot_dict_from_window(window)
+        duration = int(row["duration_minutes"])
+        if duration < MIN_SLOT_MINUTES or duration > MAX_SLOT_MINUTES:
+            continue
+        key = (row["start_local"], row["end_local"], duration)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    out.sort(key=lambda s: (s["start_local"], s["duration_minutes"]))
+    return out
+
+
 def iter_bookable_slots(windows: list) -> list[tuple[time, time, int]]:
     """Un turno agendable por franja publicada (mismo inicio y fin que configuró admin)."""
     seen: set[tuple[str, str, int]] = set()

@@ -38,6 +38,7 @@ from app.services.appointment_windows import (
     MIN_SLOT_MINUTES,
     assert_appointment_slot,
     get_active_warehouse_or_raise,
+    published_slots_from_windows,
     resolve_team_windows_for_day,
     slot_duration_minutes,
 )
@@ -477,6 +478,7 @@ def list_available_slots_for_provider_day(
         assert_warehouse_access(db, principal, warehouse_id)
     team = get_unload_team_or_raise(db, warehouse_id, unload_team_id)
     windows, source = resolve_team_windows_for_day(db, day, warehouse_id, team.id)
+    published_slots = published_slots_from_windows(windows) if windows else []
     if not windows or (not is_staff and source != "date_override"):
         return ok_response(
             {
@@ -485,6 +487,7 @@ def list_available_slots_for_provider_day(
                 "unload_team_id": team.id,
                 "unload_team_name": team.name,
                 "source": source if windows else "none",
+                "published_slots": published_slots,
                 "available_slots": [],
                 "available_times": [],
                 "minimum_notice_hours": minimum_hours,
@@ -512,20 +515,15 @@ def list_available_slots_for_provider_day(
         .all()
     )
     available_slots: list[dict] = []
-    slots_in_window = 0
+    slots_in_window = len(published_slots)
     slots_after_notice = 0
-    # Una opción por franja publicada (inicio/fin exactos del admin; sin trocear en 60 min).
-    for window in windows:
-        slot_start = window.start_local
-        slot_end = window.end_local
-        duration = slot_duration_minutes(slot_start, slot_end)
-        if duration < MIN_SLOT_MINUTES or duration > MAX_SLOT_MINUTES:
-            continue
-        hh = slot_start.hour
-        mm = slot_start.minute
+    # Solo franjas publicadas (inicio/fin del admin); sin trocear en 60 min ni variantes duplicadas.
+    for row in published_slots:
+        hh_s, mm_s = row["start_local"].split(":")
+        hh, mm = int(hh_s), int(mm_s)
+        duration = int(row["duration_minutes"])
         local_dt = datetime(day.year, day.month, day.day, hh, mm, tzinfo=tz)
         cand_start_utc = local_dt.astimezone(timezone.utc)
-        slots_in_window += 1
         if cand_start_utc < minimum_start_utc:
             continue
         slots_after_notice += 1
@@ -533,13 +531,7 @@ def list_available_slots_for_provider_day(
             db, team.id, cand_start_utc, duration, exclude_appointment_id
         )
         if team_free:
-            available_slots.append(
-                {
-                    "start_local": f"{hh:02d}:{mm:02d}",
-                    "end_local": slot_end.strftime("%H:%M"),
-                    "duration_minutes": duration,
-                }
-            )
+            available_slots.append(dict(row))
     available_slots.sort(key=lambda s: (s["start_local"], s["duration_minutes"]))
     available_times = [s["start_local"] for s in available_slots]
     payload = {
@@ -548,6 +540,7 @@ def list_available_slots_for_provider_day(
         "unload_team_id": team.id,
         "unload_team_name": team.name,
         "source": source,
+        "published_slots": published_slots,
         "available_slots": available_slots,
         "available_times": available_times,
         "minimum_notice_hours": minimum_hours,
