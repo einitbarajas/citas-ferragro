@@ -18,16 +18,16 @@
       "destination": "https://ferragro-api.onrender.com/api/:path*"
     },
     {
+      "source": "/health/:path*",
+      "destination": "https://ferragro-api.onrender.com/health/:path*"
+    },
+    {
       "source": "/health",
       "destination": "https://ferragro-api.onrender.com/health"
     },
     {
-      "source": "/health/:path*",
-      "destination": "https://ferragro-api.onrender.com/health/:path*"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
-  ],
-  "routes": [
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
