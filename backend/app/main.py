@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-06-02-logo-dark-light-v6"
+API_BUILD_ID = "2026-06-02-logo-single-transparent-v7"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -245,23 +245,9 @@ def _serve_email_logo() -> Response | FileResponse:
 
 @app.get("/assets/ferragro-logo.png", include_in_schema=False)
 @app.get("/assets/ferragro-logo-email.png", include_in_schema=False)
-@app.get("/assets/ferragro-logo-email-light.png", include_in_schema=False)
-def public_email_logo_light():
+def public_email_logo():
+    """Logo transparente único para correos."""
     return _serve_email_logo()
-
-
-@app.get("/assets/ferragro-logo-email-dark.png", include_in_schema=False)
-def public_email_logo_dark():
-    from app.services.email_branding import read_logo_bytes_dark
-
-    raw = read_logo_bytes_dark()
-    if raw:
-        return Response(
-            content=raw,
-            media_type="image/png",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
-    raise HTTPException(status_code=404, detail="Logo oscuro no encontrado")
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
