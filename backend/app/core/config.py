@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:2711,http://127.0.0.1:2711"
     # URL pública del panel (enlaces en correos transaccionales).
     public_panel_url: str = "https://citas.ferragro.vercel.app"
-    # URL pública del logo en correos. Vacío = {public_panel_url}/ferragro-logo.png (Vercel).
+    # URL pública del logo en correos. Vacío = {public_panel_url}/ferragro-logo-email.png (Vercel).
     public_logo_url: str = ""
     public_api_url: str = "https://ferragro-api.onrender.com"
     # Si es true, permite orígenes http en localhost y redes privadas (192.168.x, 10.x) en cualquier puerto (Vite, etc.).

@@ -13,7 +13,7 @@ from slowapi import _rate_limit_exceeded_handler
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi import HTTPException
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-06-02-appointments-stable-v1"
+API_BUILD_ID = "2026-06-02-logo-email-white-v3"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -228,19 +228,26 @@ app = FastAPI(
 )
 
 
-@app.get("/assets/ferragro-logo.png", include_in_schema=False)
-def public_email_logo():
-    """Logo público estable para correos enviados por Resend/Brevo."""
+def _serve_email_logo() -> Response | FileResponse:
     from app.services.email_branding import read_logo_bytes
 
     raw = read_logo_bytes()
     if raw:
-        from fastapi.responses import Response
-
-        return Response(content=raw, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+        return Response(
+            content=raw,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
     if os.path.isfile(LOGO_FILE):
         return FileResponse(LOGO_FILE, media_type="image/png")
     raise HTTPException(status_code=404, detail="Logo no encontrado")
+
+
+@app.get("/assets/ferragro-logo.png", include_in_schema=False)
+@app.get("/assets/ferragro-logo-email.png", include_in_schema=False)
+def public_email_logo():
+    """Logo con fondo blanco para correos (Resend/Brevo/Gmail)."""
+    return _serve_email_logo()
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
