@@ -34,7 +34,7 @@ from app.services.reminder_scheduler import reminder_scheduler_loop
 from app.services.notification_purge_scheduler import notification_purge_scheduler_loop
 
 # Production deploy marker (health build_id below).
-API_BUILD_ID = "2026-06-02-email-logo-v2"
+API_BUILD_ID = "2026-06-02-appointments-fix-v1"
 
 import app.models  # noqa: F401 — registra tablas en Base.metadata
 
@@ -171,6 +171,12 @@ def _blocking_startup() -> None:
     """Tareas síncronas de BD (se ejecutan en hilo aparte; no bloquean /health de Render)."""
     _log_database_target()
     _init_database_schema(max_attempts=12, delay_seconds=3.0)
+    try:
+        from app.db.schema_upgrade import apply_pending_sql_migrations
+
+        apply_pending_sql_migrations(engine)
+    except Exception:
+        logger.exception("Migraciones SQL (022/024) no aplicadas; citas pueden fallar con 500")
     _purge_orphan_credentials_on_startup()
     _ensure_production_admin_on_startup()
     _warm_smtp_on_startup()
@@ -546,7 +552,8 @@ def sqlalchemy_exception_handler(_, __):
 
 
 @app.exception_handler(Exception)
-def unhandled_exception_handler(_, __):
+def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Error no controlado en %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
         content=error_response("Error interno del servidor"),

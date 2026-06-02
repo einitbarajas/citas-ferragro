@@ -1,5 +1,8 @@
+import logging
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import extract, func, select
@@ -269,19 +272,28 @@ def create_appointment(
     db.add(appointment)
     db.flush()
     actor = actor_from_principal(principal, ip_address=client_ip_from_request(request))
-    publish_appointment_notification(
-        db,
-        appointment,
-        action=AppointmentNotificationAction.created,
-        actor=actor,
-    )
-    record_audit(
-        db,
-        appointment_id=int(appointment.id),
-        actor=actor,
-        action="create_appointment",
-        description="Proveedor creó cita",
-    )
+    try:
+        publish_appointment_notification(
+            db,
+            appointment,
+            action=AppointmentNotificationAction.created,
+            actor=actor,
+        )
+    except Exception:
+        logger.exception(
+            "Cita #%s creada pero falló notificación/correo (revisa migraciones 022/024)",
+            appointment.id,
+        )
+    try:
+        record_audit(
+            db,
+            appointment_id=int(appointment.id),
+            actor=actor,
+            action="create_appointment",
+            description="Proveedor creó cita",
+        )
+    except Exception:
+        logger.exception("Cita #%s sin fila de auditoría (columna RolActor en BD?)", appointment.id)
     db.commit()
     appointment = db.execute(
         select(Appointment)

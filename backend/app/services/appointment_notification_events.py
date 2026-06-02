@@ -311,18 +311,39 @@ def publish_appointment_notification(
     )
 
     if send_email:
+        from app.services.email_utils import normalize_email as _norm_email
+
         staff_emails = _warehouse_staff_emails(db, warehouse_id)
         provider_email = _provider_credential_email(db, provider_id) if include_provider else None
-        if provider_email and provider_message != staff_message:
+
+        # Normalizar para comparar sin importar mayúsculas/espacios
+        staff_keys = {
+            (_norm_email(e) or str(e).strip().lower())
+            for e in staff_emails
+            if e and str(e).strip()
+        }
+        provider_key = (
+            (_norm_email(provider_email) or str(provider_email).strip().lower())
+            if provider_email and str(provider_email).strip()
+            else None
+        )
+
+        # El proveedor recibe su mensaje propio solo si no está ya en la lista de staff
+        provider_is_also_staff = provider_key and provider_key in staff_keys
+
+        if provider_email and not provider_is_also_staff:
             if staff_emails:
                 _dispatch_notification_emails(staff_emails, title=title, message=staff_message)
             _dispatch_notification_emails([provider_email], title=title, message=provider_message)
         else:
-            emails = list(staff_emails)
-            if provider_email:
-                emails.append(provider_email)
-            if emails:
-                _dispatch_notification_emails(emails, title=title, message=staff_message)
+            # El proveedor es también staff o no hay email de proveedor: enviar solo a staff
+            if provider_email and provider_is_also_staff:
+                logger.debug(
+                    "provider_email %s ya está en staff_emails — evitando duplicado",
+                    provider_email,
+                )
+            if staff_emails:
+                _dispatch_notification_emails(staff_emails, title=title, message=staff_message)
 
     _emit_realtime(
         notification_ids=notification_ids,
@@ -349,6 +370,7 @@ def record_audit(
     db.add(
         AuditLog(
             actor_id=actor.actor_id,
+            actor_role=actor.actor_role,
             appointment_id=appointment_id,
             action=action,
             description=description,
