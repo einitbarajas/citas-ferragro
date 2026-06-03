@@ -2,7 +2,7 @@
 
 ## Qué ves
 
-- `/health` → `"build_id":"2026-05-15-orphan-cleanup-b"` (**viejo**)
+- `/health` → `"build_id":"2026-06-02-email-logo-v2"` y `render_git_commit` = `789414c` (**viejo**)
 - El portal muestra: *«El servidor del API en Render está desactualizado…»*
 - `GET /api/v1/crud/warehouses` → **404** (esa ruta no existe en el API del 15 mayo)
 
@@ -27,7 +27,7 @@ El **frontend (Vercel) está bien**. Falta publicar el **backend (Render)**.
    Debe decir:
 
    ```json
-   "build_id": "2026-05-22-prod-sync-v2"
+   "build_id": "2026-06-02-appointments-stable-v1"
    ```
 
    y ya no solo dos campos; verás también `email_enabled`, etc.

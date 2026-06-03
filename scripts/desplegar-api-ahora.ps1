@@ -20,4 +20,4 @@ if (-not $hook) {
 }
 Invoke-WebRequest -Uri $hook.Trim() -Method POST -UseBasicParsing | Out-Null
 Write-Host "Deploy solicitado en Render. Espera 3-5 min y comprueba:" -ForegroundColor Green
-Write-Host "https://ferragro-api.onrender.com/health  -> build_id: 2026-06-02-appointments-fix-v2"
+Write-Host "https://ferragro-api.onrender.com/health  -> build_id: 2026-06-02-appointments-stable-v1"
