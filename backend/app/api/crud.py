@@ -1043,13 +1043,22 @@ def reactivate_provider_account(
 @router.delete("/providers/{nit}", dependencies=[Depends(require_roles("Admin"))])
 def delete_provider(
     nit: int,
+    purge_appointments: bool = Query(
+        default=False,
+        description="Si true, elimina también todas las citas del proveedor (incl. canceladas).",
+    ),
     db: Session = Depends(get_db),
     principal: SecurityPrincipal = Depends(get_security_principal),
 ):
     provider = db.get(Provider, nit)
     if not provider:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
-    delete_provider_immediate(db, provider, actor_id=principal.document_id)
+    delete_provider_immediate(
+        db,
+        provider,
+        actor_id=principal.document_id,
+        force_with_appointments=purge_appointments,
+    )
     db.commit()
     return ok_response(None, "Proveedor eliminado correctamente")
 

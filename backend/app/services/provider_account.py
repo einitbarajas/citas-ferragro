@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.admin_event import AdminEvent
-from app.models.appointment import Appointment
+from app.models.appointment import Appointment, AppointmentStatus
 from app.models.audit_log import ChangeLog
 from app.models.login_audit import LoginAudit
 from app.models.provider import Provider, ProviderAccountStatus
@@ -28,9 +28,24 @@ def provider_purge_after_days() -> int:
     return max(1, int(getattr(settings, "provider_purge_after_days", 180)))
 
 
-def _appointments_count(db: Session, nit: int) -> int:
+def _appointments_count_all(db: Session, nit: int) -> int:
     return int(
         db.execute(select(func.count()).select_from(Appointment).where(Appointment.provider_id == nit)).scalar_one()
+        or 0
+    )
+
+
+def _appointments_count(db: Session, nit: int) -> int:
+    """Citas activas (excluye canceladas): es lo que bloquea eliminar sin purga explícita."""
+    return int(
+        db.execute(
+            select(func.count())
+            .select_from(Appointment)
+            .where(
+                Appointment.provider_id == nit,
+                Appointment.status != AppointmentStatus.cancelado,
+            )
+        ).scalar_one()
         or 0
     )
 
@@ -203,13 +218,14 @@ def delete_provider_immediate(
     force_with_appointments: bool = False,
 ) -> None:
     nit = int(provider.nit)
-    appt_count = _appointments_count(db, nit)
-    if appt_count > 0 and not force_with_appointments:
+    appt_active = _appointments_count(db, nit)
+    appt_total = _appointments_count_all(db, nit)
+    if appt_active > 0 and not force_with_appointments:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"El proveedor tiene {appt_count} cita(s). Suspende la cuenta en lugar de eliminarla; "
-                "tras 6 meses suspendido se purgarán datos automáticamente (se conserva auditoría)."
+                f"El proveedor tiene {appt_active} cita(s) activa(s). Suspende la cuenta o confirma "
+                "eliminación con purga de citas (parámetro purge_appointments=true)."
             ),
         )
     name_snapshot = provider.company_name
@@ -219,7 +235,7 @@ def delete_provider_immediate(
         action="deleted",
         detail=(
             f"La cuenta del proveedor {name_snapshot} (NIT {nit}) fue eliminada por el administrador. "
-            f"Citas asociadas eliminadas: {appt_count}."
+            f"Citas eliminadas en total: {appt_total}."
         ),
         actor_label=f"Admin {actor_id}",
     )
@@ -227,7 +243,7 @@ def delete_provider_immediate(
         db,
         provider,
         actor_id=actor_id,
-        log_description=f"Eliminó proveedor {name_snapshot} (NIT {nit}); citas: {appt_count}",
+        log_description=f"Eliminó proveedor {name_snapshot} (NIT {nit}); citas: {appt_total}",
         log_action="provider_delete",
         notify=False,
     )

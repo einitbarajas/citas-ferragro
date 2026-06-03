@@ -2473,12 +2473,13 @@ export default function DashboardPage() {
     }
   };
 
-  const onDeleteProvider = async (nit) => {
+  const onDeleteProvider = async (nit, { purgeAppointments = false } = {}) => {
     try {
       setError("");
       setSuccess("");
       setProvidersMessage("");
-      await api.delete(`${API_PREFIX}/crud/providers/${nit}`);
+      const params = purgeAppointments ? "?purge_appointments=true" : "";
+      await api.delete(`${API_PREFIX}/crud/providers/${nit}${params}`);
       await loadProviders();
       if (editingProviderNit === nit) onCancelEditProvider();
       setProvidersMessage("Proveedor eliminado. Solo permanece el registro en auditoría.");
@@ -3860,11 +3861,28 @@ export default function DashboardPage() {
         confirmLabel="Sí, eliminar"
         onCancel={() => setConfirmDeleteProviderNit(null)}
         onConfirm={() => {
-          if (confirmDeleteProviderNit != null) onDeleteProvider(confirmDeleteProviderNit);
+          if (confirmDeleteProviderNit != null) {
+            const target = providers.find((p) => String(p.nit) === String(confirmDeleteProviderNit));
+            const purgeAppointments = (target?.appointments_count ?? 0) > 0;
+            onDeleteProvider(confirmDeleteProviderNit, { purgeAppointments });
+          }
           setConfirmDeleteProviderNit(null);
         }}
       >
-        Solo elimina si no tiene citas. Se borran credenciales y datos; permanece la auditoría del sistema.
+        {(() => {
+          const target = providers.find((p) => String(p.nit) === String(confirmDeleteProviderNit));
+          const active = target?.appointments_count ?? 0;
+          if (active > 0) {
+            return (
+              <>
+                Este proveedor tiene {active} cita(s) activa(s) en el sistema (pueden no verse en el listado por
+                filtros de fecha). Al confirmar se eliminarán también esas citas, las credenciales y el perfil. Permanece
+                la auditoría del sistema.
+              </>
+            );
+          }
+          return "Se borran credenciales y datos del proveedor. Permanece la auditoría del sistema.";
+        })()}
       </ConfirmDialog>
       <ConfirmDialog
         open={confirmSuspendProvider != null}
@@ -5430,7 +5448,8 @@ export default function DashboardPage() {
                             Responsable: {p.contact_name} (doc. {p.contact_document})
                           </p>
                           <p className="text-xs text-slate-500">
-                            Citas: {p.appointments_count ?? 0} · Último acceso: {formatProviderDate(p.last_login_at)}
+                            Citas activas: {p.appointments_count ?? 0} · Último acceso:{" "}
+                            {formatProviderDate(p.last_login_at)}
                             {p.status === "suspendido" && p.purge_scheduled_at
                               ? ` · Purga programada: ${formatProviderDate(p.purge_scheduled_at)}`
                               : ""}
@@ -5462,12 +5481,11 @@ export default function DashboardPage() {
                           )}
                           <button
                             type="button"
-                            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50"
-                            disabled={(p.appointments_count ?? 0) > 0}
+                            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100"
                             title={
                               (p.appointments_count ?? 0) > 0
-                                ? "Tiene citas: usa Suspender en lugar de eliminar"
-                                : "Eliminar registro sin citas"
+                                ? "Eliminar perfil y purgar citas activas asociadas"
+                                : "Eliminar registro del proveedor"
                             }
                             onClick={() => setConfirmDeleteProviderNit(p.nit)}
                           >
